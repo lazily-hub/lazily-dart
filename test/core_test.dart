@@ -84,9 +84,18 @@ void main() {
       var leftCalls = 0;
       var rightCalls = 0;
       var joinCalls = 0;
-      final left = Slot<int>(ctx, (_) { leftCalls++; return base.value + 1; });
-      final right = Slot<int>(ctx, (_) { rightCalls++; return base.value + 2; });
-      final join = Slot<int>(ctx, (_) { joinCalls++; return left() + right(); });
+      final left = Slot<int>(ctx, (_) {
+        leftCalls++;
+        return base.value + 1;
+      });
+      final right = Slot<int>(ctx, (_) {
+        rightCalls++;
+        return base.value + 2;
+      });
+      final join = Slot<int>(ctx, (_) {
+        joinCalls++;
+        return left() + right();
+      });
 
       expect(join(), 5); // (1+1)+(1+2)
       expect(leftCalls, 1);
@@ -100,7 +109,9 @@ void main() {
       expect(joinCalls, 2);
     });
 
-    test('stale edges do not accumulate: each recompute detaches upstream first', () {
+    test(
+        'stale edges do not accumulate: each recompute detaches upstream first',
+        () {
       final ctx = Context();
       final a = Cell<int>(ctx, 0);
       final b = Cell<int>(ctx, 0);
@@ -126,7 +137,10 @@ void main() {
       final ctx = Context();
       final a = Cell<int>(ctx, 3);
       var calls = 0;
-      final sig = Signal<int>(ctx, (_) { calls++; return a.value * 10; });
+      final sig = Signal<int>(ctx, (_) {
+        calls++;
+        return a.value * 10;
+      });
       expect(calls, 1); // eager
       expect(sig.value, 30);
       expect(calls, 1); // no recompute from a read
@@ -166,7 +180,10 @@ void main() {
       final ctx = Context();
       final a = Cell<int>(ctx, 1);
       var calls = 0;
-      final sig = Signal<int>(ctx, (_) { calls++; return a.value; });
+      final sig = Signal<int>(ctx, (_) {
+        calls++;
+        return a.value;
+      });
       expect(sig.value, 1);
       final callsAfterConstruct = calls;
       sig.dispose();
@@ -182,8 +199,8 @@ void main() {
   group('StateMachine', () {
     StateMachine<String, String> trafficLight(Context ctx) {
       const next = {'Red': 'Green', 'Green': 'Yellow', 'Yellow': 'Red'};
-      return StateMachine<String, String>(ctx, 'Red', (s, e) =>
-          e == 'advance' ? next[s] : null);
+      return StateMachine<String, String>(
+          ctx, 'Red', (s, e) => e == 'advance' ? next[s] : null);
     }
 
     test('advances through states on accepted events', () {

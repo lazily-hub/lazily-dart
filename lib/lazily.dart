@@ -8,4 +8,5 @@
 library;
 
 export 'src/core.dart';
+export 'src/state_chart.dart';
 export 'src/state_machine.dart';

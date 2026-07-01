@@ -72,6 +72,37 @@ final m = StateMachine<String, String>(
 m.send('advance'); // true -> 'Green'
 ```
 
+## State chart
+
+`StateChart` is a Harel-style **hierarchical** state machine: composite
+states contain children, events bubble up from the active leaf to the root
+(innermost handler wins), and entering/exiting is resolved through the lowest
+common ancestor. It is backed by a `Cell`, so any slot or signal reading
+`active` or `isActive` invalidates on transition.
+
+```dart
+final chart = StateChart<String, String>(
+  ctx: ctx,
+  root: 'on',
+  states: {
+    'on': const ChartState.composite(initial: 'playing', children: ['playing', 'paused']),
+    'playing': const ChartState.atomic(),
+    'paused': const ChartState.atomic(),
+    'off': const ChartState.atomic(),
+  },
+  transitions: [
+    ChartTransition(from: 'playing', event: 'pause', to: 'paused'),
+    ChartTransition(from: 'on', event: 'toggle', to: 'off'),   // bubbles from a child
+    ChartTransition(from: 'off', event: 'toggle', to: 'on'),   // re-enters -> 'playing'
+  ],
+);
+chart.send('toggle'); // off -> on -> playing (initial)
+chart.isActive('on'); // true
+```
+
+Entry/exit actions, guards, and transition actions are supported. Orthogonal
+(parallel) regions and history states are not yet implemented.
+
 ## lazily-spec IPC
 
 The `package:lazily/ipc.dart` library implements the language-agnostic
