@@ -128,11 +128,11 @@ dart test
 ## See also
 
 - [`lazily-spec`][spec] — language-agnostic wire protocol + conformance fixtures shared by every binding
-- [`lazily-formal`][formal] — Lean 4 formal model (flat FSM kernel + Harel state chart)
+- [`lazily-lean`][formal] — Lean 4 formal model (IPC Snapshot/Delta, CRDT, state-machine invariants)
 
 [rs]: https://github.com/lazily-hub/lazily-rs
 [py]: https://github.com/lazily-hub/lazily-py
 [js]: https://github.com/lazily-hub/lazily-js
 [zig]: https://github.com/lazily-hub/lazily-zig
 [spec]: https://github.com/lazily-hub/lazily-spec
-[formal]: https://github.com/lazily-hub/lazily-formal
+[formal]: https://github.com/lazily-hub/lazily-spec/tree/main/formal/lean
