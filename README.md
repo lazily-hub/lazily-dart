@@ -131,6 +131,27 @@ lazily-dart replays the shared [`lazily-spec`][spec] conformance fixtures:
   sibling `lazily-spec` checkout is present on disk, the canonical fixtures are
   preferred, so this harness also guards against cross-family drift.
 
+### Formal model (`lazily-formal`)
+
+`dart test` also builds the [`lazily-formal`][formal] Lean 4 model — the
+executable reference behind the state-chart fixtures and the deterministic
+`send` lazily-dart inherits. `tool/formal_check.dart` runs `lake build` over
+the sibling `lazily-formal` checkout (located via the `LAZILY_FORMAL_PATH` env
+var, then the `src/lazily-dart` ↔ `src/lazily-formal` submodule layout); it
+SKIPs gracefully when the submodule or the `lake` toolchain is absent — so
+pub.dev consumers and shallow clones are not broken. CI uses a full checkout +
+[elan](https://github.com/leanprover/lean-action), so the proofs are verified
+for real there.
+
+Each lazily-formal module that has a Dart counterpart has a matching
+property test that names the universal theorem it mirrors — the guarantees no
+finite fixture suite can establish:
+
+| lazily-formal module | Dart test file | Mirrored theorems |
+|----------------------|----------------|-------------------|
+| `StateMachine` / `StateChart` | `test/statechart_properties_test.dart` | `enabled_empty_rejects`, `send_preserves_chart`, determinism-by-construction, `single_region_refines_flat_machine`, `single_region_enabled_at_most_one`, `parallel_region_confluence`, `recordHistory_idempotent`, `send_actions_empty_when_rejected` |
+| `Reactive` | `test/reactive_properties_test.dart` | `setCell_equal_preserves_graph`, `setCell_different_invalidates_dependents`, `recomputeSlot_equal_preserves_dependents`, `recomputeSlot_different_invalidates_dependents`, `signal_materialized_after_recompute` |
+
 ## lazily-spec IPC
 
 The `package:lazily/ipc.dart` library implements the language-agnostic
@@ -156,6 +177,7 @@ layer is implemented:
 | C-ABI FFI boundary (`LazilyFfi*`, `CrdtSync = 3`) | `package:lazily/ffi.dart` |
 | Permission boundary (`RemoteOp` / `PeerPermissions`) | `package:lazily/ipc.dart` |
 | Capability negotiation | `package:lazily/capability.dart` |
+| Formal model verification (`lazily-formal` Lean proofs in `dart test`) | `tool/formal_check.dart` + `test/formal_check_test.dart` |
 
 Distributed sync wiring to live `merge: crdt` root cells, WebRTC transports,
 and the deeper CRDT collection layers (SemTree, SeqCrdt, TextCrdt, StableId)
@@ -258,6 +280,16 @@ batching, and disposal.
 dart pub get
 dart analyze --fatal-infos
 dart test
+```
+
+`dart test` builds [`lazily-formal`][formal] (Lean proofs) when the sibling
+submodule + `lake` toolchain are present, and SKIPs otherwise. To verify the
+proofs in a standalone clone:
+
+```bash
+git clone https://github.com/lazily-hub/lazily-formal.git ../lazily-formal
+# (or) set LAZILY_FORMAL_PATH=/path/to/lazily-formal
+dart run tool/formal_check.dart
 ```
 
 ## See also

@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
   pull_request:
+  workflow_dispatch:
 
 jobs:
   test:
@@ -16,6 +19,62 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: ${{ matrix.sdk }}
+
+      # Check out the sibling lazily-formal Lean model so `dart test`'s
+      # formal_check_test builds the proofs for real (instead of SKIP-ing).
+      # LAZILY_FORMAL_PATH points tool/formal_check.dart at the checkout.
+      - name: Checkout lazily-formal (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: lazily-hub/lazily-formal
+          path: _lazily-formal
+
+      - name: Install Lean (elan)
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: _lazily-formal
+          auto-config: false
+          build: false
+          test: false
+          lint: false
+
       - run: dart pub get
       - run: dart analyze --fatal-infos
-      - run: dart test
+      - name: dart test (with lazily-formal proof verification)
+        env:
+          LAZILY_FORMAL_PATH: ${{ github.workspace }}/_lazily-formal
+        run: dart test
+
+  lean:
+    name: Lean formal models (#lzleanformal)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout canonical lazily-spec
+        uses: actions/checkout@v4
+        with:
+          repository: lazily-hub/lazily-spec
+          path: lazily-spec
+
+      - name: Checkout canonical lazily-formal
+        uses: actions/checkout@v4
+        with:
+          repository: lazily-hub/lazily-formal
+          path: lazily-formal
+
+      - name: Build lazily-spec IPC formal model
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: lazily-spec/formal/lean
+          auto-config: false
+          build: true
+          test: false
+          lint: false
+
+      - name: Build lazily-formal reactive + state-chart model
+        uses: leanprover/lean-action@v1
+        with:
+          lake-package-directory: lazily-formal
+          auto-config: false
+          build: true
+          test: false
+          lint: false

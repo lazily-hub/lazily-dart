@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.5.0
+
+This release makes [`lazily-formal`](https://github.com/lazily-hub/lazily-formal)
+part of the test suite — `dart test` now builds the Lean 4 model and verifies
+the proofs the Dart implementation mirrors, closing the formal-compliance
+side of the [`lazily-spec`](https://github.com/lazily-hub/lazily-spec)
+Binding Conformance Matrix alongside the wire layers shipped in 0.1–0.4.
+
+### Added — Formal model in the test suite
+
+- **`tool/formal_check.dart`** — a proof-verification hook (mirroring
+  `lazily-js/scripts/formal-check.mjs`) that runs `lake build` over the
+  sibling `lazily-formal` checkout, located via the `LAZILY_FORMAL_PATH` env
+  var and then the `src/lazily-dart` ↔ `src/lazily-formal` submodule layout.
+  SKIPs with a clear notice (exit 0) when the submodule or the `lake`
+  toolchain is absent, so pub.dev consumers and shallow clones are not broken.
+  CI verifies the proofs for real under a full checkout + elan.
+- **`test/formal_check_test.dart`** — wires the Lean build into `dart test`
+  so a broken proof fails the suite.
+- **`test/statechart_properties_test.dart`** — property tests mirroring the
+  `LazilyFormal.StateChart` / `StateMachine` theorems (determinism by
+  construction, `enabled_empty_rejects`, `send_preserves_chart`,
+  `single_region_refines_flat_machine`, `single_region_enabled_at_most_one`,
+  `parallel_region_confluence`, `recordHistory_idempotent`,
+  `send_actions_empty_when_rejected`).
+- **`test/reactive_properties_test.dart`** — property tests mirroring the
+  `LazilyFormal.Reactive` theorems (`setCell_equal_preserves_graph`,
+  `setCell_different_invalidates_dependents`,
+  `recomputeSlot_equal_preserves_dependents`,
+  `recomputeSlot_different_invalidates_dependents`,
+  `signal_materialized_after_recompute`).
+
+### Changed
+
+- **CI** now checks out `lazily-formal` as a sibling and installs
+  [elan](https://github.com/leanprover/lean-action) so `dart test` runs the
+  formal proof verification instead of SKIP-ing. A dedicated `lean` job
+  (mirroring lazily-kt) builds the canonical `lazily-formal` +
+  `lazily-spec` Lean models independently.
+
 ## 0.4.0
 
 This release closes the lazily-spec **Binding Conformance Matrix** — every
