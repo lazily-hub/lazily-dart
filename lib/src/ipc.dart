@@ -2,9 +2,10 @@
 ///
 /// A pure-Dart port of the language-agnostic lazily wire protocol
 /// ([protocol.md](https://github.com/lazily-hub/lazily-spec/blob/main/protocol.md)):
-/// `Snapshot` / `Delta` / `DeltaOp` / `NodeState` / `IpcValue` / `IpcMessage`,
-/// the permission boundary (`RemoteOp`, `PeerPermissions`), and the optional
-/// wire-stable `NodeKey` keyed address.
+/// `Snapshot` / `Delta` / `CrdtSync` / `DeltaOp` / `CrdtOp` / `NodeState` /
+/// `IpcValue` / `IpcMessage` / `WireStamp`, the permission boundary
+/// (`RemoteOp`, `PeerPermissions`), and the optional wire-stable `NodeKey`
+/// keyed address.
 ///
 /// The transition rules — epoch sequencing, fail-closed gap resync, the
 /// `PartialEq` cell guard, memo equality suppression, eager Signal
@@ -853,12 +854,243 @@ class Delta {
   int get hashCode => Object.hash(baseEpoch, epoch, Object.hashAll(ops));
 }
 
-/// A length-prefixed, tagged `Snapshot` or `Delta` (protocol.md § IPC).
+// ---------------------------------------------------------------------------
+// Distributed CRDT plane wire types (protocol.md § Distributed: CRDT Cell Plane)
+//
+// Wire mirror of the runtime HLC stamp and the state-based CvRDT anti-entropy
+// frame. Runtime (HLC clock, frontier merge, stability watermark) lives in
+// `package:lazily/src/crdt.dart`; this file carries only the codec-stable wire
+// shapes so a peer can round-trip a CrdtSync frame even without compiling the
+// CRDT runtime in. Mirrors `lazily-rs/src/ipc.rs` (derived serde) and
+// `lazily-py/src/lazily/ipc.py`.
+// ---------------------------------------------------------------------------
+
+/// Wire mirror of the runtime HLC stamp — a total order
+/// `(wall_time, logical, peer)` (protocol.md § Distributed).
+///
+/// All plain integers so the wire format is codec-stable whether or not a peer
+/// compiles the CRDT runtime in. Round-trips across JSON, MessagePack, and
+/// postcard. The runtime representation is [HlcStamp] in `crdt.dart`; this
+/// wire form never depends on the distributed feature.
+class WireStamp {
+  const WireStamp({
+    required this.wallTime,
+    required this.logical,
+    required this.peer,
+  });
+
+  /// Wall-clock microseconds since the Unix epoch.
+  final int wallTime;
+
+  /// Logical counter advancing causality within equal `wall_time`.
+  final int logical;
+
+  /// Originating peer; final tiebreak so equal `(wall, logical)` is a total
+  /// order.
+  final int peer;
+
+  Map<String, Object> toWire() => {
+        'wall_time': wallTime,
+        'logical': logical,
+        'peer': peer,
+      };
+
+  static WireStamp fromWire(Object? value) {
+    final obj = _asObject(value, 'WireStamp');
+    return WireStamp(
+      wallTime: _reqInt(obj, 'wall_time'),
+      logical: _reqInt(obj, 'logical'),
+      peer: _reqInt(obj, 'peer'),
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is WireStamp &&
+      other.wallTime == wallTime &&
+      other.logical == logical &&
+      other.peer == peer;
+
+  @override
+  int get hashCode => Object.hash(wallTime, logical, peer);
+
+  @override
+  String toString() =>
+      'WireStamp(wall=$wallTime, logical=$logical, peer=$peer)';
+}
+
+/// One CRDT cell op on the wire (state-based / CvRDT).
+///
+/// The converged register/sequence/text [state] for [node], tagged with the
+/// [WireStamp] that produced it and an optional wire-stable [NodeKey] that
+/// survives [NodeId] churn. The receiver merges [state] into its local
+/// replica; because every cell CRDT merge is commutative, associative, and
+/// idempotent, out-of-order, duplicated, or batched delivery all converge — so
+/// a [CrdtOp] is safe to resend.
+///
+/// Wire note (mirrors `lazily-rs` derived serde and every sibling): [key] is
+/// **always present** in the wire object (`null` when unset), unlike
+/// [NodeSnapshot] / [DeltaOpNodeAdd] which omit it. The decoder also accepts
+/// an absent field.
+class CrdtOp {
+  const CrdtOp({
+    required this.node,
+    required this.stamp,
+    required this.state,
+    this.key,
+  });
+
+  /// Construct a keyless op (addressed only by [node]).
+  factory CrdtOp.newOp(NodeId node, WireStamp stamp, Object payload) =>
+      CrdtOp(node: node, stamp: stamp, state: IpcValue.of(payload));
+
+  /// Construct an op carrying a wire-stable [NodeKey].
+  factory CrdtOp.keyed(
+          NodeId node, NodeKey key, WireStamp stamp, Object payload) =>
+      CrdtOp(node: node, key: key, stamp: stamp, state: IpcValue.of(payload));
+
+  final NodeId node;
+  final NodeKey? key;
+  final WireStamp stamp;
+  final IpcValue state;
+
+  Map<String, Object?> toWire() => {
+        'node': node,
+        'key': key?.toWire(),
+        'stamp': stamp.toWire(),
+        'state': state.toWire(),
+      };
+
+  static CrdtOp fromWire(Object? value) {
+    final obj = _asObject(value, 'CrdtOp');
+    final key = obj['key'];
+    return CrdtOp(
+      node: _reqInt(obj, 'node'),
+      key: key == null ? null : NodeKey.fromWire(key),
+      stamp: WireStamp.fromWire(obj['stamp']),
+      state: IpcValue.fromWire(obj['state']),
+    );
+  }
+
+  /// Whether the [peer] may read [node]. Filtered ops are omitted (not
+  /// redacted) from a permission-filtered `CrdtSync`.
+  bool targetReadable(PeerPermissions permissions, PeerId peer) =>
+      permissions.canRead(peer, node);
+
+  @override
+  bool operator ==(Object other) =>
+      other is CrdtOp &&
+      other.node == node &&
+      other.key == key &&
+      other.stamp == stamp &&
+      other.state == state;
+
+  @override
+  int get hashCode => Object.hash(node, key, stamp, state);
+
+  @override
+  String toString() =>
+      'CrdtOp(node=$node, key=$key, stamp=$stamp, state=$state)';
+}
+
+/// A `(peer, WireStamp)` entry in the per-peer stamp frontier.
+///
+/// On the wire this is a **2-tuple array** `[peer, stamp]` (per
+/// `schemas/distributed.json#/$defs/StampFrontierEntry`, `prefixItems`), not a
+/// `{peer, stamp}` object — mirrors `lazily-rs`'s `Vec<(u64, WireStamp)>` serde
+/// representation.
+class StampFrontierEntry {
+  const StampFrontierEntry(this.peer, this.stamp);
+
+  final PeerId peer;
+  final WireStamp stamp;
+
+  List<Object> toWire() => [peer, stamp.toWire()];
+
+  static StampFrontierEntry fromWire(Object? value) {
+    if (value is! List || value.length != 2) {
+      throw FormatException(
+          'StampFrontierEntry must be a 2-element array, got ${value.runtimeType}');
+    }
+    final peer = value[0];
+    if (peer is! int || peer < 0) {
+      throw FormatException(
+          'frontier peer must be a non-negative integer, got ${peer.runtimeType}');
+    }
+    return StampFrontierEntry(peer, WireStamp.fromWire(value[1]));
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is StampFrontierEntry && other.peer == peer && other.stamp == stamp;
+
+  @override
+  int get hashCode => Object.hash(peer, stamp);
+
+  @override
+  String toString() => '($peer, $stamp)';
+}
+
+/// A CRDT anti-entropy sync frame (the multi-writer plane).
+///
+/// The sender advertises its per-peer **stamp frontier** (the highest
+/// [WireStamp] it has observed from each peer) and ships a batch of [CrdtOp]s.
+/// The frontier exchange is bounded, idempotent, and resumable; re-sending a
+/// frame the receiver already has is a no-op.
+class CrdtSync {
+  const CrdtSync({this.frontier = const [], this.ops = const []});
+
+  final List<StampFrontierEntry> frontier;
+  final List<CrdtOp> ops;
+
+  Map<String, Object> toWire() => {
+        'frontier': frontier.map((e) => e.toWire()).toList(),
+        'ops': ops.map((op) => op.toWire()).toList(),
+      };
+
+  static CrdtSync fromWire(Object? value) {
+    final obj = _asObject(value, 'CrdtSync');
+    return CrdtSync(
+      frontier: _objList(obj, 'frontier', StampFrontierEntry.fromWire),
+      ops: _objList(obj, 'ops', CrdtOp.fromWire),
+    );
+  }
+
+  /// Peer-specific frame that **omits** ops for non-readable nodes entirely
+  /// (omission, not redaction — mirroring [Delta.filterReadable]). The
+  /// [frontier] advertisement is retained in full: it names peers and stamps,
+  /// not node content, and the receiver needs the whole frontier to compute a
+  /// sound causal-stability watermark.
+  CrdtSync filterReadable(PeerPermissions permissions, PeerId peer) =>
+      CrdtSync(
+        frontier: List.of(frontier),
+        ops: ops.where((op) => op.targetReadable(permissions, peer)).toList(),
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      other is CrdtSync &&
+      _listEquals(other.frontier, frontier) &&
+      _listEquals(other.ops, ops);
+
+  @override
+  int get hashCode =>
+      Object.hash(Object.hashAll(frontier), Object.hashAll(ops));
+
+  @override
+  String toString() =>
+      'CrdtSync(frontier=${frontier.length} peers, ops=${ops.length})';
+}
+
+/// A length-prefixed, tagged `Snapshot`, `Delta`, or `CrdtSync`
+/// (protocol.md § IPC). The `CrdtSync` variant carries multi-writer plane
+/// traffic alongside the single-producer mirror.
 sealed class IpcMessage {
   const IpcMessage();
 
   bool get isSnapshot => this is IpcMessageSnapshot;
   bool get isDelta => this is IpcMessageDelta;
+  bool get isCrdtSync => this is IpcMessageCrdtSync;
 
   /// The [Snapshot] if this is one, otherwise `null`.
   Snapshot? get snapshot =>
@@ -867,6 +1099,10 @@ sealed class IpcMessage {
   /// The [Delta] if this is one, otherwise `null`.
   Delta? get delta =>
       this is IpcMessageDelta ? (this as IpcMessageDelta).value : null;
+
+  /// The [CrdtSync] if this is one, otherwise `null`.
+  CrdtSync? get crdtSync =>
+      this is IpcMessageCrdtSync ? (this as IpcMessageCrdtSync).value : null;
 
   /// The externally-tagged wire shape.
   Object toWire();
@@ -879,6 +1115,9 @@ sealed class IpcMessage {
 
   static IpcMessage ofDelta(Delta delta) => IpcMessageDelta(delta);
 
+  static IpcMessage ofCrdtSync(CrdtSync crdtSync) =>
+      IpcMessageCrdtSync(crdtSync);
+
   static IpcMessage fromWire(Object? value) {
     final entry = _tagged(value, 'IpcMessage');
     switch (entry.key) {
@@ -886,6 +1125,8 @@ sealed class IpcMessage {
         return IpcMessageSnapshot(Snapshot.fromWire(entry.value));
       case 'Delta':
         return IpcMessageDelta(Delta.fromWire(entry.value));
+      case 'CrdtSync':
+        return IpcMessageCrdtSync(CrdtSync.fromWire(entry.value));
       default:
         throw FormatException('unknown IpcMessage variant: ${entry.key}');
     }
@@ -933,6 +1174,22 @@ final class IpcMessageDelta extends IpcMessage {
 
   @override
   int get hashCode => Object.hash('Delta', value);
+}
+
+final class IpcMessageCrdtSync extends IpcMessage {
+  const IpcMessageCrdtSync(this.value);
+
+  final CrdtSync value;
+
+  @override
+  Object toWire() => {'CrdtSync': value.toWire()};
+
+  @override
+  bool operator ==(Object other) =>
+      other is IpcMessageCrdtSync && other.value == value;
+
+  @override
+  int get hashCode => Object.hash('CrdtSync', value);
 }
 
 // ---------------------------------------------------------------------------

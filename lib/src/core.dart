@@ -205,6 +205,14 @@ class Cell<T> extends _ReactiveNode {
     return () => _observers.remove(wrapper);
   }
 
+  /// Force-invalidate this cell's dependents without changing the value.
+  ///
+  /// Used by collection layers when an entry is removed: the orphaned cell
+  /// stops driving its dependents, mirroring `CellHandle::clear_dependents` in
+  /// lazily-rs. The cell's own value is untouched; only the downstream cascade
+  /// fires.
+  void invalidate() => _invalidate();
+
   void _notifyObservers() {
     for (final observer in _observers.toList()) {
       observer();

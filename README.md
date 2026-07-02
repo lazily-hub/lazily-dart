@@ -74,34 +74,62 @@ m.send('advance'); // true -> 'Green'
 
 ## State chart
 
-`StateChart` is a Harel-style **hierarchical** state machine: composite
-states contain children, events bubble up from the active leaf to the root
-(innermost handler wins), and entering/exiting is resolved through the lowest
-common ancestor. It is backed by a `Cell`, so any slot or signal reading
-`active` or `isActive` invalidates on transition.
+`StateChart` is a full Harel/SCXML **hierarchical** state machine — the native
+counterpart of [`lazily-formal`][formal]'s `LazilyFormal.StateChart` and
+lazily-rs's / lazily-kt's state charts. It is **compute, not protocol**: it is
+never serialized as a distinct wire kind. The active configuration lives in a
+`Cell`, so any slot or signal reading `configuration`, `activeLeaves`, or
+`matches` is invalidated on a real transition; a no-op (configuration
+unchanged) is suppressed by the cell's structural-equality guard.
+
+`send` is deterministic by construction — a total function of
+`(chart, configuration, history, guards, event)`, mirroring the Lean
+`StateChart.send`. A chart is built from the declarative JSON form
+(`lazily-spec/docs/state-charts.md`) via `ChartDef.fromJson`.
+
+Implemented subset (per the spec's implementation-status note): compound
+(hierarchical) states with default initial descent, orthogonal (parallel)
+regions, shallow **and** deep history (record-on-exit / restore-on-enter),
+entry/exit/transition actions (exit innermost-first → transition → entry
+outermost-first), named guards resolved at `send` time (fail-closed), and
+external + internal transitions. `run` actions and `{"expr": …}` context
+guards are rejected explicitly. `final` states are accepted as leaves without
+raising completion (`done`) events, matching lazily-py and lazily-kt.
 
 ```dart
-final chart = StateChart<String, String>(
-  ctx: ctx,
-  root: 'on',
-  states: {
-    'on': const ChartState.composite(initial: 'playing', children: ['playing', 'paused']),
-    'playing': const ChartState.atomic(),
-    'paused': const ChartState.atomic(),
-    'off': const ChartState.atomic(),
+import 'package:lazily/lazily.dart';
+
+final def = ChartDef.fromJson({
+  'initial': 'on',
+  'states': {
+    'root': {'initial': 'on'},
+    'on': {
+      'parent': 'root', 'initial': 'playing',
+      'on': {'toggle': 'off'},           // handled by 'on', bubbles from a child
+    },
+    'playing': {'parent': 'on', 'on': {'pause': 'paused'}},
+    'paused':  {'parent': 'on', 'on': {'play': 'playing'}},
+    'off':     {'parent': 'root', 'on': {'toggle': 'on'}},  // re-enters -> 'playing'
   },
-  transitions: [
-    ChartTransition(from: 'playing', event: 'pause', to: 'paused'),
-    ChartTransition(from: 'on', event: 'toggle', to: 'off'),   // bubbles from a child
-    ChartTransition(from: 'off', event: 'toggle', to: 'on'),   // re-enters -> 'playing'
-  ],
-);
-chart.send('toggle'); // off -> on -> playing (initial)
-chart.isActive('on'); // true
+});
+final chart = StateChart(ctx, def);
+
+chart.activeLeaves();            // ['playing']
+chart.send('toggle');            // true; off -> on -> playing (initial)
+chart.matches('on');             // true
+chart.lastActions();             // exit → transition → entry actions
 ```
 
-Entry/exit actions, guards, and transition actions are supported. Orthogonal
-(parallel) regions and history states are not yet implemented.
+## Conformance
+
+lazily-dart replays the shared [`lazily-spec`][spec] conformance fixtures:
+
+- State-chart fixtures mirrored into `test/conformance/statechart/` are
+  replayed by `test/statechart_conformance_test.dart`, asserting `accepted`,
+  `active`, `matches`, and `actions` identically to every other binding
+  (lazily-rs / lazily-kt / lazily-py / lazily-zig / lazily-js). When the
+  sibling `lazily-spec` checkout is present on disk, the canonical fixtures are
+  preferred, so this harness also guards against cross-family drift.
 
 ## lazily-spec IPC
 
@@ -113,9 +141,116 @@ languages. It round-trips the canonical fixtures from
 
 ## Status
 
-Early. The reactive core and the lazily-spec IPC wire types are in place.
-Distributed sync, CRDTs, shared-memory blobs, and WebRTC transports are not
-ported yet (see `lazily-rs` for the full feature set).
+Conforms to the full lazily-spec **Binding Conformance Matrix** — every MUST
+layer is implemented:
+
+| Layer | Where |
+|-------|-------|
+| Reactive core (`Cell` / `Slot` / `Signal`) | `package:lazily/lazily.dart` |
+| Keyed cell collections (`CellMap` / `CellTree` / reconciliation) | `package:lazily/lazily.dart` |
+| Flat state machine | `package:lazily/lazily.dart` |
+| Harel state charts | `package:lazily/lazily.dart` |
+| Async reactive context | `package:lazily/async_context.dart` |
+| IPC (`Snapshot` + `Delta` + `CrdtSync`) | `package:lazily/ipc.dart` |
+| Distributed CRDT plane (`CrdtSync` / `WireStamp` / `Hlc` / `StampFrontier`) | `package:lazily/ipc.dart` |
+| C-ABI FFI boundary (`LazilyFfi*`, `CrdtSync = 3`) | `package:lazily/ffi.dart` |
+| Permission boundary (`RemoteOp` / `PeerPermissions`) | `package:lazily/ipc.dart` |
+| Capability negotiation | `package:lazily/capability.dart` |
+
+Distributed sync wiring to live `merge: crdt` root cells, WebRTC transports,
+and the deeper CRDT collection layers (SemTree, SeqCrdt, TextCrdt, StableId)
+are not ported yet — see `lazily-rs` for the full feature set.
+
+## Keyed cell collections
+
+`CellMap<K, V>` is a **composition of cells**, not a new cell kind. Each entry
+is an ordinary `Cell`; a dedicated membership cell tracks the key set, and a
+dedicated order cell tracks the ordered key list, so the three reactivity
+planes are independent:
+
+- writing one entry's value invalidates **only** that entry's value readers;
+- adding/removing a key invalidates membership readers (`len` / `containsKey`)
+  and order readers (`keys`), but **not** unrelated entry value readers;
+- a pure reorder (atomic move) invalidates order readers only.
+
+```dart
+final ctx = Context();
+final scores = CellMap<String, int>(ctx)
+  ..set('alice', 10)
+  ..set('bob', 20);
+
+final leaderboard = Slot<List<String>>(ctx, (_) => scores.keys());
+leaderboard(); // ['alice', 'bob']
+
+scores.moveTo('bob', 0);
+leaderboard(); // ['bob', 'alice']  — recomputed (order changed)
+```
+
+`reconcileDiff` is the move-minimized keyed reconciliation (`#lzkeyrecon`):
+diffs two keyed sequences by stable key and emits the minimal
+`{insert, remove, move, update}` op set, holding the longest-increasing
+subsequence fixed so keys already in relative order do not move.
+
+`CellTree<K, V>` is the ordered keyed tree — each node is
+`(stable id, value cell, ordered keyed child collection)`, inheriting per-level
+reactivity and the atomic-move guarantee.
+
+## Distributed CRDT plane
+
+The CRDT plane rides the same lazily-ipc transport as `Snapshot`/`Delta`:
+`CrdtSync` is a third `IpcMessage` variant. State-based and idempotent —
+out-of-order, duplicated, or batched delivery all converge.
+
+```dart
+import 'package:lazily/ipc.dart';
+
+final a = CrdtPlane(1);
+final stamp = a.tick(12345);                              // local event
+final op = CrdtOp.newOp(nodeId, stamp, [1, 2, 3]);        // state to merge
+final frame = CrdtSync(
+  frontier: a.frontier.toWire(),                          // per-peer stamp frontier
+  ops: [op],
+);
+// → IpcMessage.ofCrdtSync(frame).encodeJson()  is the wire form.
+```
+
+`StampFrontier.merge` is commutative, associative, idempotent; the
+causal-stability watermark (`stabilityWatermark`) is the `min` over
+membership — only once every replica has observed a tombstone may it be
+collected (`isCollectable`).
+
+## FFI boundary
+
+`package:lazily/ffi.dart` exposes `LazilyFfiBytes`, `LazilyFfiStatus`, and
+`LazilyFfiMessageKind` (with `CrdtSync = 3`). A frame is just serialized
+`IpcMessage` bytes; the channel decodes each accepted frame as `IpcMessage`
+and re-encodes canonical JSON.
+
+```dart
+import 'package:lazily/ffi.dart';
+import 'package:lazily/ipc.dart';
+
+final frame = LazilyFfiBytes(IpcMessage.ofCrdtSync(sync).encodeJson());
+final c = lazilyFfiKindJson(frame);
+expect(c.kind, LazilyFfiMessageKind.crdtSync);
+```
+
+lazily-dart declares the **`ffi = host`** capability (Dart has `dart:ffi`).
+
+## Capability negotiation
+
+`package:lazily/capability.dart` ships the compatibility handshake. Peers fail
+closed on `protocol_id`, `protocol_major_version`, `codec`,
+`ordered_reliable`, or a required feature the other does not offer.
+
+## Async reactive context
+
+`package:lazily/async_context.dart` is a separate reactive surface for
+`async`/future-returning computations, with the full
+`Empty → Computing → Resolved | Error` state machine, revision tracking (stale
+completions discarded), in-flight deduplication, the re-resolve contract, an
+equality `memoAsync` guard, serialized async effects (cleanup-before-body),
+batching, and disposal.
 
 ## Development
 
@@ -127,12 +262,18 @@ dart test
 
 ## See also
 
-- [`lazily-spec`][spec] — language-agnostic wire protocol + conformance fixtures shared by every binding
-- [`lazily-lean`][formal] — Lean 4 formal model (IPC Snapshot/Delta, CRDT, state-machine invariants)
+- [`lazily-spec`][spec] — language-agnostic wire protocol + the conformance
+  fixtures (IPC and state-chart) every binding replays.
+- [`lazily-formal`][formal] — Lean 4 formal model (shared primitives, the flat
+  `StateMachine` kernel, and the full Harel `StateChart`); the executable
+  reference behind the state-chart fixtures and the deterministic `send`
+  lazily-dart inherits.
+- [`lazily-rs`][rs] / [`lazily-py`][py] / [`lazily-zig`][zig] — sibling reactive
+  cores.
 
 [rs]: https://github.com/lazily-hub/lazily-rs
 [py]: https://github.com/lazily-hub/lazily-py
 [js]: https://github.com/lazily-hub/lazily-js
 [zig]: https://github.com/lazily-hub/lazily-zig
 [spec]: https://github.com/lazily-hub/lazily-spec
-[formal]: https://github.com/lazily-hub/lazily-spec/tree/main/formal/lean
+[formal]: https://github.com/lazily-hub/lazily-formal
