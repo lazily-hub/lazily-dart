@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.5.1
+
+Docs-only sync against the latest [`lazily-spec`](https://github.com/lazily-hub/lazily-spec)
+`coverage.json`. No code or API changes; re-verified against the current
+`lazily-formal` Lean proofs.
+
+### Changed
+
+- **README** coverage table resynced from `lazily-spec/coverage.json` via
+  `node scripts/sync-coverage.mjs` — adds the Causal receipts
+  (`CausalReceipts` outcome projection) row now tracked by the spec.
+  lazily-dart remains `—` on that layer (not yet ported); the table is the
+  single source of truth for cross-language coverage.
+
 ## 0.5.0
 
 This release makes [`lazily-formal`](https://github.com/lazily-hub/lazily-formal)
