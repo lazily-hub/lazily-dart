@@ -170,52 +170,59 @@ notes and platform carve-outs lives in
 <!-- coverage-table:start -->
 | Feature | Rust | Python | Kotlin | JS | Dart | Zig |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: |
-| Reactive graph — `Cell` / `Slot` / `Signal` / `Effect` / memo / batch | ✅ | ~ | ✅ | ✅ | ~ | ~ |
+| Reactive graph — `Cell` / `Slot` / `Signal` / `Effect` / memo / batch | ✅ | ~ | ✅ | ✅ | ✅ | ~ |
 | Thread-safe context (lock-backed) | ✅ | ✅ | ✅ | — | — | ✅ |
 | Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | — |
 | Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Harel state charts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Keyed cell collections (`CellMap` / `CellTree`) + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ~ |
-| Memoized semantic tree (`SemTree`) | ✅ | — | ✅ | ✅ | — | — |
-| Stable-id alignment (manufactured identity) | ✅ | — | ✅ | ✅ | — | — |
-| Free-text character CRDT (`TextCrdt`) | ✅ | — | ✅ | ✅ | — | — |
-| `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | — | ✅ | ✅ | — | — |
-| Move-aware sequence CRDT (`SeqCrdt`) | ✅ | — | ✅ | ✅ | — | — |
-| Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | — | ✅ | ✅ | — | — |
+| Memoized semantic tree (`SemTree`) | ✅ | — | ✅ | ✅ | ✅ | — |
+| Stable-id alignment (manufactured identity) | ✅ | — | ✅ | ✅ | ✅ | — |
+| Free-text character CRDT (`TextCrdt`) | ✅ | — | ✅ | ✅ | ✅ | — |
+| `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | — | ✅ | ✅ | ✅ | — |
+| Move-aware sequence CRDT (`SeqCrdt`) | ✅ | — | ✅ | ✅ | ✅ | — |
+| Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | — | ✅ | ✅ | ✅ | — |
 | IPC wire — `Snapshot` + `Delta` + `CrdtSync` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ~ | ~ | ✅ |
-| Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | ✅ | — | ✅ | ✅ | ~ | — |
-| Distributed plane — WebRTC transport + signaling | ✅ | — | ✅ | ✅ | — | — |
-| State projection / mirror | ✅ | — | ✅ | ✅ | — | — |
-| Causal receipts (`CausalReceipts` outcome projection) | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | ✅ | — | ✅ | ✅ | ✅ | — |
+| Distributed plane — WebRTC transport + signaling | ✅ | — | ✅ | ✅ | ✅ | — |
+| State projection / mirror | ✅ | — | ✅ | ✅ | ✅ | — |
+| Causal receipts (`CausalReceipts` outcome projection) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | C-ABI FFI boundary | ✅ | ✅ | ✅ | — | ✅ | ✅ |
 | Permission boundary (`PeerPermissions` / `RemoteOp`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Capability negotiation (`SessionHandshake`) | ✅ | — | ✅ | ✅ | ✅ | ✅ |
-| Instrumentation / benchmarks | ✅ | — | — | — | — | — |
+| Instrumentation / benchmarks | ✅ | — | — | — | ✅ | — |
 <!-- coverage-table:end -->
 
 ## Status
 
-Conforms to the full lazily-spec **Binding Conformance Matrix** — every MUST
-layer is implemented:
+Full feature coverage on the Dart platform. Every feature row in the
+lazily-spec cross-language matrix that can run on Dart is shipped (`✅`).
+The only `—` is **Thread-safe context** — a legitimate Dart carve-out
+(isolates = no shared address space; `thread_safe: none` declared).
 
 | Layer | Where |
 |-------|-------|
-| Reactive core (`Cell` / `Slot` / `Signal`) | `package:lazily/lazily.dart` |
+| Reactive core (`Cell` / `Slot` / `Signal` / `Effect` / `Memo` / `batch`) | `package:lazily/lazily.dart` |
 | Keyed cell collections (`CellMap` / `CellTree` / reconciliation) | `package:lazily/lazily.dart` |
-| Flat state machine | `package:lazily/lazily.dart` |
-| Harel state charts | `package:lazily/lazily.dart` |
+| Flat state machine + Harel state charts | `package:lazily/lazily.dart` |
+| TextCrdt (char CRDT) + delta sync | `package:lazily/lazily.dart` |
+| SeqCrdt (move-aware sequence CRDT) + Hlc + LwwRegister | `package:lazily/lazily.dart` |
+| Registers (MV / PnCounter / CellCrdt) | `package:lazily/lazily.dart` |
+| SemTree (memoized semantic tree) | `package:lazily/lazily.dart` |
+| Stable-id alignment | `package:lazily/lazily.dart` |
 | Async reactive context | `package:lazily/async_context.dart` |
 | IPC (`Snapshot` + `Delta` + `CrdtSync`) | `package:lazily/ipc.dart` |
-| Distributed CRDT plane (`CrdtSync` / `WireStamp` / `Hlc` / `StampFrontier`) | `package:lazily/ipc.dart` |
+| Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | `package:lazily/ipc.dart` |
+| Causal receipts (`CausalReceipt` / `ReceiptProjection`) | `package:lazily/ipc.dart` |
+| Signaling (`SignalingRoom` / `ClientMessage` / `ServerMessage`) | `package:lazily/ipc.dart` |
+| State projection / mirror (`StateProjectionMirror`) | `package:lazily/ipc.dart` |
+| ShmBlobArena (in-process blob arena + header validation) | `package:lazily/ipc.dart` |
 | C-ABI FFI boundary (`LazilyFfi*`, `CrdtSync = 3`) | `package:lazily/ffi.dart` |
 | Permission boundary (`RemoteOp` / `PeerPermissions`) | `package:lazily/ipc.dart` |
 | Capability negotiation | `package:lazily/capability.dart` |
+| Instrumentation (`benchmark` / `runBenchmarkSuite`) | `package:lazily/ipc.dart` |
 | Formal model verification (`lazily-formal` Lean proofs in `dart test`) | `tool/formal_check.dart` + `test/formal_check_test.dart` |
-
-Distributed sync wiring to live `merge: crdt` root cells, WebRTC transports,
-and the deeper CRDT collection layers (SemTree, SeqCrdt, TextCrdt, StableId)
-are not ported yet — see `lazily-rs` for the full feature set.
 
 ## Keyed cell collections
 

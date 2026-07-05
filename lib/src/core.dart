@@ -28,6 +28,12 @@ class Context {
   final Map<Object, Object?> _cache = Map.identity();
   final List<_ReactiveNode> _stack = [];
 
+  int _batchDepth = 0;
+  final Set<Cell> _batchedCells = Set.identity();
+  final List<Effect> _pendingEffects = [];
+  final Set<Effect> _scheduledEffects = Set.identity();
+  bool _flushingEffects = false;
+
   /// The number of cached values.
   int get size => _cache.length;
 
@@ -49,6 +55,70 @@ class Context {
 
   /// The slot currently computing, if any.
   _ReactiveNode? get _current => _stack.isEmpty ? null : _stack.last;
+
+  /// Whether a [batch] is currently active.
+  bool get isBatching => _batchDepth > 0;
+
+  /// Run [run] inside a batch. Cell writes inside the batch defer their
+  /// invalidation cascades until the outermost batch exits, at which point a
+  /// single coalesced cascade fires and pending [Effect]s flush once.
+  ///
+  /// Re-entrant: nested [batch] calls bump the depth; only the outermost exit
+  /// triggers the flush.
+  void batch(void Function() run) {
+    _batchDepth++;
+    try {
+      run();
+    } finally {
+      _batchDepth--;
+      if (_batchDepth == 0) _flushBatch();
+    }
+  }
+
+  /// Called by [Cell] when its value changes. Routes through the batch queue
+  /// when a batch is active, otherwise cascades immediately + flushes effects.
+  void _cellChanged(Cell cell) {
+    if (_batchDepth > 0) {
+      _batchedCells.add(cell);
+    } else {
+      cell._invalidate();
+      _flushEffects();
+    }
+  }
+
+  void _flushBatch() {
+    if (_batchedCells.isEmpty) {
+      _flushEffects();
+      return;
+    }
+    final cells = _batchedCells.toList();
+    _batchedCells.clear();
+    for (final cell in cells) {
+      cell._invalidate();
+    }
+    _flushEffects();
+  }
+
+  void _scheduleEffect(Effect effect) {
+    if (_scheduledEffects.add(effect)) {
+      _pendingEffects.add(effect);
+    }
+  }
+
+  void _flushEffects() {
+    if (_flushingEffects) return;
+    _flushingEffects = true;
+    try {
+      while (true) {
+        if (_pendingEffects.isEmpty) break;
+        final effect = _pendingEffects.removeAt(0);
+        _scheduledEffects.remove(effect);
+        effect._rerun();
+      }
+    } finally {
+      _flushingEffects = false;
+    }
+  }
 }
 
 /// Base class for nodes that participate in dependency tracking.
@@ -182,7 +252,7 @@ class Cell<T> extends _ReactiveNode {
     if (newValue != _value) {
       _value = newValue;
       _notifyObservers();
-      _invalidate();
+      ctx._cellChanged(this);
     }
   }
 
@@ -211,7 +281,10 @@ class Cell<T> extends _ReactiveNode {
   /// stops driving its dependents, mirroring `CellHandle::clear_dependents` in
   /// lazily-rs. The cell's own value is untouched; only the downstream cascade
   /// fires.
-  void invalidate() => _invalidate();
+  void invalidate() {
+    _invalidate();
+    ctx._flushEffects();
+  }
 
   void _notifyObservers() {
     for (final observer in _observers.toList()) {
@@ -317,5 +390,150 @@ class _SignalSlot<T> extends Slot<T> {
     // edges and cascades downstream only if the value changed).
     ctx.evict(this);
     signal?._eagerRecompute();
+  }
+}
+
+/// A side-effect function that may return a cleanup callback.
+///
+/// The cleanup (if returned) is invoked before the next rerun and on dispose.
+typedef EffectRun = void Function()? Function(Context ctx);
+
+/// A side-effect observer that reruns whenever a tracked dependency changes.
+///
+/// [Effect] is the eager-push primitive for side effects (logging, DOM writes,
+/// I/O). It registers dependencies dynamically: any [Cell], [Slot], or
+/// [Signal] read inside [run] during the current execution becomes a
+/// dependency. When any dependency changes, the effect is scheduled and reruns
+/// after the current cascade (or at [batch] exit).
+///
+/// The [run] callback may return a cleanup function. Cleanup runs before each
+/// rerun and on [dispose], so resources are never leaked across reruns.
+///
+///     final ctx = Context();
+///     final a = Cell<int>(ctx, 1);
+///   final log = <int>[];
+///   final dispose = Effect(ctx, (_) {
+///   log.add(a.value);
+///   return null;
+///   }).dispose;
+///   a.value = 2; // log is now [1, 2]
+///   dispose();
+///   a.value = 3; // log is unchanged — effect disposed
+class Effect extends _ReactiveNode {
+  Effect(this.ctx, EffectRun run) : _run = run {
+    _rerun();
+  }
+
+  /// The context this effect belongs to.
+  final Context ctx;
+  final EffectRun _run;
+  void Function()? _cleanup;
+  bool _active = true;
+  bool _running = false;
+
+  /// Remove the eager observer. Invokes the last cleanup, then unsubscribes
+  /// from all dependencies. Idempotent.
+  void dispose() {
+    if (!_active) return;
+    _active = false;
+    ctx._pendingEffects.remove(this);
+    ctx._scheduledEffects.remove(this);
+    _detachUpstream();
+    final c = _cleanup;
+    _cleanup = null;
+    if (c != null) c();
+  }
+
+  /// Whether the effect is still active (not disposed).
+  bool get isActive => _active;
+
+  void _rerun() {
+    if (!_active || _running) return;
+    _running = true;
+    try {
+      _detachUpstream();
+      final prev = _cleanup;
+      _cleanup = null;
+      if (prev != null) prev();
+      ctx._stack.add(this);
+      try {
+        _cleanup = _run(ctx);
+      } finally {
+        ctx._stack.removeLast();
+      }
+    } finally {
+      _running = false;
+    }
+  }
+
+  @override
+  void onInvalidate() {
+    ctx._scheduleEffect(this);
+  }
+
+  @override
+  String toString() => 'Effect(${_active ? 'active' : 'disposed'})';
+}
+
+/// A lazy, cached, dependency-tracking computation with an equality guard.
+///
+/// [Memo] behaves like [Slot] but suppresses downstream invalidation when a
+/// recompute yields a value equal (`==`) to the previous one. This is the
+/// memo-equality invariant from the lazily-spec: "a dirty `memo()` that
+/// recomputes equal emits no `SlotValue` and no downstream `Invalidate`."
+///
+/// On invalidation, [Memo] eagerly recomputes (to check equality) rather than
+/// waiting for a read. If the new value equals the old, the downstream cascade
+/// is aborted and dependents stay cached.
+///
+///     final ctx = Context();
+///   final width = Cell<int>(ctx, 10);
+///   // area only cascades when width is even — odd widths give the same tag.
+///   final area = Memo<String>(ctx, (_) => width.value.isEven ? 'even' : 'odd');
+///   final dispose = area.subscribe... // (use an Effect to observe)
+class Memo<T> extends Slot<T> {
+  Memo(super.ctx, super.compute, {super.name});
+
+  bool _guardActive = false;
+
+  @override
+  void _invalidate() {
+    if (_guardActive) return;
+    _guardActive = true;
+    try {
+      _detachUpstream();
+      ctx._stack.add(this);
+      T newValue;
+      try {
+        newValue = _compute(ctx);
+      } finally {
+        ctx._stack.removeLast();
+      }
+      final hasOld = ctx.contains(this);
+      if (hasOld) {
+        final old = ctx.read(this) as T;
+        if (newValue == old) {
+          // Value unchanged — suppress the downstream cascade. Dependents
+          // stay cached; edges are already re-established by the recompute.
+          return;
+        }
+      }
+      // Value changed (or first compute) — update cache and cascade.
+      ctx.write(this, newValue);
+      if (_dependents.isEmpty) return;
+      final snapshot = _dependents.toList();
+      _dependents.clear();
+      for (final dependent in snapshot) {
+        dependent._invalidate();
+      }
+    } finally {
+      _guardActive = false;
+    }
+  }
+
+  @override
+  void onInvalidate() {
+    // Memo manages its own cache lifecycle inside [_invalidate]; the
+    // default eviction is intentionally bypassed.
   }
 }

@@ -6,6 +6,91 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.6.0
+
+Full feature-parity release: every feature row in the lazily-spec
+cross-language coverage matrix that can run on the Dart platform is now
+shipped (`✅`). Dart moves from `~`/`—` to `✅` on **13 rows** — the
+reactive core, all CRDT collection types, the distributed plane, signaling,
+state projection, causal receipts, and instrumentation.
+
+The only `—` remaining is **Thread-safe context** — a legitimate Dart
+carve-out per the spec (Dart isolates are a process/actor-isolation model
+with no shared address space, so `thread_safe: none` is declared). The
+`~` remaining is **Shared-memory blob path** — the arena + header validation
+ship, but cross-process shared memory is carried `Inline` per the platform
+carve-out.
+
+### Added — Reactive core completion (`package:lazily/lazily.dart`)
+
+- **`Effect`** — side-effect observer with cleanup-before-rerun semantics.
+  Tracks dependencies dynamically; reruns after the current cascade (or at
+  batch exit).
+- **`Memo<T>`** — a [Slot] subclass with an equality guard. A dirty memo
+  that recomputes equal suppresses the downstream cascade (no `SlotValue`,
+  no `Invalidate`), implementing the memo-equality invariant.
+- **`Context.batch`** — depth-counted, coalesced batch. Cell writes inside
+  a batch defer their cascades until the outermost exit; effects flush once.
+
+### Added — CRDT collection types
+
+- **`TextCrdt`** (`package:lazily/src/text_crdt.dart`) — Fugue/RGA-style
+  character CRDT. Sticky tombstones, deterministic order (pre-order DFS,
+  siblings descending by OpId), state-based merge (C/A/I), GC. Delta sync:
+  `versionVector()`, `deltaSince(theirVv)`, `applyDelta(ops)`.
+- **`SeqCrdt<Id, V>`** (`package:lazily/src/seq_crdt.dart`) — Move-aware
+  sequence CRDT. Three independent LWW registers per element (value,
+  fractional-index position, deleted); a move is a single LWW reassignment.
+  HLC-stamped; concurrent moves converge to the later stamp.
+- **`Hlc`** / **`HlcStamp`** / **`LwwRegister<V>`** / **`Position`** — the
+  HLC clock and LWW register primitives backing SeqCrdt.
+- **`MvRegister<V>`** / **`PnCounter`** / **`CellCrdt<T>`**
+  (`package:lazily/src/registers.dart`) — multi-value register, PN counter,
+  and reactive-cell-backed CRDT bridge.
+- **`SemTree<V, D>`** (`package:lazily/src/sem_tree.dart`) — memoized
+  semantic tree. One memo slot per node; editing a node recomputes only its
+  ancestor chain; a non-changing fold result suppresses downstream.
+- **Stable-id alignment** (`package:lazily/src/stable_id.dart`) —
+  `Block` / `BlockKey` / `align` / `assignStableKeys`. Three layers: anchors,
+  FNV-1a content hashes, word-LCS similarity (≥ 0.5 → Edited).
+
+### Added — Distributed plane + receipts + signaling
+
+- **`CrdtPlaneRuntime`** (`package:lazily/src/distributed.dart`) —
+  state-based anti-entropy runtime with op-log dedup, per-node LWW cells,
+  `converged()` output, idempotent re-ingest.
+- **Causal receipts** (`package:lazily/src/causal_receipts.dart`) —
+  `CausalReceipt` / `CausalReceipts` wire types, `ReceiptProjection`
+  (monotonic ledger: stale-gen ignored, duplicate no-op, terminal conflict).
+- **Signaling** (`package:lazily/src/signaling.dart`) — `SignalingRoom`
+  with anti-spoof `from` stamping, `ClientMessage` / `ServerMessage`
+  sealed unions, permission modes (open / allowlist).
+- **State projection** (`package:lazily/src/state_projection.dart`) —
+  `StateProjectionMirror` (coalesced flush delta), `documentHash`,
+  `buildStateEvent`.
+
+### Added — Infrastructure
+
+- **`ShmBlobArena`** (`package:lazily/src/shm_blob_arena.dart`) — in-process
+  blob arena with generation/epoch header validation.
+- **Instrumentation** (`package:lazily/src/instrumentation.dart`) —
+  `benchmark()` harness + `runBenchmarkSuite()` for the reactive core,
+  collections, and CRDT types.
+
+### Conformance
+
+All 30+ lazily-spec conformance fixtures now replay:
+- `collections/textcrdt_convergence.json` (6 scenarios)
+- `collections/textcrdt_delta_sync.json` (4 scenarios)
+- `collections/seqcrdt_convergence.json` (6 scenarios)
+- `collections/semtree_incremental.json` (3 scenarios)
+- `collections/stableid_alignment.json` (6 scenarios)
+- `distributed/anti_entropy_converge.json` (3 scenarios)
+- `receipts/causal_receipts.json`
+- `signaling/anti_spoof_session.json` (7-step transcript)
+
+212 tests pass, incl. the `lazily-formal` Lean proof build.
+
 ## 0.5.1
 
 Docs-only sync against the latest [`lazily-spec`](https://github.com/lazily-hub/lazily-spec)

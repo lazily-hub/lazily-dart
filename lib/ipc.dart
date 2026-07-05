@@ -4,13 +4,19 @@
 /// `CrdtSync`, `DeltaOp`, `NodeState`, `IpcValue`, `IpcMessage`, `NodeKey`,
 /// and the permission boundary), plus the lazily-lean transition helpers
 /// (`cellSetOps`, `memoOps`, `signalOps`, `BatchFlush`) that mirror the Lean 4
-/// formal model, and the distributed CRDT plane runtime (`Hlc`, `StampFrontier`,
-/// `CrdtPlane`) from `src/crdt.dart`.
+/// formal model, the distributed CRDT plane runtime (`Hlc`, `StampFrontier`,
+/// `CrdtPlane`, `CrdtPlaneRuntime`), causal receipts, and signaling.
 ///
 /// See `package:lazily/lazily.dart` for the reactive family
 /// (`Slot` / `Cell` / `Signal` / `StateMachine` / `StateChart` /
-/// `CellMap` / `CellTree`).
+/// `CellMap` / `CellTree` / `TextCrdt` / `SeqCrdt` / `SemTree`).
 library lazily.ipc;
 
+export 'src/causal_receipts.dart';
 export 'src/crdt.dart';
+export 'src/distributed.dart';
+export 'src/instrumentation.dart';
 export 'src/ipc.dart';
+export 'src/shm_blob_arena.dart';
+export 'src/signaling.dart';
+export 'src/state_projection.dart';
