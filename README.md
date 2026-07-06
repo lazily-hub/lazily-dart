@@ -194,6 +194,30 @@ notes and platform carve-outs lives in
 | Instrumentation / benchmarks | ✅ | ✅ | — | — | ✅ | ✅ | ✅ |
 <!-- coverage-table:end -->
 
+## Benchmarks
+
+Wall-clock benchmarks live in [`BENCHMARKS.md`](BENCHMARKS.md), with two
+runnable programs:
+
+- **Micro-benchmarks** — the in-library `runBenchmarkSuite` reactive-core,
+  collection, and CRDT paths (`Cell`/`Slot`/`Memo`/`batch`/`CellMap`/`TextCrdt`/
+  `SeqCrdt`). The reactive-core steady state is sub-microsecond per op.
+- **Scale** — a spreadsheet-shaped graph (`N` input cells + `N` formula slots,
+  `formula[i] = input[i] + input[i-1]`) replicating the lazily-rs `scale` group
+  and lazily-go. It runs a **full 10M-cell Google Sheets workbook**
+  (`N = 5,000,000`): build ~2.5 s, full cold recompute ~4 s, and a one-cell edit
+  + bounded-viewport read stays **size-independent at ~30 µs** (~136,000×
+  cheaper than a full recalc) — only the ~2 dependent formulas recompute.
+
+```bash
+dart run benchmark/micro_benchmark.dart
+dart run benchmark/scale_benchmark.dart                          # N = 1,000,000 (~2M nodes)
+LAZILY_SCALE_N=5000000 dart run benchmark/scale_benchmark.dart   # 10M cells (Google Sheets workbook)
+```
+
+See [`BENCHMARKS.md`](BENCHMARKS.md) for the measured results, hardware, and
+methodology.
+
 ## Status
 
 Full feature coverage on the Dart platform. Every feature row in the
