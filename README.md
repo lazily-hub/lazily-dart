@@ -181,9 +181,9 @@ notes and platform carve-outs lives in
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Move-aware sequence CRDT (`SeqCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Lossless tree CRDT core (`LosslessTreeCrdt`, M1) | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| Lossless tree — dotted-frontier anti-entropy | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
-| Lossless tree — concurrent merge convergence | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
+| Lossless tree CRDT core (`LosslessTreeCrdt`, M1) | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Lossless tree — dotted-frontier anti-entropy | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
+| Lossless tree — concurrent merge convergence | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | IPC wire — `Snapshot` + `Delta` + `CrdtSync` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ~ | ~ | ✅ | ✅ |
@@ -191,7 +191,7 @@ notes and platform carve-outs lives in
 | Distributed plane — WebRTC transport + signaling | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | State projection / mirror | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Causal receipts (`CausalReceipts` outcome projection) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Message-passing + RPC command plane (`command-plane-v1`) | ✅ | ✅ | ✅ | ✅ | — | — | ✅ |
+| Message-passing + RPC command plane (`command-plane-v1`) | ✅ | ✅ | ✅ | ✅ | ✅ | — | ✅ |
 | C-ABI FFI boundary | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
 | Permission boundary (`PeerPermissions` / `RemoteOp`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Capability negotiation (`SessionHandshake`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -236,6 +236,7 @@ The only `—` is **Thread-safe context** — a legitimate Dart carve-out
 | Flat state machine + Harel state charts | `package:lazily/lazily.dart` |
 | TextCrdt (char CRDT) + delta sync | `package:lazily/lazily.dart` |
 | SeqCrdt (move-aware sequence CRDT) + Hlc + LwwRegister | `package:lazily/lazily.dart` |
+| Lossless tree CRDT (`LosslessTreeCrdt` M1 + dotted-frontier delta sync) | `package:lazily/lazily.dart` |
 | Registers (MV / PnCounter / CellCrdt) | `package:lazily/lazily.dart` |
 | SemTree (memoized semantic tree) | `package:lazily/lazily.dart` |
 | Stable-id alignment | `package:lazily/lazily.dart` |
@@ -243,6 +244,7 @@ The only `—` is **Thread-safe context** — a legitimate Dart carve-out
 | IPC (`Snapshot` + `Delta` + `CrdtSync`) | `package:lazily/ipc.dart` |
 | Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | `package:lazily/ipc.dart` |
 | Causal receipts (`CausalReceipt` / `ReceiptProjection`) | `package:lazily/ipc.dart` |
+| Command/RPC message plane (`CommandSubmit`/`Cancel`/`Events`/`Projection` + `CommandRpcClient`) | `package:lazily/ipc.dart` |
 | Signaling (`SignalingRoom` / `ClientMessage` / `ServerMessage`) | `package:lazily/ipc.dart` |
 | State projection / mirror (`StateProjectionMirror`) | `package:lazily/ipc.dart` |
 | ShmBlobArena (in-process blob arena + header validation) | `package:lazily/ipc.dart` |
