@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.7.0
+
+Lossless tree CRDT + command/RPC message plane. Dart now ships the two
+remaining feature rows from the lazily-spec cross-language matrix (Dart
+column → `✅` on lossless-tree ×3 + message-passing). The only Dart `—` is
+**Thread-safe context** (isolate carve-out) and the `~` is **Shared-memory
+blob path** (I/O-channel fallback) — both documented platform carve-outs.
+
+### Added — Lossless tree CRDT (`package:lazily/src/lossless_tree_crdt.dart`)
+
+- **`LosslessTreeCrdt`** — lossless concrete-syntax tree CRDT (M1). Leaves
+  own every rendered byte; internal Element nodes own structure only, so
+  invalid/unknown spans round-trip exactly as Raw/Error leaves. Ops:
+  CreateNode / Tombstone / Reorder / LeafEdit / SplitLeaf / MergeLeaves,
+  plus op-based delta sync over a dotted non-contiguous version frontier
+  (`TreeVersionFrontier`). Leaves embed `TextCrdt`; child order reuses
+  `SeqCrdt`'s fractional index (`keyBetween`); the clock is a Lamport
+  `TreeOpId`. Leaf-local text offsets on the wire are UTF-8 bytes (via
+  `utf8_offsets`). Wire parity with lazily-rs/kt/js. Replays all 9
+  lazily-spec/conformance/lossless-tree/ fixtures.
+
+### Added — Command/RPC message plane (`command-plane-v1`, `package:lazily/src/command.dart`)
+
+- **`CommandSubmit` / `CommandCancel` / `CommandEvents` / `CommandProjection`**
+  — the evented command message family, an additive sibling to
+  Snapshot/Delta/CrdtSync. Terminal authority is the causal receipt, not
+  the event or transport. RPC is a facade (`CommandRpcClient.call` /
+  `submit` / `cancel`) over the `CommandProjection` reducer; a unary `call`
+  resolves only on a terminal projection. Wire parity with lazily-rs/kt/js.
+  Replays all 8 lazily-spec/conformance/message-passing/ fixtures.
+
 ## 0.6.0
 
 Full feature-parity release: every feature row in the lazily-spec
