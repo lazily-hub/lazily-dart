@@ -6,7 +6,8 @@
 /// CRDT collection types (`TextCrdt`, `SeqCrdt`) are in
 /// `package:lazily/src/text_crdt.dart` and `package:lazily/src/seq_crdt.dart`.
 /// `SemTree` is in `package:lazily/src/sem_tree.dart`, and stable-id alignment
-/// is in `package:lazily/src/stable_id.dart`. The lossless full-document tree
+/// is in `package:lazily/src/stable_id.dart`. The reactive queue (`QueueCell`)
+/// is in `package:lazily/src/queue.dart`. The lossless full-document tree
 /// CRDT (`LosslessTreeCrdt`, `#lzlosstree`) is in
 /// `package:lazily/src/lossless_tree_crdt.dart`, with UTF-8 offset helpers in
 /// `package:lazily/src/utf8_offsets.dart`.
@@ -22,6 +23,7 @@ export 'src/async_context.dart';
 export 'src/collections.dart';
 export 'src/core.dart';
 export 'src/lossless_tree_crdt.dart';
+export 'src/queue.dart';
 export 'src/registers.dart';
 export 'src/sem_tree.dart';
 export 'src/seq_crdt.dart';

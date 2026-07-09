@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.8.0
+
+Reactive queue — `QueueCell` SPSC/MPSC primitive + `QueueStorage` adapter
+seam. Dart now ships the reactive queue row from the lazily-spec cross-language
+matrix (Dart column → `✅`). Mirrors `lazily-spec/cell-model.md` § "Reactive
+queues" and `lazily-formal/LazilyFormal/QueueCell.lean`.
+
+### Added — Reactive queue (`package:lazily/src/queue.dart`)
+
+- **`QueueCell<T>`** — a reactive FIFO queue: SPSC primitive with an MPSC
+  usage rule (multiple producers push inside a `Context.batch`; there is no
+  separate MPSC type). The reactive shell owns five reader-kind version cells
+  (`head` / `len` / `is_empty` / `is_full` / `closed`) and invalidates by
+  reader kind — a push to a non-empty queue does NOT invalidate the `head`
+  reader, a pop does. This reader-kind independence falls out of the `!=` guard
+  on `Cell.value`'s setter: after each op the shell re-derives each reader-kind
+  cell from the storage and writes it back in one atomic `batch`, and a cell
+  whose value did not change is not invalidated.
+- **`QueueStorage<T>`** — the pluggable storage adapter interface. The shell /
+  storage split keeps the reactive shell storage-agnostic; a `RaftQueueStorage`
+  (embedded consensus, per the distributed-queue PRD) or an external-broker
+  adapter (`KafkaStorage`, etc.) plugs into the same reactive shell.
+- **`VecDequeStorage<T>`** — the reference `ListQueue`-backed FIFO, optionally
+  bounded. Unbounded is the default; bounded exposes reactive backpressure via
+  `isFull` (a pop that transitions full → not-full invalidates `is_full`
+  readers — the backpressure recovery signal). Overflow policy is **reject**
+  (`tryPush` at capacity returns `Full`; elements are never silently dropped).
+- **Closure lifecycle** — close is idempotent and terminal; pop on closed +
+  non-empty drains (returns the next element); pop on closed + empty returns
+  `Closed` (distinct from `Empty`); push on closed returns `Closed`.
+- **`QueuePushError` / `QueuePopError` / `QueuePopResult`** — sealed union
+  types for the observable rejection labels.
+- **Conformance** — replays all 5 `lazily-spec/conformance/collections/
+  queuecell_*.json` fixtures (`spsc_push_pop`, `popped_head_observation`,
+  `mpsc_multi_writer`, `bounded_backpressure`, `closure_lifecycle`) using the
+  live reactive graph as invalidation probes, plus unit tests for
+  `VecDequeStorage` FIFO/bounded/zero-capacity, closure drain, bounded
+  backpressure, reader-kind independence, pluggable custom storage, and
+  snapshot round-trip. 250 tests pass.
+
 ## 0.7.0
 
 Lossless tree CRDT + command/RPC message plane. Dart now ships the two
