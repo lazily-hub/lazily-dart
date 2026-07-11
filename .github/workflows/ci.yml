@@ -10,19 +10,40 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Run every dart command from the package dir so the conformance tests'
+        # sibling fixture path (`../lazily-spec/conformance/...`) resolves inside
+        # the workspace.
+        working-directory: lazily-dart
     strategy:
       fail-fast: false
       matrix:
         sdk: [stable, beta]
     steps:
-      - uses: actions/checkout@v4
+      # Check out lazily-dart into a subdirectory so its sibling repos
+      # (`../lazily-spec`, `../lazily-formal`) can live beside it in the
+      # workspace — `actions/checkout` cannot write above `$GITHUB_WORKSPACE`.
+      - name: Checkout lazily-dart
+        uses: actions/checkout@v4
+        with:
+          path: lazily-dart
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: ${{ matrix.sdk }}
 
-      # Check out the sibling lazily-formal Lean model so `dart test`'s
-      # formal_check_test builds the proofs for real (instead of SKIP-ing).
-      # LAZILY_FORMAL_PATH points tool/formal_check.dart at the checkout.
+      # Sibling lazily-spec so the conformance tests (statechart / message-passing
+      # / distributed / collections) resolve `../lazily-spec/conformance/...`
+      # fixtures that are not copied into `test/conformance/`.
+      - name: Checkout lazily-spec (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: lazily-hub/lazily-spec
+          path: lazily-spec
+
+      # Sibling lazily-formal Lean model so `dart test`'s formal_check_test builds
+      # the proofs for real (instead of SKIP-ing). LAZILY_FORMAL_PATH points
+      # tool/formal_check.dart at the checkout.
       - name: Checkout lazily-formal (sibling)
         uses: actions/checkout@v4
         with:
