@@ -98,12 +98,56 @@ class NodeKey {
   String toString() => 'NodeKey($path)';
 }
 
+/// Which pluggable blob backend resolves a [ShmBlobRef] descriptor
+/// (`#lzzcpy`, zero-copy transport).
+///
+/// A receiver routes descriptor resolution by this discriminator: a `shm`
+/// descriptor never resolves against an `arrow` table and vice versa (the
+/// `resolve_wrong_backend` law). The field is **optional on the wire and
+/// defaults to [shm]**, so every legacy descriptor validates unchanged — the
+/// transport is a strict superset of the pre-existing shared-memory blob path.
+///
+/// Mirrors `BlobBackendKind` in `lazily-rs/src/ipc.rs` and the `backend` enum in
+/// `lazily-spec/docs/zero-copy-transport.md`.
+enum BlobBackendKind {
+  /// POSIX shared-memory region — the cross-process default. Wire: `"shm"`.
+  shm('shm'),
+
+  /// Apache Arrow IPC stream / Flight-resolved buffer. Wire: `"arrow"`.
+  arrow('arrow'),
+
+  /// An in-process arena (single address space — the FFI host ↔ an in-process
+  /// binding). Wire: `"in_process"`.
+  inProcess('in_process');
+
+  const BlobBackendKind(this.wire);
+
+  /// The snake_case wire string.
+  final String wire;
+
+  /// Parse a wire string into a [BlobBackendKind].
+  static BlobBackendKind fromWire(Object? value) {
+    if (value is! String) {
+      throw FormatException(
+          'backend must be a string, got ${value.runtimeType}');
+    }
+    for (final kind in BlobBackendKind.values) {
+      if (kind.wire == value) return kind;
+    }
+    throw FormatException('unknown blob backend kind: $value');
+  }
+}
+
 /// Descriptor into a shared-memory blob arena (protocol.md § Shared-memory IPC).
 ///
 /// `ShmBlobArena` writes a fixed header before each payload:
 /// `{ generation, epoch, length, checksum }`. Readers validate the header
 /// before accepting a descriptor. This class is the wire mirror of that
 /// descriptor; arena I/O itself is implementation-local.
+///
+/// The optional [backend] discriminator (`#lzzcpy`) selects which pluggable blob
+/// backend resolves the descriptor; it defaults to [BlobBackendKind.shm] and is
+/// omitted from the wire in that case for backward compatibility.
 class ShmBlobRef {
   /// Constructs a [ShmBlobRef], rejecting negative fields.
   ShmBlobRef({
@@ -112,6 +156,7 @@ class ShmBlobRef {
     required int generation,
     required int epoch,
     required int checksum,
+    this.backend = BlobBackendKind.shm,
   })  : offset = _nonNeg(offset, 'offset'),
         len = _nonNeg(len, 'len'),
         generation = _nonNeg(generation, 'generation'),
@@ -124,6 +169,10 @@ class ShmBlobRef {
   final int epoch;
   final int checksum;
 
+  /// The pluggable backend that resolves this descriptor (default
+  /// [BlobBackendKind.shm]).
+  final BlobBackendKind backend;
+
   static int _nonNeg(int v, String name) {
     if (v.isNaN || v.isInfinite || v < 0) {
       throw ArgumentError('$name must be a non-negative integer (was $v)');
@@ -131,22 +180,39 @@ class ShmBlobRef {
     return v;
   }
 
+  /// Return a copy tagged with [backend].
+  ShmBlobRef withBackend(BlobBackendKind backend) => ShmBlobRef(
+        offset: offset,
+        len: len,
+        generation: generation,
+        epoch: epoch,
+        checksum: checksum,
+        backend: backend,
+      );
+
   Map<String, Object> toWire() => {
         'offset': offset,
         'len': len,
         'generation': generation,
         'epoch': epoch,
         'checksum': checksum,
+        // Omit the default `shm` so legacy (backend-absent) descriptors encode
+        // byte-identically — the transport is a strict superset.
+        if (backend != BlobBackendKind.shm) 'backend': backend.wire,
       };
 
   static ShmBlobRef fromWire(Object? value) {
     final obj = _asObject(value, 'ShmBlobRef');
+    final backendWire = obj['backend'];
     return ShmBlobRef(
       offset: _reqInt(obj, 'offset'),
       len: _reqInt(obj, 'len'),
       generation: _reqInt(obj, 'generation'),
       epoch: _reqInt(obj, 'epoch'),
       checksum: _reqInt(obj, 'checksum'),
+      backend: backendWire == null
+          ? BlobBackendKind.shm
+          : BlobBackendKind.fromWire(backendWire),
     );
   }
 
@@ -157,16 +223,17 @@ class ShmBlobRef {
       other.len == len &&
       other.generation == generation &&
       other.epoch == epoch &&
-      other.checksum == checksum;
+      other.checksum == checksum &&
+      other.backend == backend;
 
   @override
   int get hashCode =>
-      Object.hash(offset, len, generation, epoch, checksum);
+      Object.hash(offset, len, generation, epoch, checksum, backend);
 
   @override
   String toString() =>
       'ShmBlobRef(offset=$offset, len=$len, generation=$generation, '
-      'epoch=$epoch, checksum=$checksum)';
+      'epoch=$epoch, checksum=$checksum, backend=${backend.wire})';
 }
 
 /// The body of a `NodeSnapshot` / `NodeAdd` (protocol.md § NodeState).

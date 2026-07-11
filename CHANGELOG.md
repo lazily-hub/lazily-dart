@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.9.0
+
+Two cross-language coverage rows land in the Dart column (`—` → `✅`):
+
+**Reactive family (`ReactiveFamily`) + materialization mode (`#lzmatmode`).**
+A unified keyed reactive family (`lib/src/reactive_family.dart`, exported from
+`package:lazily/lazily.dart`) that maps keys to per-entry reactive nodes and
+abstracts over the entry's handle kind:
+
+- `EntryKind.cell` entries are **input** cells — always materialized, any mode.
+- `EntryKind.slot` entries are **derived** slots — governed by materialization
+  mode.
+- `MaterializationMode.eager` (the required default) allocates every declared
+  node up front; `MaterializationMode.lazy` defers each derived node to its
+  first read ("materialize on pull"), keyed rather than handle-addressed.
+
+Materialization mode is orthogonal to entry kind and never observable on the
+value axis (`observe` returns identical values under either mode). `cellFamily`
+is the input-cell specialization. Mirrors
+`lazily-rs/src/reactive_family.rs` and the `lazily-spec/cell-model.md`
+`ReactiveFamily` vehicle; pinned by the shared
+`conformance/materialization/*.json` fixtures and the `lazily-formal`
+`Materialization` proofs (`observe_canonical`,
+`cell_entries_materialized_in_every_mode`, `slot_entries_deferred_under_lazy`,
+`materialize_present_monotone`, `lazy_present_subset_eager`).
+
+**Cross-process zero-copy transport (`BlobBackend` / shm / arrow, `#lzzcpy`).**
+Large IPC payloads spill to a pluggable blob backend and cross the wire as a
+small descriptor rather than a copy (`lib/src/transport.dart`, exported from
+`package:lazily/ipc.dart`):
+
+- `BlobBackend` adapter seam: `write(bytes) → ShmBlobRef`, `readView(desc)`
+  zero-copy resolve, `advanceEpoch()`.
+- `InProcessBackend` and `ArrowBackend` in-process adapters (the isolate model
+  has no cross-process shared memory — the `shared_memory: partial` carve-out;
+  a real POSIX `shm` region would need `dart:ffi`).
+- `BlobRouter` receiver-side multi-backend resolver routing by the descriptor's
+  `backend` discriminator, plus `spillMessage` / `spillValue` / `resolveValue`
+  policy.
+
+`ShmBlobRef` gains an optional `backend` discriminator (`BlobBackendKind` —
+`shm` (default) / `arrow` / `in_process`); it is omitted from the wire when
+`shm`, so every legacy descriptor round-trips byte-identically. Mirrors
+`lazily-rs/src/transport.rs` and `lazily-spec/docs/zero-copy-transport.md`;
+pinned by `conformance/delta_zero_copy_arrow.json` and the `lazily-formal`
+`ZeroCopyTransport` proofs (`resolve_write`, `resolve_wrong_backend`,
+`resolve_stale_generation`, `resolve_corrupt_checksum`, `transport_roundtrip`).
+
 ## 0.8.0
 
 Reactive queue — `QueueCell` SPSC/MPSC primitive + `QueueStorage` adapter

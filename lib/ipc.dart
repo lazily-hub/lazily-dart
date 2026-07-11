@@ -23,3 +23,4 @@ export 'src/ipc.dart';
 export 'src/shm_blob_arena.dart';
 export 'src/signaling.dart';
 export 'src/state_projection.dart';
+export 'src/transport.dart';

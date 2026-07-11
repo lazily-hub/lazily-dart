@@ -109,5 +109,12 @@ int _fnv1a(Uint8List bytes) {
     hash = (hash ^ b) & 0xFFFFFFFFFFFFFFFF;
     hash = (hash * prime) & 0xFFFFFFFFFFFFFFFF;
   }
-  return hash;
+  // Dart's native `int` is signed 64-bit, so a full-width FNV-1a-64 with the
+  // top bit set would be negative — which `ShmBlobRef` (and the wire schema)
+  // reject, since a descriptor's fields are unsigned. Fold into the
+  // non-negative 63-bit range. This is a Dart-internal arena checksum (the
+  // isolate model has no cross-process shared memory — the `shared_memory:
+  // partial` carve-out per lazily-spec), so it need not be byte-compatible with
+  // the rs/py/zig FNV-1a-64; only self-consistent between write and read.
+  return hash & 0x7FFFFFFFFFFFFFFF;
 }
