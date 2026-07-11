@@ -1,16 +1,27 @@
-/// Shared-memory blob arena — in-process blob storage with header validation.
+/// Shared-memory blob arena — byte storage with header validation and a
+/// zero-copy cross-isolate transfer path.
 ///
 /// The arena writes a fixed header before each payload: `{generation, epoch,
 /// length, checksum}`. Readers validate the header before accepting a
-/// descriptor. On Dart (isolate model — no shared address space across
-/// processes), this is an in-process byte arena: the descriptors and validation
-/// are conformant, but cross-process shared memory is carried `Inline` over IPC
-/// (the `shared_memory: partial` carve-out per `lazily-spec`).
+/// descriptor.
+///
+/// **Cross-isolate shared-memory path.** Dart's concurrency model gives each
+/// isolate a private heap — there is no `mmap`/`SharedArrayBuffer`-style shared
+/// address space. Its faithful counterpart is [TransferableTypedData]
+/// (`dart:isolate`): a **zero-copy MOVE** of a payload buffer to a receiving
+/// isolate — the sender relinquishes the buffer, the receiver adopts it with no
+/// byte copy. [ShmBlobArena.transfer] packages a validated blob as a
+/// [ShmBlobTransfer] (descriptor + moved payload) that crosses a `SendPort`
+/// zero-copy; the receiver calls [ShmBlobTransfer.receive] to adopt the buffer
+/// and re-validate the header. This is the isolate-model realization of the
+/// shared-memory blob path — the same zero-copy discipline the
+/// `BlobBackend` transport (`#lzzcpy`) uses, applied to the arena.
 ///
 /// Mirrors `lazily-spec § Shared-memory IPC` and `protocol.md § Shared-memory
 /// payload path`.
 library;
 
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'ipc.dart';
@@ -88,6 +99,45 @@ class ShmBlobArena {
     for (final entry in _entries) {
       entry.epoch = epoch;
     }
+  }
+
+  /// Package blob [ref] for a **zero-copy cross-isolate move** — Dart's
+  /// shared-memory blob path. Returns a [ShmBlobTransfer] (the descriptor paired
+  /// with the payload wrapped in [TransferableTypedData]) to send over a
+  /// [SendPort], or `null` if [ref] is stale (header validation fails). The
+  /// payload buffer is MOVED, not copied: after the receiving isolate
+  /// materializes it, this arena's copy of those bytes must not be used.
+  ShmBlobTransfer? transfer(ShmBlobRef ref) {
+    final bytes = read(ref);
+    if (bytes == null) return null;
+    return ShmBlobTransfer(ref, TransferableTypedData.fromList([bytes]));
+  }
+}
+
+/// A zero-copy cross-isolate blob transfer: a [ShmBlobRef] descriptor paired
+/// with its payload wrapped in [TransferableTypedData]. Sendable over a
+/// [SendPort]; the wrapped buffer crosses to the receiving isolate with **no
+/// copy** (a move). The receiver calls [receive] once to adopt the payload and
+/// re-validate it against the header. Dart's isolate-model realization of the
+/// shared-memory blob path (see [ShmBlobArena]).
+class ShmBlobTransfer {
+  ShmBlobTransfer(this.ref, this.data);
+
+  /// The blob descriptor (header): `{offset, len, generation, epoch, checksum}`.
+  final ShmBlobRef ref;
+
+  /// The moved payload buffer (adopted zero-copy by the receiving isolate).
+  final TransferableTypedData data;
+
+  /// Adopt the moved payload (zero-copy) and validate it against [ref]'s header.
+  /// Returns the bytes, or `null` on a length/checksum/header mismatch. Call at
+  /// most once — [TransferableTypedData.materialize] consumes the buffer.
+  Uint8List? receive() {
+    if (ref.len < 0 || ref.generation < 0 || ref.epoch < 0) return null;
+    final bytes = data.materialize().asUint8List();
+    if (bytes.length != ref.len) return null;
+    if (_fnv1a(bytes) != ref.checksum) return null;
+    return bytes;
   }
 }
 

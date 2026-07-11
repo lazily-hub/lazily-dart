@@ -16,10 +16,15 @@
 /// ...) live in `package:lazily/ipc.dart`. The C-ABI FFI boundary lives in
 /// `package:lazily/ffi.dart`, capability negotiation in
 /// `package:lazily/capability.dart`, and the async reactive context in
-/// `package:lazily/async_context.dart`.
+/// `package:lazily/async_context.dart`. The concurrency layers
+/// (`ThreadSafeContext` + pure batch-flush kernel, `ThreadSafeReactiveFamily`,
+/// and `AsyncReactiveFamily`) live in `package:lazily/src/thread_safe.dart`,
+/// `package:lazily/src/thread_safe_reactive_family.dart`, and
+/// `package:lazily/src/async_reactive_family.dart`.
 library;
 
 export 'src/async_context.dart';
+export 'src/async_reactive_family.dart';
 export 'src/collections.dart';
 export 'src/core.dart';
 export 'src/lossless_tree_crdt.dart';
@@ -32,4 +37,6 @@ export 'src/stable_id.dart';
 export 'src/state_chart.dart';
 export 'src/state_machine.dart';
 export 'src/text_crdt.dart';
+export 'src/thread_safe.dart';
+export 'src/thread_safe_reactive_family.dart';
 export 'src/utf8_offsets.dart';

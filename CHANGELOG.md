@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.10.0
+
+**Full feature parity.** The remaining concurrency rows land in the Dart
+column of the lazily-spec cross-language matrix (`—`/`~` → `✅`) — Dart now
+ships every row.
+
+**Thread-safe context (lock-backed) — `lib/src/thread_safe.dart`.**
+`ThreadSafeContext` wraps a `Context` behind a **reentrant run-to-completion
+guard**. Dart isolates have no shared mutable heap, so — exactly as JavaScript
+ships this layer on its single-realm event loop — synchronous code runs to
+completion and already serializes access; the guard is a reentrant depth
+counter, not an OS lock. Ships the pure batch-flush kernel (`applyBatch` /
+`flushBatch` / `unionDependents`) as a faithful port of the
+`LazilyFormal.ThreadSafe` model, property-tested independently of the live
+graph (`flushBatch_singleton_eq_setCell` and the coalesced-frontier laws).
+
+**Thread-safe reactive family — `lib/src/thread_safe_reactive_family.dart`.**
+`ThreadSafeReactiveFamily<K, V>`: the guarded, value-caching flavor of
+`ReactiveFamily` with the same eager/lazy contract, observational transparency,
+present-set monotonicity, and **materialization confluence**
+(`materialize_present_comm` / `materialize_observe_comm`). Factories
+`eagerSlotFamily` / `lazySlotFamily` / `eagerCellFamily` / `lazyCellFamily`.
+
+**Async reactive family — `lib/src/async_reactive_family.dart`.**
+`AsyncReactiveFamily<K, V>` adds a resolution axis (pending → resolved via
+`drive`) orthogonal to the present-set. Non-blocking `observe` returns
+`(null, false)` while pending and `(value, true)` once resolved — the
+**eventual-transparency** law (`AsyncMaterialization.lean`).
+
+**Reactive family sync (`#lzfamilysync`) — `lib/src/distributed.dart`.**
+`CrdtPlaneRuntime` gains `registerFamilyLww` / `familySetLww` / `familyKeys` /
+`familyValueLww` / `familyCountTrue` / `membershipEpoch`. A keyed op for an
+unregistered family entry **materializes on ingest** (membership propagates,
+values are adopted, LWW updates converge, re-ingest is idempotent, and a
+derived aggregate converges) — replays
+`conformance/familysync/materialize_on_ingest.json`
+(`FamilySync.lean`: `applyOp_absent_adopts`, `present_merge`, `applyOp_idem`,
+`aggregate_converges`).
+
+**Shared-memory blob path (`~` → `✅`) — `lib/src/shm_blob_arena.dart`.**
+`ShmBlobArena.transfer` packages a validated blob as a `ShmBlobTransfer`
+(descriptor + `TransferableTypedData`) for a **zero-copy cross-isolate move** —
+Dart's isolate-model counterpart of the `mmap`/`SharedArrayBuffer` shared-memory
+path. The receiver adopts the moved buffer and re-validates the header.
+`test/shm_isolate_test.dart` demonstrates real multi-isolate parallelism:
+zero-copy blob hand-off and family CRDT convergence across isolates,
+order-independent.
+
 ## 0.9.0
 
 Two cross-language coverage rows land in the Dart column (`—` → `✅`):

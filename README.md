@@ -151,6 +151,10 @@ finite fixture suite can establish:
 |----------------------|----------------|-------------------|
 | `StateMachine` / `StateChart` | `test/statechart_properties_test.dart` | `enabled_empty_rejects`, `send_preserves_chart`, determinism-by-construction, `single_region_refines_flat_machine`, `single_region_enabled_at_most_one`, `parallel_region_confluence`, `recordHistory_idempotent`, `send_actions_empty_when_rejected` |
 | `Reactive` | `test/reactive_properties_test.dart` | `setCell_equal_preserves_graph`, `setCell_different_invalidates_dependents`, `recomputeSlot_equal_preserves_dependents`, `recomputeSlot_different_invalidates_dependents`, `signal_materialized_after_recompute` |
+| `ThreadSafe` | `test/thread_safe_test.dart` | `flushBatch_singleton_eq_setCell`, `flushBatch_dependent_dirty`, `flushBatch_preserves_nondependent_dirty`, coalesced-frontier dedup |
+| `Materialization` | `test/thread_safe_reactive_family_test.dart` | `materialize_present_comm`, `materialize_observe_comm` (confluence), `materialize_preserves_observe` |
+| `AsyncMaterialization` | `test/async_reactive_family_test.dart` | `eventual_transparency`, `async_resolved_matches_sync`, `observe_pending_is_none`, `cell_resolved_at_build`, `resolve_monotone` |
+| `FamilySync` | `test/familysync_conformance_test.dart` | `applyOp_absent_adopts`, `present_merge`, `applyOp_idem`, `aggregate_converges` |
 
 ## lazily-spec IPC
 
@@ -172,10 +176,10 @@ notes and platform carve-outs lives in
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: |
 | Reactive graph — `Cell` / `Slot` / `Signal` / `Effect` / memo / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive family (`ReactiveFamily`) — keyed cell/slot family + materialization mode (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Thread-safe reactive family (`ThreadSafeReactiveFamily`) — `Send + Sync` keyed family + materialization confluence (`#lzmatmode`) | ✅ | ✅ | — | ✅ | — | ✅ | ✅ | ✅ |
-| Async reactive family (`AsyncReactiveFamily`) — keyed family + eventual transparency (`#lzmatmode`) | ✅ | ✅ | — | ✅ | — | ✅ | ✅ | ✅ |
-| Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
-| Thread-safe context (lock-backed) | ✅ | ✅ | ✅ | ✅ | — | ✅ | ✅ | ✅ |
+| Thread-safe reactive family (`ThreadSafeReactiveFamily`) — `Send + Sync` keyed family + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Async reactive family (`AsyncReactiveFamily`) — keyed family + eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reactive family sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Thread-safe context (lock-backed) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Harel state charts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -191,7 +195,7 @@ notes and platform carve-outs lives in
 | Lossless tree — concurrent merge convergence | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Registers (LWW / MV) + `PnCounter` + `CellCrdt` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | IPC wire — `Snapshot` + `Delta` + `CrdtSync` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ✅ | ~ | ✅ | ✅ | ✅ |
+| Shared-memory blob path (`ShmBlobArena`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Cross-process zero-copy transport (`BlobBackend` / shm / arrow) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Distributed plane — WebRTC transport + signaling | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -230,10 +234,20 @@ methodology.
 
 ## Status
 
-Full feature coverage on the Dart platform. Every feature row in the
-lazily-spec cross-language matrix that can run on Dart is shipped (`✅`).
-The only `—` is **Thread-safe context** — a legitimate Dart carve-out
-(isolates = no shared address space; `thread_safe: none` declared).
+**Full feature parity on the Dart platform** — every row of the lazily-spec
+cross-language matrix is shipped (`✅`), including the concurrency layers.
+
+Dart isolates have no shared mutable heap, so the "thread-safe" layers are
+realized the same way JavaScript ships them on its single-realm event loop:
+within an isolate, synchronous code runs to completion and already serializes
+access, so `ThreadSafeContext` / `ThreadSafeReactiveFamily` use a **reentrant
+run-to-completion guard** and the deterministic batch-coalescing kernel proven
+equivalent to `LazilyFormal.ThreadSafe`. Genuine cross-isolate parallelism is
+served by (a) `TransferableTypedData` for the **zero-copy shared-memory blob
+path** (`ShmBlobArena.transfer`, a zero-copy move — Dart's isolate-model
+counterpart of `mmap`/`SharedArrayBuffer`) and (b) the CRDT wire protocol for
+replicated state — reconciled with materialization confluence under real
+multi-isolate workloads (`test/shm_isolate_test.dart`).
 
 | Layer | Where |
 |-------|-------|
@@ -247,13 +261,17 @@ The only `—` is **Thread-safe context** — a legitimate Dart carve-out
 | SemTree (memoized semantic tree) | `package:lazily/lazily.dart` |
 | Stable-id alignment | `package:lazily/lazily.dart` |
 | Async reactive context | `package:lazily/async_context.dart` |
+| Reactive family (`ReactiveFamily`, `#lzmatmode`) | `package:lazily/lazily.dart` |
+| Thread-safe context + reactive family (`ThreadSafeContext` / `ThreadSafeReactiveFamily`) | `package:lazily/lazily.dart` |
+| Async reactive family (`AsyncReactiveFamily`) | `package:lazily/lazily.dart` |
+| Reactive family sync (`#lzfamilysync`, materialize-on-ingest) | `package:lazily/ipc.dart` |
 | IPC (`Snapshot` + `Delta` + `CrdtSync`) | `package:lazily/ipc.dart` |
 | Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | `package:lazily/ipc.dart` |
 | Causal receipts (`CausalReceipt` / `ReceiptProjection`) | `package:lazily/ipc.dart` |
 | Command/RPC message plane (`CommandSubmit`/`Cancel`/`Events`/`Projection` + `CommandRpcClient`) | `package:lazily/ipc.dart` |
 | Signaling (`SignalingRoom` / `ClientMessage` / `ServerMessage`) | `package:lazily/ipc.dart` |
 | State projection / mirror (`StateProjectionMirror`) | `package:lazily/ipc.dart` |
-| ShmBlobArena (in-process blob arena + header validation) | `package:lazily/ipc.dart` |
+| ShmBlobArena (blob arena + header validation + zero-copy cross-isolate transfer) | `package:lazily/ipc.dart` |
 | C-ABI FFI boundary (`LazilyFfi*`, `CrdtSync = 3`) | `package:lazily/ffi.dart` |
 | Permission boundary (`RemoteOp` / `PeerPermissions`) | `package:lazily/ipc.dart` |
 | Capability negotiation | `package:lazily/capability.dart` |
