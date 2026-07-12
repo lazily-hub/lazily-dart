@@ -1,151 +1,120 @@
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
-/// Unit tests for the unified keyed reactive family ([ReactiveFamily]) and its
-/// materialization mode (`#lzmatmode`). Mirrors the Rust unit tests in
-/// `lazily-rs/src/reactive_family.rs`.
+/// Unit tests for the unified keyed reactive map ([ReactiveMap]) and its
+/// [CellMap] / [SlotMap] specializations (`#reactivemap`). Mirrors the Rust unit
+/// tests in `lazily-rs/src/cell_family.rs`. (Reactive membership/order/move
+/// independence is covered by `collections_conformance_test.dart`.)
 void main() {
-  group('ReactiveFamily materialization mode', () {
-    test('default mode is eager', () {
-      expect(kDefaultMaterializationMode, MaterializationMode.eager);
+  group('CellMap specialization', () {
+    test('entry caches one cell per key', () {
       final ctx = Context();
-      final fam = ReactiveFamily.create<int, int>(ctx, [1], (k) => k);
-      expect(fam.mode, MaterializationMode.eager);
+      final map = CellMap<String, int>(ctx);
+      final a1 = map.entry('a', 1);
+      final a2 = map.entry('a', 999);
+      // Same key -> same cell; the second default is ignored.
+      expect(identical(a1, a2), isTrue);
+      expect(a1.get(), 1);
+      expect(map.lenUntracked, 1);
+      expect(map.entryKind, EntryKind.cell);
     });
 
-    test('eager materializes all up front', () {
+    test('getOrInsertWith mints once then returns existing', () {
       final ctx = Context();
-      final fam =
-          ReactiveFamily.eager<int, int>(ctx, [0, 1, 2, 5, 9], (k) => k * 3);
+      final map = CellMap<String, int>(ctx);
+      var calls = 0;
+      expect(map.getOrInsertWith('a', (_) {
+        calls++;
+        return 7;
+      }), 7);
+      expect(map.lenUntracked, 1);
+      // Second access returns the existing value; factory is NOT called again.
+      expect(map.getOrInsertWith('a', (_) {
+        calls++;
+        return 999;
+      }), 7);
+      expect(calls, 1);
+      // An explicit set is observed by a subsequent getOrInsertWith.
+      map.set('a', 42);
+      expect(map.getOrInsertWith('a', (_) => 0), 42);
+    });
+
+    test('set drives dependents through the map', () {
+      final ctx = Context();
+      final map = CellMap<String, int>(ctx);
+      map.entry('x', 1);
+      final doubled = Slot<int>(ctx, (_) => map.read('x')! * 2);
+      expect(doubled(), 2);
+      map.set('x', 5);
+      expect(doubled(), 10);
+    });
+  });
+
+  group('SlotMap specialization', () {
+    test('mints lazily and caches', () {
+      final ctx = Context();
+      final fam = SlotMap<int, int>(ctx);
+      // Nothing present until first access.
+      expect(fam.presentCount(), 0);
+      expect(fam.getOrInsertWith(7, (k) => k * 2), 14);
+      expect(fam.presentCount(), 1);
+      expect(fam.isPresent(7), isTrue);
+      // Same key -> same derived slot (value preserved, factory not re-run).
+      expect(fam.get(7), 14);
+      expect(fam.getOrInsertWith(7, (k) => k * 999), 14);
+      expect(fam.entryKind, EntryKind.slot);
+    });
+
+    test('materializeAll is eager (pre-mint)', () {
+      final ctx = Context();
+      final fam = SlotMap<int, int>(ctx)..materializeAll([0, 1, 2, 5, 9], (k) => k * 3);
       expect(fam.presentCount(), 5);
       for (final k in [0, 1, 2, 5, 9]) {
         expect(fam.isPresent(k), isTrue);
       }
+      expect(fam.get(5), 15);
     });
 
-    test('lazy defers slots until read', () {
+    test('present set is monotone across lazy reads', () {
       final ctx = Context();
-      final fam =
-          ReactiveFamily.lazy<int, int>(ctx, [0, 1, 2, 5, 9], (k) => k * 3);
-      expect(fam.presentCount(), 0);
-      expect(fam.isPresent(5), isFalse);
-
-      // First read materializes just that key ("materialize on pull").
-      expect(fam.observe(5), 15);
-      expect(fam.isPresent(5), isTrue);
-      expect(fam.presentKeys(), [5]);
-    });
-
-    test('eager and lazy observe identically', () {
-      final ctx = Context();
-      final eager =
-          ReactiveFamily.eager<int, int>(ctx, [0, 1, 2, 5, 9], (k) => k * 3);
-      final lazy =
-          ReactiveFamily.lazy<int, int>(ctx, [0, 1, 2, 5, 9], (k) => k * 3);
-      for (final k in [0, 1, 2, 5, 9]) {
-        expect(eager.observe(k), lazy.observe(k));
-      }
-    });
-
-    test('present set is monotone across reads', () {
-      final ctx = Context();
-      final fam =
-          ReactiveFamily.lazy<int, int>(ctx, [1, 2, 3, 4, 5], (k) => k * 2);
+      final fam = SlotMap<int, int>(ctx);
       final sizes = <int>[];
       for (final k in [2, 4, 2, 5]) {
-        fam.observe(k);
+        fam.getOrInsertWith(k, (k) => k * 2);
         sizes.add(fam.presentCount());
       }
       // Re-reading 2 does not re-materialize; sizes are non-decreasing.
       expect(sizes, [1, 2, 2, 3]);
       expect(fam.presentKeys(), [2, 4, 5]);
     });
-  });
 
-  group('ReactiveFamily entry kind', () {
-    test('cell family is materialized in every mode', () {
-      final ctx = Context();
-      for (final lazyMode in [false, true]) {
-        final keys = ['a', 'b', 'c'];
-        final fam = lazyMode
-            ? ReactiveFamily.lazy<String, int>(ctx, keys, (_) => 0,
-                entryKind: EntryKind.cell)
-            : ReactiveFamily.eager<String, int>(ctx, keys, (_) => 0,
-                entryKind: EntryKind.cell);
-        expect(fam.entryKind('a'), EntryKind.cell);
-        // Cells are always present at build, even under lazy.
-        expect(fam.presentCount(), 3);
-      }
-    });
-
-    test('cell family entries are writable inputs', () {
-      final ctx = Context();
-      final fam = ReactiveFamily.eager<int, int>(ctx, [7], (k) => k,
-          entryKind: EntryKind.cell);
-      final cell = fam.cell(7);
-      expect(cell.get(), 7);
-      cell.set(100);
-      expect(fam.observe(7), 100);
-    });
-
-    test('setCell drives dependents through the family', () {
-      final ctx = Context();
-      final fam = ReactiveFamily.eager<String, int>(ctx, ['x'], (_) => 1,
-          entryKind: EntryKind.cell);
-      final doubled = Slot<int>(ctx, (_) => fam.observe('x') * 2);
-      expect(doubled(), 2);
-      fam.setCell('x', 5);
-      expect(doubled(), 10);
-    });
-
-    test('mixed per-key entry kinds via resolver', () {
-      final ctx = Context();
-      final vals = {'in': 5, 'der': 12};
-      final fam = ReactiveFamily.lazy<String, int>(
-        ctx,
-        ['in', 'der'],
-        (k) => vals[k]!,
-        entryKind: (k) => k == 'in' ? EntryKind.cell : EntryKind.slot,
-      );
-      // The input cell is present at build; the derived slot is deferred.
-      expect(fam.presentKeys(), ['in']);
-      expect(fam.entryKind('in'), EntryKind.cell);
-      expect(fam.entryKind('der'), EntryKind.slot);
-      expect(fam.observe('der'), 12);
-      expect(fam.presentKeys(), ['in', 'der']);
-    });
-
-    test('cell() rejects a derived slot; slot() rejects an input cell', () {
-      final ctx = Context();
-      final fam = ReactiveFamily.eager<String, int>(
-        ctx,
-        ['in', 'der'],
-        (k) => 0,
-        entryKind: (k) => k == 'in' ? EntryKind.cell : EntryKind.slot,
-      );
-      expect(() => fam.cell('der'), throwsStateError);
-      expect(() => fam.slot('in'), throwsStateError);
-      expect(fam.cell('in'), isA<Cell<int>>());
-      expect(fam.slot('der'), isA<Slot<int>>());
-    });
-
-    test('cellFamily helper fixes entry kind to cell', () {
-      final ctx = Context();
-      final fam = cellFamily<String, int>(ctx, ['a', 'b'], (_) => 1);
-      expect(fam.entryKind('a'), EntryKind.cell);
-      expect(fam.presentCount(), 2);
-    });
-  });
-
-  group('ReactiveFamily reactivity', () {
-    test('derived slot recomputes when an upstream cell changes', () {
+    test('a derived slot recomputes when an upstream cell changes', () {
       final ctx = Context();
       final base = Cell<int>(ctx, 2);
-      final fam = ReactiveFamily.lazy<int, int>(
-          ctx, const <int>[], (k) => base.value * k);
-      expect(fam.observe(3), 6);
+      final fam = SlotMap<int, int>(ctx);
+      expect(fam.getOrInsertWith(3, (k) => base.value * k), 6);
       base.value = 10;
-      expect(fam.observe(3), 30);
+      expect(fam.get(3), 30);
+    });
+
+    test('remove clears a slot and bumps membership', () {
+      final ctx = Context();
+      final fam = SlotMap<int, int>(ctx)..materializeAll([1, 2], (k) => k);
+      expect(fam.remove(1), isTrue);
+      expect(fam.isPresent(1), isFalse);
+      expect(fam.remove(1), isFalse);
+      expect(fam.presentKeys(), [2]);
+    });
+  });
+
+  group('eager and lazy observe identically', () {
+    test('SlotMap eager (materializeAll) == lazy (getOrInsertWith)', () {
+      final ctx = Context();
+      final eager = SlotMap<int, int>(ctx)..materializeAll([0, 1, 2, 5, 9], (k) => k * 3);
+      final lazy = SlotMap<int, int>(ctx);
+      for (final k in [0, 1, 2, 5, 9]) {
+        expect(lazy.getOrInsertWith(k, (k) => k * 3), eager.get(k));
+      }
     });
   });
 }

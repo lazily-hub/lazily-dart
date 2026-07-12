@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.11.0
+
+**Keyed collections unified on `ReactiveMap<K, V, H>` (`#reactivemap`).** Mirrors
+lazily-spec v0.27.0 and the lazily-rs reference: one generic keyed primitive
+`ReactiveMap<K, V, H>` (reactive membership + order, `getOrInsertWith`
+mint-on-access, `remove`, `move*`) over a handle-kind abstraction, with two
+specializations:
+
+- `CellMap<K, V>` = `ReactiveMap<K, V, Cell<V>>` — input-cell entries; adds
+  cell-only `set` + eager value-minting (`entry` / `entryWith`).
+- `SlotMap<K, V>` = `ReactiveMap<K, V, Slot<V>>` — derived-slot entries;
+  `getOrInsertWith` mints a slot on first access (lazy materialization),
+  `materializeAll` pre-mints the keyset (eager); **no `set`**.
+
+The same pattern applies to the concurrency flavors: `ThreadSafeReactiveMap` /
+`ThreadSafeCellMap` / `ThreadSafeSlotMap` and `AsyncReactiveMap` /
+`AsyncCellMap` / `AsyncSlotMap`.
+
+**BREAKING.** Removes `ReactiveFamily`, `CellFamily`, the `MaterializationMode`
+enum + `kDefaultMaterializationMode`, `cellFamily`, and the
+`ThreadSafeReactiveFamily` / `AsyncReactiveFamily` types (and their
+`eager*/lazy*` factories). Behavior is unchanged — there is **no eager/lazy mode
+flag**: eager = pre-mint loop (`materializeAll`), lazy = mint-on-access
+(`getOrInsertWith`). The 3 materialization conformance suites pass against the
+shared lazily-spec fixtures (now `"model": "SlotMap"`).
+
 ## 0.10.0
 
 **Full feature parity.** The remaining concurrency rows land in the Dart

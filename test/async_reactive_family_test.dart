@@ -1,17 +1,19 @@
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
-/// Unit tests for the async keyed reactive family ([AsyncReactiveFamily]).
-/// Mirrors `lazily-go/async_reactive_family.go`'s tests and the Lean
-/// `AsyncMaterialization` theorems.
+/// Unit tests for the async keyed reactive map ([AsyncReactiveMap]) and its
+/// [AsyncCellMap] / [AsyncSlotMap] specializations (`#reactivemap`, async).
+/// Mirrors the Rust unit tests in `lazily-rs/src/async_reactive_family.rs` and
+/// the Lean `AsyncMaterialization` theorems. Eager = pre-mint loop
+/// ([AsyncSlotMap.materializeAll]); lazy = mint-on-access ([AsyncSlotMap.touch]
+/// + [AsyncSlotMap.drive]) — no mode flag.
 void main() {
-  group('AsyncReactiveFamily resolution axis', () {
-    test('observe returns pending for a fresh slot, resolves after drive', () {
+  group('AsyncSlotMap resolution axis', () {
+    test('eager slot is present-but-pending, resolves after drive', () {
       // observe_pending_is_none, then eventual_transparency.
       final ctx = Context();
-      final fam = AsyncReactiveFamily.eagerSlotFamily<int, int>(
-          ctx, [1], (k) => k * 100);
-      // Allocated at build (eager) but pending until driven.
+      final fam = AsyncSlotMap<int, int>(ctx)..materializeAll([1]);
+      // Allocated (eager) but pending until driven.
       expect(fam.isPresent(1), isTrue);
       expect(fam.isResolved(1), isFalse);
 
@@ -19,33 +21,32 @@ void main() {
       expect(resolved, isFalse);
       expect(value, isNull);
 
-      expect(fam.drive(1), 100);
+      expect(fam.drive(1, (k) => k * 100), 100);
       expect(fam.isResolved(1), isTrue);
       final (value2, resolved2) = fam.observe(1);
       expect(resolved2, isTrue);
       expect(value2, 100);
     });
 
-    test('lazy slot is absent until observed, then pending until driven', () {
+    test('lazy slot is absent until touched, then pending until driven', () {
       final ctx = Context();
-      final fam = AsyncReactiveFamily.lazySlotFamily<int, int>(
-          ctx, [1], (k) => k * 100);
+      final fam = AsyncSlotMap<int, int>(ctx);
       expect(fam.isPresent(1), isFalse); // deferred under lazy
+      fam.touch(1);
+      expect(fam.isPresent(1), isTrue); // now allocated (pending)
       final (value, resolved) = fam.observe(1);
       expect(resolved, isFalse);
       expect(value, isNull);
-      expect(fam.isPresent(1), isTrue); // now allocated (pending)
-      expect(fam.drive(1), 100);
+      expect(fam.drive(1, (k) => k * 100), 100);
       expect(fam.isResolved(1), isTrue);
     });
   });
 
-  group('AsyncReactiveFamily cell entries', () {
+  group('AsyncCellMap cell entries', () {
     test('cell entries are resolved at build', () {
       // cell_resolved_at_build
       final ctx = Context();
-      final fam = AsyncReactiveFamily.eagerCellFamily<int, int>(
-          ctx, [1, 2], (k) => k * 5);
+      final fam = AsyncCellMap<int, int>(ctx)..materializeAll({1: 5, 2: 10});
       expect(fam.entryKind, EntryKind.cell);
       expect(fam.isResolved(1), isTrue);
       final (value, resolved) = fam.observe(1);
@@ -53,74 +54,54 @@ void main() {
       expect(value, 5);
     });
 
-    test('lazy cell entries still resolve at build', () {
+    test('set on a cell overwrites and stays resolved', () {
       final ctx = Context();
-      final fam =
-          AsyncReactiveFamily.lazyCellFamily<int, int>(ctx, [1], (k) => k * 5);
+      final fam = AsyncCellMap<int, int>(ctx);
+      expect(fam.set(1, 42), isTrue);
       expect(fam.isResolved(1), isTrue);
-      expect(fam.observe(1), (5, true));
+      expect(fam.observe(1), (42, true));
     });
   });
 
-  group('AsyncReactiveFamily resolve monotonicity', () {
+  group('AsyncSlotMap resolve monotonicity', () {
     test('a driven key stays resolved (false → true only)', () {
       // resolve_monotone
       final ctx = Context();
-      final fam =
-          AsyncReactiveFamily.eagerSlotFamily<int, int>(ctx, [1], (k) => k);
+      final fam = AsyncSlotMap<int, int>(ctx)..materializeAll([1]);
       expect(fam.isResolved(1), isFalse);
-      fam.drive(1);
+      fam.drive(1, (k) => k);
       expect(fam.isResolved(1), isTrue);
       fam.observe(1); // a read never un-resolves
       expect(fam.isResolved(1), isTrue);
-      fam.drive(1); // re-drive is idempotent
+      fam.drive(1, (k) => k * 999); // re-drive is idempotent
       expect(fam.isResolved(1), isTrue);
+      expect(fam.observe(1), (1, true));
     });
   });
 
-  group('AsyncReactiveFamily eventual transparency', () {
-    test('resolved value == the synchronous family value', () {
+  group('AsyncSlotMap eventual transparency', () {
+    test('resolved value == the synchronous (thread-safe) map value', () {
       // async_resolved_matches_sync
       final ctx = Context();
-      final asyncFam = AsyncReactiveFamily.eagerSlotFamily<int, int>(
-          ctx, [1, 2, 3], (k) => k * 11);
-      final syncFam = ThreadSafeReactiveFamily.eagerSlotFamily<int, int>(
-          ctx, [1, 2, 3], (k) => k * 11);
+      final asyncFam = AsyncSlotMap<int, int>(ctx)..materializeAll([1, 2, 3]);
+      final syncFam = ThreadSafeSlotMap<int, int>(ctx);
       for (final k in [1, 2, 3]) {
-        expect(asyncFam.drive(k), syncFam.observe(k));
+        expect(asyncFam.drive(k, (k) => k * 11),
+            syncFam.getOrInsertWith(k, (k) => k * 11));
       }
     });
   });
 
-  group('AsyncReactiveFamily present-set', () {
+  group('AsyncSlotMap present-set', () {
     test('present set grows in first-materialization order', () {
       final ctx = Context();
-      final fam =
-          AsyncReactiveFamily.lazySlotFamily<int, int>(ctx, const [], (k) => k);
+      final fam = AsyncSlotMap<int, int>(ctx);
       expect(fam.presentCount(), 0);
-      fam.observe(3);
-      fam.observe(1);
-      fam.observe(3); // warm — no growth
+      fam.touch(3);
+      fam.touch(1);
+      fam.touch(3); // warm — no growth
       expect(fam.presentCount(), 2);
       expect(fam.presentKeys(), [3, 1]);
-    });
-  });
-
-  group('AsyncReactiveFamily set', () {
-    test('set on a slot family returns false', () {
-      final ctx = Context();
-      final slots =
-          AsyncReactiveFamily.eagerSlotFamily<int, int>(ctx, [1], (k) => k);
-      expect(slots.set(1, 99), isFalse);
-    });
-
-    test('set on a cell family overwrites and stays resolved', () {
-      final ctx = Context();
-      final cells =
-          AsyncReactiveFamily.eagerCellFamily<int, int>(ctx, [1], (k) => k);
-      expect(cells.set(1, 42), isTrue);
-      expect(cells.isResolved(1), isTrue);
-      expect(cells.observe(1), (42, true));
     });
   });
 }

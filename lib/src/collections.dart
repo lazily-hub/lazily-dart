@@ -1,10 +1,29 @@
-/// Keyed cell collections — `CellMap`, `CellTree`, and keyed reconciliation
-/// (cell-model.md § Keyed cell collections).
+/// Keyed cell collections — the unified `ReactiveMap<K, V, H>` primitive and
+/// its `CellMap` / `SlotMap` specializations, plus `CellTree` and keyed
+/// reconciliation (cell-model.md § Keyed cell collections, `#reactivemap`).
+///
+/// There is **one** keyed primitive, generic over the entry's handle kind `H`
+/// (the *MapHandle* abstraction, supplied per specialization):
+///
+/// - **[CellMap]** = `ReactiveMap<K, V, Cell<V>>` — **input-cell** entries.
+///   Adds cell-only [CellMap.set] plus eager value-minting ([CellMap.entry] /
+///   [CellMap.entryWith]).
+/// - **[SlotMap]** = `ReactiveMap<K, V, Slot<V>>` — **derived-slot** entries.
+///   [ReactiveMap.getOrInsertWith] mints a slot on first access (**lazy
+///   materialization**); [SlotMap.materializeAll] pre-mints the keyset
+///   (**eager**). A slot's value is derived, so `SlotMap` has **no `set`**.
+///   There is **no eager/lazy mode flag** — eager = pre-mint loop, lazy =
+///   mint-on-access.
+///
+/// The shared surface — `getOrInsertWith` / `remove` / `move*` / membership /
+/// order / `keys` / `len` / `containsKey` — lives on the generic [ReactiveMap];
+/// `set` and eager value-minting are the [CellMap]-only specialization, and the
+/// pre-mint eager helper is the [SlotMap]-only specialization.
 ///
 /// A *keyed cell collection* is a **composition of cells**, not a new cell
-/// kind. It maps keys `K` to per-entry cells and adds dedicated **membership**
-/// and **order** reactive signals so the three reactivity planes are
-/// independent:
+/// kind. It maps keys `K` to per-entry reactive nodes and adds dedicated
+/// **membership** and **order** reactive signals so the three reactivity planes
+/// are independent:
 ///
 /// - writing one entry's value invalidates only that entry's value readers;
 /// - adding/removing a key invalidates membership readers (`len`/`contains`)
@@ -12,36 +31,57 @@
 /// - a pure reorder (atomic move) invalidates order readers only.
 ///
 /// Required of every lazily binding by the conformance matrix; validated
-/// against the canonical fixtures in `lazily-spec/conformance/collections/`.
-/// Mirrors `lazily-rs/src/cell_family.rs` (reactive) and
+/// against the canonical fixtures in `lazily-spec/conformance/collections/` and
+/// `lazily-spec/conformance/materialization/`. Mirrors
+/// `lazily-rs/src/cell_family.rs` (`ReactiveMap`/`CellMap`/`SlotMap`) and
 /// `lazily-rs/src/reconcile.rs` (LIS), with `lazily-kt` and `lazily-js` as
 /// cross-checks.
 
 import 'core.dart';
 
-/// A keyed collection of reactive cells with independent value / membership /
-/// order reactivity (cell-model.md § Keyed cell collections).
+/// Which kind of reactive node a [ReactiveMap] entry is — the handle-kind axis
+/// the map abstracts over.
 ///
-/// Each entry is an ordinary [Cell] — its single-writer / multi-write
+/// Mirrors `EntryKind` in `lazily-rs::cell_family` and `lazily-formal`'s
+/// `Materialization` module.
+enum EntryKind {
+  /// An **input** cell ([Cell]) — always materialized on access.
+  cell,
+
+  /// A **derived** slot ([Slot]) — materialized eagerly (pre-mint) or lazily on
+  /// first read.
+  slot,
+}
+
+/// A keyed reactive collection generic over the entry handle kind `H`: a map of
+/// `K -> H` with reactive membership + order and independently-tracked per-entry
+/// nodes (cell-model.md § Keyed cell collections, `#reactivemap`).
+///
+/// Each entry is an ordinary reactive node — its single-writer / multi-write
 /// classification, `merge:` mechanism, and ingress rules are exactly those of
 /// the cell model; the collection adds **no new merge unit**. A dedicated
-/// membership cell tracks the set of keys, and a dedicated order cell tracks
-/// the ordered key list. Reads subscribe through those cells so the three
-/// planes stay independent.
+/// membership cell tracks the set of keys, and a dedicated order cell tracks the
+/// ordered key list. Reads subscribe through those cells so the three planes
+/// stay independent.
 ///
-/// Reactive binding (mirrors `lazily-rs::CellMap`): a [keys] reader subscribes
-/// only to the order signal; a [len] / [containsKey] reader subscribes only to
-/// the membership signal; a value reader subscribes only to that entry's cell.
-/// An atomic move ([moveTo] / [moveBefore] / [moveAfter]) bumps only the order
-/// signal once and keeps the moved entry's same [Cell] handle, dependents, and
-/// lineage (it is not a remove + re-mint).
-class CellMap<K, V> {
-  CellMap(this.ctx)
+/// Reactive binding (mirrors `lazily-rs::ReactiveMap`): a [keys] reader
+/// subscribes only to the order signal; a [len] / [containsKey] reader
+/// subscribes only to the membership signal; a value reader subscribes only to
+/// that entry's node. An atomic move ([moveTo] / [moveBefore] / [moveAfter])
+/// bumps only the order signal once and keeps the moved entry's same handle,
+/// dependents, and lineage (it is not a remove + re-mint).
+///
+/// The two specializations a binding exposes are [CellMap] (input cells) and
+/// [SlotMap] (derived slots). Subclasses supply the handle-kind operations
+/// ([_materializeHandle] / [_observeHandle] / [_clearHandle] / [entryKind]) —
+/// the Dart form of the `MapHandle` trait.
+abstract class ReactiveMap<K, V, H> {
+  ReactiveMap(this.ctx)
       : _membership = Cell<int>(ctx, 0),
         _orderSignal = Cell<int>(ctx, 0);
 
   final Context ctx;
-  final Map<K, Cell<V>> _entries = {};
+  final Map<K, H> _entries = {};
   final List<K> _order = [];
 
   /// Reactive *set-membership* signal: a monotonic version bumped only when the
@@ -53,6 +93,25 @@ class CellMap<K, V> {
 
   int _membershipVersion = 0;
   int _orderVersion = 0;
+
+  // --- MapHandle abstraction (supplied per specialization) ---
+
+  /// This map's entry kind ([EntryKind.cell] for a [CellMap], [EntryKind.slot]
+  /// for a [SlotMap]).
+  EntryKind get entryKind;
+
+  /// Allocate the node for one entry, with [compute] producing its canonical
+  /// value. An input cell sets its value directly; a derived slot wraps
+  /// [compute] as its recomputation.
+  H _materializeHandle(V Function() compute);
+
+  /// Read [handle]'s value through its owning context (subscribes the caller,
+  /// as any cell/slot read does).
+  V _observeHandle(H handle);
+
+  /// Detach [handle]'s node from the graph on removal — clear its cached value
+  /// and its dependents.
+  void _clearHandle(H handle);
 
   /// Bump only the order signal (invalidates [keys] readers). A pure move
   /// bumps only this.
@@ -69,63 +128,45 @@ class CellMap<K, V> {
     _bumpOrder();
   }
 
-  /// Return the value cell for [key], minting it with [defaultValue] on first
-  /// access. Adding a new key bumps reactive membership; re-fetching an
-  /// existing key does not.
-  Cell<V> entryWith(K key, V Function() defaultValue) {
+  /// Mint the entry node for [key] on first access (via [_materializeHandle]
+  /// with [compute] as its value producer), caching the handle and bumping
+  /// reactive membership. Re-minting an existing key returns the cached handle.
+  H _mintWith(K key, V Function() compute) {
     final existing = _entries[key];
     if (existing != null) return existing;
-    final handle = Cell<V>(ctx, defaultValue());
+    final handle = _materializeHandle(compute);
     _entries[key] = handle;
     _order.add(key);
     _bumpMembership();
     return handle;
   }
 
-  /// Return the value cell for [key], minting it with [defaultValue] on first
-  /// access. Convenience wrapper over [entryWith].
-  Cell<V> entry(K key, V defaultValue) => entryWith(key, () => defaultValue);
+  /// Get the value at [key], minting the entry via [factory] first if absent —
+  /// the mint-on-access recipe. For a [SlotMap] this is the **lazy
+  /// materialization** pull; for a [CellMap] it seeds an input cell.
+  ///
+  /// Bumps reactive membership only on insert; an existing key returns its
+  /// current value without re-running [factory].
+  V getOrInsertWith(K key, V Function(K key) factory) {
+    final existing = _entries[key];
+    if (existing != null) return _observeHandle(existing);
+    return _observeHandle(_mintWith(key, () => factory(key)));
+  }
 
-  /// The existing value cell for [key], or `null`. Non-reactive: does not
+  /// The existing entry handle for [key], or `null`. Non-reactive: does not
   /// subscribe the caller to membership.
-  Cell<V>? cell(K key) => _entries[key];
-
-  /// Read the value at [key] if present. Reactive on that entry only — a reader
-  /// is invalidated when this entry changes, not when siblings change.
-  V? get(K key) => _entries[key]?.peek;
-
-  /// Read the value at [key] if present, subscribing the caller to that entry's
-  /// cell (reactive inside a Slot / Signal computation).
-  V? read(K key) {
-    final handle = _entries[key];
-    return handle == null ? null : handle.value;
-  }
-
-  /// Set the value at [key], inserting a new entry (and bumping membership) if
-  /// it does not exist yet. Updating an existing entry leaves membership
-  /// untouched and invalidates only that entry's dependents.
-  void set(K key, V value) {
-    final handle = _entries[key];
-    if (handle != null) {
-      handle.value = value;
-      return;
-    }
-    entryWith(key, () => value);
-  }
+  H? handle(K key) => _entries[key];
 
   /// Remove [key]'s entry. Bumps reactive membership and clears the removed
   /// entry's dependents. Returns whether the key was present.
   ///
-  /// The orphaned [Cell] stops driving any dependents; the runtime exposes no
+  /// The orphaned node stops driving any dependents; the runtime exposes no
   /// node-recycle yet (mirrors `lazily-rs`).
   bool remove(K key) {
-    final handle = _entries.remove(key);
-    if (handle == null) return false;
+    final removed = _entries.remove(key);
+    if (removed == null) return false;
     _order.remove(key);
-    // Invalidate the orphaned cell's dependents (mirrors lazily-rs
-    // `CellHandle::clear_dependents`): any reader that read this entry is
-    // notified that its source is gone.
-    handle.invalidate();
+    _clearHandle(removed);
     _bumpMembership();
     return true;
   }
@@ -139,6 +180,17 @@ class CellMap<K, V> {
     return List<K>.of(_order);
   }
 
+  /// The currently-materialized (present) keys, in first-materialization order.
+  /// Non-reactive; the present set only grows (deferral, not de-allocation).
+  List<K> presentKeys() => List<K>.of(_order);
+
+  /// Number of currently-materialized (present) entries. Non-reactive.
+  int presentCount() => _order.length;
+
+  /// Whether [key] is currently materialized (present in the allocated set).
+  /// Non-reactive.
+  bool isPresent(K key) => _entries.containsKey(key);
+
   /// Current 0-based position of [key] in the order, or `null` if absent.
   /// Non-reactive.
   int? position(K key) {
@@ -150,11 +202,11 @@ class CellMap<K, V> {
 
   /// Atomically move [key] to [index] in the order (`#lzcellmove`).
   ///
-  /// This is the *atomic, optimized* reorder: the entry keeps the **same**
-  /// value cell, the same dependents, and its CRDT lineage — unlike the naive
-  /// `remove` + `entry` which re-mints the cell and bumps membership twice.
-  /// Only the order signal is bumped (once), so [keys] readers recompute but
-  /// [len] / [containsKey] readers stay cached.
+  /// This is the *atomic, optimized* reorder: the entry keeps the **same** node,
+  /// the same dependents, and its CRDT lineage — unlike the naive `remove` +
+  /// re-mint which re-allocates the node and bumps membership twice. Only the
+  /// order signal is bumped (once), so [keys] readers recompute but [len] /
+  /// [containsKey] readers stay cached.
   ///
   /// [index] is clamped to `[0, len)`. A no-op move (already at position) bumps
   /// nothing. Returns whether [key] was present.
@@ -191,6 +243,88 @@ class CellMap<K, V> {
     return moveTo(key, target);
   }
 
+  /// Reactive entry count. Subscribes the caller to membership changes only.
+  int len() {
+    _membership.value;
+    return _order.length;
+  }
+
+  /// Reactive emptiness check. Subscribes the caller to membership changes.
+  bool get isEmpty => len() == 0;
+
+  /// Reactive membership test for [key]. Subscribes the caller to membership
+  /// changes (add/remove of any key), not to value changes.
+  bool containsKey(K key) {
+    _membership.value;
+    return _entries.containsKey(key);
+  }
+
+  /// Non-reactive count. Does not subscribe the caller to anything.
+  int get lenUntracked => _order.length;
+}
+
+/// A keyed **input-cell** collection: every entry is a settable [Cell] (the
+/// [CellMap] specialization of [ReactiveMap], `H = Cell<V>`).
+///
+/// Adds cell-only [set] and eager value-minting ([entry] / [entryWith]) on top
+/// of the shared reactive keyed surface. Mirrors `lazily-rs::CellMap`.
+class CellMap<K, V> extends ReactiveMap<K, V, Cell<V>> {
+  CellMap(super.ctx);
+
+  @override
+  EntryKind get entryKind => EntryKind.cell;
+
+  @override
+  // An input has no derivation: materialize by setting its value directly.
+  Cell<V> _materializeHandle(V Function() compute) => Cell<V>(ctx, compute());
+
+  @override
+  V _observeHandle(Cell<V> handle) => handle.value;
+
+  @override
+  // Invalidate the orphaned cell's dependents (mirrors lazily-rs
+  // `CellHandle::clear_dependents`).
+  void _clearHandle(Cell<V> handle) => handle.invalidate();
+
+  /// Return the value cell for [key], minting it with [defaultValue] on first
+  /// access. Adding a new key bumps reactive membership; re-fetching an existing
+  /// key does not. Cell-only: eager value-minting has no derived-slot analog.
+  Cell<V> entryWith(K key, V Function() defaultValue) =>
+      _mintWith(key, defaultValue);
+
+  /// Return the value cell for [key], minting it with [defaultValue] on first
+  /// access. Convenience wrapper over [entryWith].
+  Cell<V> entry(K key, V defaultValue) => entryWith(key, () => defaultValue);
+
+  /// The existing value cell for [key], or `null`. Non-reactive: does not
+  /// subscribe the caller to membership. Alias for [handle].
+  Cell<V>? cell(K key) => handle(key);
+
+  /// Read the value at [key] if present, without registering a dependency
+  /// (non-reactive peek).
+  V? get(K key) => handle(key)?.peek;
+
+  /// Read the value at [key] if present, subscribing the caller to that entry's
+  /// cell (reactive inside a Slot / Signal computation).
+  V? read(K key) {
+    final h = handle(key);
+    return h == null ? null : h.value;
+  }
+
+  /// Set the value at [key], inserting a new entry (and bumping membership) if
+  /// it does not exist yet. Updating an existing entry leaves membership
+  /// untouched and invalidates only that entry's dependents.
+  ///
+  /// Cell-only: an input is settable; a derived [SlotMap] slot is not.
+  void set(K key, V value) {
+    final h = handle(key);
+    if (h != null) {
+      h.value = value;
+      return;
+    }
+    entryWith(key, () => value);
+  }
+
   /// Insert [key] with [value] at [index], the end, or relative to [anchor].
   /// Bumps membership + order. Returns whether the key was newly inserted
   /// (false if it already existed; in that case the value is updated in place
@@ -217,25 +351,6 @@ class CellMap<K, V> {
     return true;
   }
 
-  /// Reactive entry count. Subscribes the caller to membership changes only.
-  int len() {
-    _membership.value;
-    return _order.length;
-  }
-
-  /// Reactive emptiness check. Subscribes the caller to membership changes.
-  bool get isEmpty => len() == 0;
-
-  /// Reactive membership test for [key]. Subscribes the caller to membership
-  /// changes (add/remove of any key), not to value changes.
-  bool containsKey(K key) {
-    _membership.value;
-    return _entries.containsKey(key);
-  }
-
-  /// Non-reactive count. Does not subscribe the caller to anything.
-  int get lenUntracked => _order.length;
-
   /// Reconcile to [targetOrder] + [targetValues]: compute the minimal diff and
   /// apply it per-cell. Stable entries (unchanged value, in the LIS) keep their
   /// cell handles and stay cached.
@@ -258,6 +373,49 @@ class CellMap<K, V> {
         case DiffOpUpdate():
           set(op.key, op.value);
       }
+    }
+  }
+}
+
+/// A keyed **derived-slot** collection: every entry is a [Slot] whose value is
+/// derived (the [SlotMap] specialization of [ReactiveMap], `H = Slot<V>`).
+///
+/// [ReactiveMap.getOrInsertWith] mints a slot on first access (**lazy
+/// materialization**); [materializeAll] pre-mints the keyset (**eager**). A
+/// slot's value is derived, so `SlotMap` has **no `set`**. There is **no
+/// eager/lazy mode flag** — eager is the pre-mint loop, lazy is mint-on-access.
+/// Mirrors `lazily-rs::SlotMap`.
+class SlotMap<K, V> extends ReactiveMap<K, V, Slot<V>> {
+  SlotMap(super.ctx);
+
+  @override
+  EntryKind get entryKind => EntryKind.slot;
+
+  @override
+  // A derived node: the same node an eager pre-mint would allocate.
+  Slot<V> _materializeHandle(V Function() compute) =>
+      Slot<V>(ctx, (_) => compute());
+
+  @override
+  V _observeHandle(Slot<V> handle) => handle.call();
+
+  @override
+  void _clearHandle(Slot<V> handle) => handle.clearDependents();
+
+  /// Read the value at [key] if present (a derived-slot read, subscribing the
+  /// caller), or `null` if the key is not materialized.
+  V? get(K key) {
+    final h = handle(key);
+    return h == null ? null : _observeHandle(h);
+  }
+
+  /// **Eager materialization**: pre-mint a derived slot for every key in [keys]
+  /// via [factory], up front. Observationally identical to minting each key
+  /// lazily on first read ([ReactiveMap.getOrInsertWith]) — it only changes
+  /// *when* the nodes are allocated.
+  void materializeAll(Iterable<K> keys, V Function(K key) factory) {
+    for (final key in keys) {
+      getOrInsertWith(key, factory);
     }
   }
 }
@@ -552,31 +710,4 @@ class CellTree<K, V> {
 
   /// Reactive membership test for a child of this node.
   bool hasChild(K id) => children.containsKey(id);
-}
-
-/// A parameterized factory of reactive cells, keyed by `K` (à la Recoil/Jotai
-/// `atomFamily`). The factory lazily mints and caches one [Cell] per distinct
-/// key; repeated [get]s of the same key return the same cell. Built on top of
-/// [CellMap], so membership is reactive and entries are fine-grained.
-class CellFamily<K, V> {
-  CellFamily(this.ctx, V Function(K key) factory)
-      : _map = CellMap<K, V>(ctx),
-        _factory = factory;
-
-  final Context ctx;
-  final CellMap<K, V> _map;
-  final V Function(K) _factory;
-
-  /// Get (minting on first access via the factory) the cell for [key].
-  Cell<V> get(K key) {
-    final existing = _map.cell(key);
-    if (existing != null) return existing;
-    return _map.entryWith(key, () => _factory(key));
-  }
-
-  /// The underlying [CellMap] for membership/iteration APIs.
-  CellMap<K, V> get map => _map;
-
-  /// Remove [key] from the family (see [CellMap.remove]).
-  bool remove(K key) => _map.remove(key);
 }

@@ -242,7 +242,7 @@ cross-language matrix is shipped (`✅`), including the concurrency layers.
 Dart isolates have no shared mutable heap, so the "thread-safe" layers are
 realized the same way JavaScript ships them on its single-realm event loop:
 within an isolate, synchronous code runs to completion and already serializes
-access, so `ThreadSafeContext` / `ThreadSafeReactiveFamily` use a **reentrant
+access, so `ThreadSafeContext` / `ThreadSafeReactiveMap` use a **reentrant
 run-to-completion guard** and the deterministic batch-coalescing kernel proven
 equivalent to `LazilyFormal.ThreadSafe`. Genuine cross-isolate parallelism is
 served by (a) `TransferableTypedData` for the **zero-copy shared-memory blob
@@ -254,7 +254,7 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 | Layer | Where |
 |-------|-------|
 | Reactive core (`Cell` / `Slot` / `Signal` / `Effect` / `Memo` / `batch`) | `package:lazily/lazily.dart` |
-| Keyed cell collections (`CellMap` / `CellTree` / reconciliation) | `package:lazily/lazily.dart` |
+| Keyed cell collections (`ReactiveMap` / `CellMap` / `SlotMap` / `CellTree` / reconciliation) | `package:lazily/lazily.dart` |
 | Flat state machine + Harel state charts | `package:lazily/lazily.dart` |
 | TextCrdt (char CRDT) + delta sync | `package:lazily/lazily.dart` |
 | SeqCrdt (move-aware sequence CRDT) + Hlc + LwwRegister | `package:lazily/lazily.dart` |
@@ -263,9 +263,9 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 | SemTree (memoized semantic tree) | `package:lazily/lazily.dart` |
 | Stable-id alignment | `package:lazily/lazily.dart` |
 | Async reactive context | `package:lazily/async_context.dart` |
-| Reactive family (`ReactiveFamily`, `#lzmatmode`) | `package:lazily/lazily.dart` |
-| Thread-safe context + reactive family (`ThreadSafeContext` / `ThreadSafeReactiveFamily`) | `package:lazily/lazily.dart` |
-| Async reactive family (`AsyncReactiveFamily`) | `package:lazily/lazily.dart` |
+| Keyed reactive map materialization (`SlotMap` lazy `getOrInsertWith` / eager `materializeAll`, `#reactivemap`) | `package:lazily/lazily.dart` |
+| Thread-safe context + reactive map (`ThreadSafeContext` / `ThreadSafeReactiveMap` / `ThreadSafeCellMap` / `ThreadSafeSlotMap`) | `package:lazily/lazily.dart` |
+| Async reactive map (`AsyncReactiveMap` / `AsyncCellMap` / `AsyncSlotMap`) | `package:lazily/lazily.dart` |
 | Reactive family sync (`#lzfamilysync`, materialize-on-ingest) | `package:lazily/ipc.dart` |
 | IPC (`Snapshot` + `Delta` + `CrdtSync`) | `package:lazily/ipc.dart` |
 | Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | `package:lazily/ipc.dart` |
@@ -281,6 +281,19 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 | Formal model verification (`lazily-formal` Lean proofs in `dart test`) | `tool/formal_check.dart` + `test/formal_check_test.dart` |
 
 ## Keyed cell collections
+
+There is **one** keyed primitive, `ReactiveMap<K, V, H>`, generic over the
+entry's handle kind `H`, with two specializations (`#reactivemap`):
+
+- `CellMap<K, V>` = `ReactiveMap<K, V, Cell<V>>` — **input-cell** entries; adds
+  cell-only `set` plus eager value-minting (`entry` / `entryWith`).
+- `SlotMap<K, V>` = `ReactiveMap<K, V, Slot<V>>` — **derived-slot** entries;
+  `getOrInsertWith` mints a slot on first access (**lazy materialization**),
+  `materializeAll` pre-mints the keyset (**eager**). A slot's value is derived,
+  so `SlotMap` has **no `set`**, and there is **no eager/lazy mode flag**.
+
+The shared surface (`getOrInsertWith` / `remove` / `move*` / membership / order /
+`keys` / `len` / `containsKey`) lives on `ReactiveMap`.
 
 `CellMap<K, V>` is a **composition of cells**, not a new cell kind. Each entry
 is an ordinary `Cell`; a dedicated membership cell tracks the key set, and a

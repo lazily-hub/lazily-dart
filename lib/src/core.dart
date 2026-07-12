@@ -217,6 +217,14 @@ class Slot<T> extends _ReactiveNode {
   /// The cached value without recomputing, or `null` if not currently cached.
   T? get peek => ctx.contains(this) ? ctx.read(this) as T : null;
 
+  /// Detach this slot from the graph: evict its cached value and invalidate its
+  /// dependents. Used by [SlotMap] when an entry is removed — the orphaned slot
+  /// stops driving its dependents (mirrors `SlotHandle::clear` in lazily-rs).
+  void clearDependents() {
+    _invalidate();
+    ctx._flushEffects();
+  }
+
   @override
   void onInvalidate() => ctx.evict(this);
 

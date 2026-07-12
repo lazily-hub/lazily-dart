@@ -1,16 +1,19 @@
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
-/// Unit tests for the thread-safe keyed reactive family
-/// ([ThreadSafeReactiveFamily]). Mirrors `lazily-go/thread_safe_reactive_family.go`'s
-/// tests and the Lean `Materialization` confluence pair.
+/// Unit tests for the thread-safe keyed reactive map ([ThreadSafeReactiveMap])
+/// and its [ThreadSafeCellMap] / [ThreadSafeSlotMap] specializations
+/// (`#reactivemap`, thread-safe). Mirrors the Rust unit tests in
+/// `lazily-rs/src/thread_safe_reactive_family.rs` and the Lean `Materialization`
+/// confluence pair. Eager = pre-mint loop ([ThreadSafeSlotMap.materializeAll]);
+/// lazy = mint-on-access ([ThreadSafeReactiveMap.getOrInsertWith]) — no mode
+/// flag.
 void main() {
-  group('ThreadSafeReactiveFamily eager/lazy contract', () {
+  group('ThreadSafeSlotMap eager/lazy contract', () {
     test('eager materializes every declared slot at build', () {
       final ctx = Context();
-      final fam = ThreadSafeReactiveFamily.eagerSlotFamily<int, int>(
-          ctx, [0, 1, 2], (k) => k * 3);
-      expect(fam.mode, MaterializationMode.eager);
+      final fam = ThreadSafeSlotMap<int, int>(ctx)
+        ..materializeAll([0, 1, 2], (k) => k * 3);
       expect(fam.entryKind, EntryKind.slot);
       expect(fam.presentCount(), 3);
       expect(fam.presentKeys(), [0, 1, 2]);
@@ -21,77 +24,68 @@ void main() {
 
     test('lazy defers each slot to first read', () {
       final ctx = Context();
-      final fam = ThreadSafeReactiveFamily.lazySlotFamily<int, int>(
-          ctx, [0, 1, 2], (k) => k * 3);
-      expect(fam.mode, MaterializationMode.lazy);
+      final fam = ThreadSafeSlotMap<int, int>(ctx);
       expect(fam.presentCount(), 0);
       expect(fam.isPresent(1), isFalse);
 
-      expect(fam.get(1), 3);
+      expect(fam.getOrInsertWith(1, (k) => k * 3), 3);
       expect(fam.isPresent(1), isTrue);
       expect(fam.presentCount(), 1);
       expect(fam.presentKeys(), [1]);
     });
 
-    test('cell entries are materialized in every mode', () {
+    test('cell entries are materialized eagerly', () {
       final ctx = Context();
-      final eager = ThreadSafeReactiveFamily.eagerCellFamily<int, int>(
-          ctx, [0, 1], (k) => k);
-      final lazy = ThreadSafeReactiveFamily.lazyCellFamily<int, int>(
-          ctx, [0, 1], (k) => k);
-      expect(eager.presentCount(), 2);
-      expect(lazy.presentCount(), 2); // cells materialize at build even lazy
-      expect(lazy.entryKind, EntryKind.cell);
+      final cells = ThreadSafeCellMap<int, int>(ctx)
+        ..materializeAll({0: 0, 1: 1});
+      expect(cells.entryKind, EntryKind.cell);
+      expect(cells.presentCount(), 2);
     });
   });
 
-  group('ThreadSafeReactiveFamily transparency', () {
-    test('observe returns an identical value under either mode', () {
+  group('ThreadSafeSlotMap transparency', () {
+    test('observe returns an identical value under eager and lazy', () {
       final ctx = Context();
-      final eager = ThreadSafeReactiveFamily.eagerSlotFamily<int, int>(
-          ctx, [1, 2, 3], (k) => k * 10);
-      final lazy = ThreadSafeReactiveFamily.lazySlotFamily<int, int>(
-          ctx, [1, 2, 3], (k) => k * 10);
+      final eager = ThreadSafeSlotMap<int, int>(ctx)
+        ..materializeAll([1, 2, 3], (k) => k * 10);
+      final lazy = ThreadSafeSlotMap<int, int>(ctx);
       for (final k in [1, 2, 3]) {
-        expect(lazy.observe(k), eager.observe(k));
+        expect(lazy.getOrInsertWith(k, (k) => k * 10), eager.observe(k));
       }
     });
   });
 
-  group('ThreadSafeReactiveFamily present-set monotonicity', () {
+  group('ThreadSafeSlotMap present-set monotonicity', () {
     test('the materialized set only grows', () {
       final ctx = Context();
-      final fam = ThreadSafeReactiveFamily.lazySlotFamily<int, int>(
-          ctx, const [], (k) => k);
+      final fam = ThreadSafeSlotMap<int, int>(ctx);
       expect(fam.presentCount(), 0);
-      fam.get(5);
+      fam.getOrInsertWith(5, (k) => k);
       expect(fam.presentCount(), 1);
-      fam.get(5); // warm — no growth
+      fam.getOrInsertWith(5, (k) => k); // warm — no growth
       expect(fam.presentCount(), 1);
-      fam.get(6);
+      fam.getOrInsertWith(6, (k) => k);
       expect(fam.presentCount(), 2);
       expect(fam.presentKeys(), [5, 6]);
     });
   });
 
-  group('ThreadSafeReactiveFamily confluence', () {
+  group('ThreadSafeSlotMap confluence', () {
     test('materializing in different orders → identical present set + values',
         () {
       final ctx = Context();
-      final famA = ThreadSafeReactiveFamily.lazySlotFamily<int, int>(
-          ctx, const [], (k) => k * 7);
-      final famB = ThreadSafeReactiveFamily.lazySlotFamily<int, int>(
-          ctx, const [], (k) => k * 7);
+      final famA = ThreadSafeSlotMap<int, int>(ctx);
+      final famB = ThreadSafeSlotMap<int, int>(ctx);
 
       // materialize_present_comm / materialize_observe_comm: order does not
       // change the present set or the observed values.
-      famA.get(1);
-      famA.get(2);
-      famA.get(3);
+      famA.getOrInsertWith(1, (k) => k * 7);
+      famA.getOrInsertWith(2, (k) => k * 7);
+      famA.getOrInsertWith(3, (k) => k * 7);
 
-      famB.get(3);
-      famB.get(1);
-      famB.get(2);
+      famB.getOrInsertWith(3, (k) => k * 7);
+      famB.getOrInsertWith(1, (k) => k * 7);
+      famB.getOrInsertWith(2, (k) => k * 7);
 
       final keysA = famA.presentKeys()..sort();
       final keysB = famB.presentKeys()..sort();
@@ -102,18 +96,10 @@ void main() {
     });
   });
 
-  group('ThreadSafeReactiveFamily set', () {
-    test('set on a slot family returns false', () {
+  group('ThreadSafeCellMap set', () {
+    test('set overwrites and returns true', () {
       final ctx = Context();
-      final slots = ThreadSafeReactiveFamily.eagerSlotFamily<int, int>(
-          ctx, [1], (k) => k);
-      expect(slots.set(1, 99), isFalse);
-    });
-
-    test('set on a cell family overwrites and returns true', () {
-      final ctx = Context();
-      final cells = ThreadSafeReactiveFamily.eagerCellFamily<int, int>(
-          ctx, [1], (k) => k);
+      final cells = ThreadSafeCellMap<int, int>(ctx)..set(1, 1);
       expect(cells.observe(1), 1);
       expect(cells.set(1, 42), isTrue);
       expect(cells.observe(1), 42);

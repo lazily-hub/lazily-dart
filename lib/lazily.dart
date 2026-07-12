@@ -17,8 +17,8 @@
 /// `package:lazily/ffi.dart`, capability negotiation in
 /// `package:lazily/capability.dart`, and the async reactive context in
 /// `package:lazily/async_context.dart`. The concurrency layers
-/// (`ThreadSafeContext` + pure batch-flush kernel, `ThreadSafeReactiveFamily`,
-/// and `AsyncReactiveFamily`) live in `package:lazily/src/thread_safe.dart`,
+/// (`ThreadSafeContext` + pure batch-flush kernel, `ThreadSafeReactiveMap`, and
+/// `AsyncReactiveMap`) live in `package:lazily/src/thread_safe.dart`,
 /// `package:lazily/src/thread_safe_reactive_family.dart`, and
 /// `package:lazily/src/async_reactive_family.dart`.
 library;
@@ -29,7 +29,6 @@ export 'src/collections.dart';
 export 'src/core.dart';
 export 'src/lossless_tree_crdt.dart';
 export 'src/queue.dart';
-export 'src/reactive_family.dart';
 export 'src/registers.dart';
 export 'src/sem_tree.dart';
 export 'src/seq_crdt.dart';
