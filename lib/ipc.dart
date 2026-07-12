@@ -20,6 +20,7 @@ export 'src/crdt.dart';
 export 'src/distributed.dart';
 export 'src/instrumentation.dart';
 export 'src/ipc.dart';
+export 'src/reliable_sync.dart';
 export 'src/shm_blob_arena.dart';
 export 'src/signaling.dart';
 export 'src/state_projection.dart';

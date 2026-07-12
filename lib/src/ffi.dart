@@ -81,7 +81,15 @@ enum LazilyFfiMessageKind {
   delta(2),
 
   /// An [IpcMessageCrdtSync] — the multi-writer CRDT plane.
-  crdtSync(3);
+  crdtSync(3),
+
+  /// An [IpcMessageResyncRequest] — reliable-sync gap-recovery control frame
+  /// (`#lzsync`, reverse channel).
+  resyncRequest(4),
+
+  /// An [IpcMessageOutboxAck] — reliable-sync ack/resume-cursor control frame
+  /// (`#lzsync`, reverse channel).
+  outboxAck(5);
 
   const LazilyFfiMessageKind(this.code);
 
@@ -180,6 +188,8 @@ LazilyFfiClassification lazilyFfiKindJson(LazilyFfiBytes frame) {
       IpcMessageSnapshot() => LazilyFfiMessageKind.snapshot,
       IpcMessageDelta() => LazilyFfiMessageKind.delta,
       IpcMessageCrdtSync() => LazilyFfiMessageKind.crdtSync,
+      IpcMessageResyncRequest() => LazilyFfiMessageKind.resyncRequest,
+      IpcMessageOutboxAck() => LazilyFfiMessageKind.outboxAck,
     };
     return LazilyFfiClassification(LazilyFfiStatus.ok, kind);
   } on FormatException {

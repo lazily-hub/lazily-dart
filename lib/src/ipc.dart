@@ -877,6 +877,11 @@ class Delta {
   factory Delta.next(Epoch baseEpoch, [List<DeltaOp> ops = const []]) =>
       Delta(baseEpoch: baseEpoch, epoch: baseEpoch + 1, ops: List.of(ops));
 
+  /// The accepted-event span this delta advances: `epoch - baseEpoch` (usually
+  /// 1, `> 1` for a coalesced multi-epoch-span delta, `#lzsync`). Saturates at 0
+  /// for a malformed backward delta. Mirrors `Delta::span` in `lazily-rs`.
+  int get span => epoch >= baseEpoch ? epoch - baseEpoch : 0;
+
   /// lean `isSequentialAfter`: true iff this delta continues immediately after
   /// [lastEpoch].
   bool isNextAfter(Epoch lastEpoch) =>
@@ -1149,15 +1154,85 @@ class CrdtSync {
       'CrdtSync(frontier=${frontier.length} peers, ops=${ops.length})';
 }
 
-/// A length-prefixed, tagged `Snapshot`, `Delta`, or `CrdtSync`
-/// (protocol.md § IPC). The `CrdtSync` variant carries multi-writer plane
-/// traffic alongside the single-producer mirror.
+/// Reliable-sync reverse-channel control frame: request a covering [Snapshot]
+/// on a detected gap (`#lzsync`, protocol.md § ResyncCoordinator).
+///
+/// Carries no node content, so it is permission-filter- and blob-spill-
+/// transparent. Wire form (inside its [IpcMessage] tag):
+/// `{"from_epoch": N}`. Mirrors `ResyncRequest` in `lazily-rs/src/ipc.rs`.
+class ResyncRequest {
+  const ResyncRequest({required this.fromEpoch});
+
+  /// The requesting receiver's `last_epoch`; the sender replies with a
+  /// [Snapshot] whose `epoch >= from_epoch`.
+  final Epoch fromEpoch;
+
+  Map<String, Object> toWire() => {'from_epoch': fromEpoch};
+
+  static ResyncRequest fromWire(Object? value) {
+    final obj = _asObject(value, 'ResyncRequest');
+    return ResyncRequest(fromEpoch: _reqInt(obj, 'from_epoch'));
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is ResyncRequest && other.fromEpoch == fromEpoch;
+
+  @override
+  int get hashCode => Object.hash('ResyncRequest', fromEpoch);
+
+  @override
+  String toString() => 'ResyncRequest(fromEpoch=$fromEpoch)';
+}
+
+/// Reliable-sync reverse-channel control frame: prove receipt through
+/// [throughEpoch] (`#lzsync`, protocol.md § DurableOutbox).
+///
+/// Advances the sender's outbox retention cursor and doubles as the reconnect
+/// resume cursor. Carries no node content. Wire form (inside its [IpcMessage]
+/// tag): `{"through_epoch": N}`. Mirrors `OutboxAck` in `lazily-rs/src/ipc.rs`.
+class OutboxAck {
+  const OutboxAck({required this.throughEpoch});
+
+  /// Highest epoch the receiver has fully applied.
+  final Epoch throughEpoch;
+
+  Map<String, Object> toWire() => {'through_epoch': throughEpoch};
+
+  static OutboxAck fromWire(Object? value) {
+    final obj = _asObject(value, 'OutboxAck');
+    return OutboxAck(throughEpoch: _reqInt(obj, 'through_epoch'));
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is OutboxAck && other.throughEpoch == throughEpoch;
+
+  @override
+  int get hashCode => Object.hash('OutboxAck', throughEpoch);
+
+  @override
+  String toString() => 'OutboxAck(throughEpoch=$throughEpoch)';
+}
+
+/// A length-prefixed, tagged `Snapshot`, `Delta`, `CrdtSync`, or reliable-sync
+/// control frame (`ResyncRequest` / `OutboxAck`) (protocol.md § IPC). The
+/// `CrdtSync` variant carries multi-writer plane traffic alongside the
+/// single-producer mirror; the control frames ride the same framed, tagged
+/// plane in reverse (receiver → sender) for reliable sync (`#lzsync`).
 sealed class IpcMessage {
   const IpcMessage();
 
   bool get isSnapshot => this is IpcMessageSnapshot;
   bool get isDelta => this is IpcMessageDelta;
   bool get isCrdtSync => this is IpcMessageCrdtSync;
+  bool get isResyncRequest => this is IpcMessageResyncRequest;
+  bool get isOutboxAck => this is IpcMessageOutboxAck;
+
+  /// Whether this is a reliable-sync reverse-channel control frame
+  /// ([ResyncRequest] / [OutboxAck]) — no node content, so permission filtering
+  /// and blob spilling are the identity on it. Mirrors `IpcMessage::is_control`.
+  bool get isControl => isResyncRequest || isOutboxAck;
 
   /// The [Snapshot] if this is one, otherwise `null`.
   Snapshot? get snapshot =>
@@ -1170,6 +1245,15 @@ sealed class IpcMessage {
   /// The [CrdtSync] if this is one, otherwise `null`.
   CrdtSync? get crdtSync =>
       this is IpcMessageCrdtSync ? (this as IpcMessageCrdtSync).value : null;
+
+  /// The [ResyncRequest] if this is one, otherwise `null`.
+  ResyncRequest? get resyncRequest => this is IpcMessageResyncRequest
+      ? (this as IpcMessageResyncRequest).value
+      : null;
+
+  /// The [OutboxAck] if this is one, otherwise `null`.
+  OutboxAck? get outboxAck =>
+      this is IpcMessageOutboxAck ? (this as IpcMessageOutboxAck).value : null;
 
   /// The externally-tagged wire shape.
   Object toWire();
@@ -1185,6 +1269,11 @@ sealed class IpcMessage {
   static IpcMessage ofCrdtSync(CrdtSync crdtSync) =>
       IpcMessageCrdtSync(crdtSync);
 
+  static IpcMessage ofResyncRequest(ResyncRequest request) =>
+      IpcMessageResyncRequest(request);
+
+  static IpcMessage ofOutboxAck(OutboxAck ack) => IpcMessageOutboxAck(ack);
+
   static IpcMessage fromWire(Object? value) {
     final entry = _tagged(value, 'IpcMessage');
     switch (entry.key) {
@@ -1194,6 +1283,10 @@ sealed class IpcMessage {
         return IpcMessageDelta(Delta.fromWire(entry.value));
       case 'CrdtSync':
         return IpcMessageCrdtSync(CrdtSync.fromWire(entry.value));
+      case 'ResyncRequest':
+        return IpcMessageResyncRequest(ResyncRequest.fromWire(entry.value));
+      case 'OutboxAck':
+        return IpcMessageOutboxAck(OutboxAck.fromWire(entry.value));
       default:
         throw FormatException('unknown IpcMessage variant: ${entry.key}');
     }
@@ -1257,6 +1350,38 @@ final class IpcMessageCrdtSync extends IpcMessage {
 
   @override
   int get hashCode => Object.hash('CrdtSync', value);
+}
+
+final class IpcMessageResyncRequest extends IpcMessage {
+  const IpcMessageResyncRequest(this.value);
+
+  final ResyncRequest value;
+
+  @override
+  Object toWire() => {'ResyncRequest': value.toWire()};
+
+  @override
+  bool operator ==(Object other) =>
+      other is IpcMessageResyncRequest && other.value == value;
+
+  @override
+  int get hashCode => Object.hash('ResyncRequest', value);
+}
+
+final class IpcMessageOutboxAck extends IpcMessage {
+  const IpcMessageOutboxAck(this.value);
+
+  final OutboxAck value;
+
+  @override
+  Object toWire() => {'OutboxAck': value.toWire()};
+
+  @override
+  bool operator ==(Object other) =>
+      other is IpcMessageOutboxAck && other.value == value;
+
+  @override
+  int get hashCode => Object.hash('OutboxAck', value);
 }
 
 // ---------------------------------------------------------------------------

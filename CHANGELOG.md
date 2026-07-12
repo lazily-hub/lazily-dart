@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.12.0
+
+### Added
+
+- **Reliable Sync (`#lzsync` + `#sync-driver`).** The delivery-reliability layer
+  over the `Snapshot`/`Delta`/`CrdtSync` planes (lazily-spec § Reliable Sync), at
+  parity with the `lazily-rs`/`lazily-kt`/`lazily-js` references:
+  - `ResyncCoordinator` — receiver-side `Apply`/`RequestSnapshot`/`Ignore`
+    decision function, multi-epoch-span aware, single-request-per-gap suppression.
+  - `DurableOutbox` interface + `InMemoryOutbox` — append-before-send,
+    `ackThrough` retention, `replayFrom` cursor (at-least-once → exactly-once).
+  - `OrSet` (add-wins) + `WireLwwRegister<V>` liveness cells on the CrdtSync plane.
+  - `SyncDriver` + `IpcSink`/`IpcSource`/`Clock`/`SnapshotProvider` seams — the
+    full-duplex drain → retain-on-fail → receive/route → advertise-ack loop.
+  - `ResyncRequest` / `OutboxAck` `IpcMessage` control frames (FFI kinds 4/5).
+  Replays the 5 `conformance/reliable-sync/` fixtures + SyncDriver loop-shape
+  tests (17 new; 329 total). Dart is now ✅ on both reliable-sync coverage rows.
+
 ## 0.11.0
 
 **Keyed collections unified on `ReactiveMap<K, V, H>` (`#reactivemap`).** Mirrors
