@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.17.0
+
+### Added
+
+- **`CrdtTree` (`#lzcrdttree`).** `TextCrdt` implements the generic lossless
+  document contract with identity-preserving snapshot/delta and merge.
+- **Storage-independent durable outbox (`#lzdurableoutbox`).** `OutboxStore`
+  provides five ordered-byte operations, `StoredOutbox` owns cursor and replay
+  semantics, and `FileOutboxStore` supplies a flushed append-only restart
+  adapter. Cursor records fold by `max`, preventing stale-handle regression.
+
 ## 0.16.0
 
 ### Added

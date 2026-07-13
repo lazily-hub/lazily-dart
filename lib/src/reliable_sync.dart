@@ -27,6 +27,9 @@
 library lazily.reliable_sync;
 
 import 'dart:collection';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'ipc.dart';
 
@@ -203,41 +206,180 @@ abstract interface class DurableOutbox {
   List<Epoch> retainedEpochs();
 }
 
-/// In-memory [DurableOutbox] — correct within a process lifetime; the default.
-class InMemoryOutbox implements DurableOutbox {
-  /// An empty outbox.
-  InMemoryOutbox();
+/// One serialized outbox frame returned by [OutboxStore.scanAfter].
+typedef StoredOutboxFrame = (Epoch epoch, Uint8List frame);
 
-  final List<OutboxFrame> _entries = [];
-  Epoch _ackedThrough = 0;
+/// Dumb ordered byte storage for the durable outbox protocol.
+///
+/// Serialization, monotonic cursors, pruning, and replay ordering stay in
+/// [StoredOutbox]; adapters implement only these five operations.
+abstract interface class OutboxStore {
+  void put(Epoch epoch, Uint8List frame);
+  void deleteThrough(Epoch epoch);
+  List<StoredOutboxFrame> scanAfter(Epoch cursor);
+  Epoch loadCursor();
+  void saveCursor(Epoch epoch);
+}
 
-  /// The highest acked epoch (retention cursor).
+/// Storage-independent durable outbox protocol.
+///
+/// The name avoids colliding with RelayCell's established `Outbox<T>` facade.
+class StoredOutbox<S extends OutboxStore> implements DurableOutbox {
+  StoredOutbox(this.store) : _ackedThrough = store.loadCursor();
+
+  final S store;
+  Epoch _ackedThrough;
+
+  /// The highest loaded or observed peer acknowledgement.
   Epoch get ackedThrough => _ackedThrough;
 
   @override
-  void append(Epoch epoch, IpcMessage msg) {
-    _entries.add((epoch, msg));
-  }
+  void append(Epoch epoch, IpcMessage msg) =>
+      store.put(epoch, msg.encodeJson());
 
   @override
   void ackThrough(Epoch epoch) {
-    if (epoch > _ackedThrough) _ackedThrough = epoch;
-    _entries.removeWhere((e) => e.$1 <= _ackedThrough);
+    if (epoch > _ackedThrough) {
+      _ackedThrough = epoch;
+      store.saveCursor(epoch);
+    }
+    store.deleteThrough(_ackedThrough);
   }
 
   @override
   List<OutboxFrame> replayFrom(Epoch cursor) {
-    final out = _entries.where((e) => e.$1 > cursor).toList();
-    out.sort((a, b) => a.$1.compareTo(b.$1));
-    return out;
+    final effective = cursor > _ackedThrough ? cursor : _ackedThrough;
+    return store
+        .scanAfter(effective)
+        .map((entry) => (entry.$1, IpcMessage.decodeJson(entry.$2)))
+        .toList();
   }
 
   @override
-  List<Epoch> retainedEpochs() {
-    final es = _entries.map((e) => e.$1).toList();
-    es.sort();
-    return es;
+  List<Epoch> retainedEpochs() =>
+      store.scanAfter(_ackedThrough).map((entry) => entry.$1).toList();
+}
+
+/// Ordered process-local [OutboxStore].
+class InMemoryStore implements OutboxStore {
+  final Map<Epoch, Uint8List> _entries = {};
+  Epoch _cursor = 0;
+
+  @override
+  void put(Epoch epoch, Uint8List frame) {
+    _entries[epoch] = Uint8List.fromList(frame);
   }
+
+  @override
+  void deleteThrough(Epoch epoch) {
+    _entries.removeWhere((stored, _) => stored <= epoch);
+  }
+
+  @override
+  List<StoredOutboxFrame> scanAfter(Epoch cursor) {
+    final epochs = _entries.keys.where((epoch) => epoch > cursor).toList()
+      ..sort();
+    return epochs
+        .map((epoch) => (epoch, Uint8List.fromList(_entries[epoch]!)))
+        .toList();
+  }
+
+  @override
+  Epoch loadCursor() => _cursor;
+
+  @override
+  void saveCursor(Epoch epoch) {
+    if (epoch > _cursor) _cursor = epoch;
+  }
+}
+
+/// In-memory [DurableOutbox] — correct within a process lifetime; the default.
+class InMemoryOutbox extends StoredOutbox<InMemoryStore> {
+  /// An empty outbox.
+  InMemoryOutbox() : super(InMemoryStore());
+}
+
+/// Append-only filesystem [OutboxStore].
+///
+/// Cursor records fold by `max`, rather than overwriting one mutable value, so
+/// a stale handle cannot regress a newer acknowledgement. Each record is flushed
+/// before returning; a malformed crash-truncated final record is ignored.
+class FileOutboxStore implements OutboxStore {
+  FileOutboxStore(String path) : file = File(path) {
+    file.parent.createSync(recursive: true);
+    if (!file.existsSync()) file.createSync();
+  }
+
+  final File file;
+
+  void _append(String op, Epoch epoch, [Uint8List? frame]) {
+    final record = <String, Object>{'op': op, 'epoch': epoch};
+    if (frame != null) record['frame'] = frame.toList();
+    final sink = file.openSync(mode: FileMode.append);
+    try {
+      sink.writeStringSync('${jsonEncode(record)}\n');
+      sink.flushSync();
+    } finally {
+      sink.closeSync();
+    }
+  }
+
+  List<Map<String, dynamic>> _records() {
+    final records = <Map<String, dynamic>>[];
+    for (final line in file.readAsLinesSync()) {
+      try {
+        records.add(jsonDecode(line) as Map<String, dynamic>);
+      } on FormatException {
+        // A crash may leave only the final record incomplete.
+      }
+    }
+    return records;
+  }
+
+  @override
+  void put(Epoch epoch, Uint8List frame) => _append('put', epoch, frame);
+
+  @override
+  void deleteThrough(Epoch epoch) => _append('delete', epoch);
+
+  @override
+  List<StoredOutboxFrame> scanAfter(Epoch cursor) {
+    final entries = <Epoch, Uint8List>{};
+    var deletedThrough = 0;
+    for (final record in _records()) {
+      final epoch = record['epoch'] as int;
+      switch (record['op']) {
+        case 'put':
+          entries[epoch] = Uint8List.fromList(
+            (record['frame'] as List<dynamic>).cast<int>(),
+          );
+        case 'delete':
+          if (epoch > deletedThrough) deletedThrough = epoch;
+      }
+    }
+    final effective = cursor > deletedThrough ? cursor : deletedThrough;
+    final epochs = entries.keys.where((epoch) => epoch > effective).toList()
+      ..sort();
+    return epochs.map((epoch) => (epoch, entries[epoch]!)).toList();
+  }
+
+  @override
+  Epoch loadCursor() {
+    var cursor = 0;
+    for (final record in _records()) {
+      final epoch = record['epoch'] as int;
+      if (record['op'] == 'cursor' && epoch > cursor) cursor = epoch;
+    }
+    return cursor;
+  }
+
+  @override
+  void saveCursor(Epoch epoch) => _append('cursor', epoch);
+}
+
+/// Ready-to-use durable filesystem outbox.
+class FileOutbox extends StoredOutbox<FileOutboxStore> {
+  FileOutbox(String path) : super(FileOutboxStore(path));
 }
 
 // ---------------------------------------------------------------------------
@@ -634,8 +776,8 @@ class SyncDriver {
               _ackOwed = true;
               progress.applied.add(msg);
             case ResyncActionRequestSnapshot(:final fromEpoch):
-              final req =
-                  IpcMessage.ofResyncRequest(ResyncRequest(fromEpoch: fromEpoch));
+              final req = IpcMessage.ofResyncRequest(
+                  ResyncRequest(fromEpoch: fromEpoch));
               if (_sink.send(req)) {
                 progress.resyncRequested = true;
               } else {

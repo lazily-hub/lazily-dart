@@ -27,6 +27,7 @@ export 'src/async_context.dart';
 export 'src/async_reactive_family.dart';
 export 'src/collections.dart';
 export 'src/core.dart';
+export 'src/crdt_tree.dart';
 export 'src/lossless_tree_crdt.dart';
 export 'src/merge.dart';
 export 'src/queue.dart';

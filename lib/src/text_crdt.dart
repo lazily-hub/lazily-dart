@@ -12,6 +12,8 @@
 /// `textcrdt_delta_sync.json` (`#lztextsync`).
 library;
 
+import 'crdt_tree.dart';
+
 /// A globally-unique operation identifier for a character CRDT op.
 ///
 /// Ordered ascending by `(counter, peer)` so that later ops sort after earlier
@@ -94,7 +96,7 @@ class TextOp {
 }
 
 /// A Fugue/RGA-style free-text character CRDT.
-class TextCrdt {
+class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   TextCrdt(this._peer);
   final int _peer;
   int _counter = 0;
@@ -149,8 +151,9 @@ class TextCrdt {
   /// Insert a single character [ch] at the visible [index].
   void insert(int index, String ch) {
     final visible = _orderedIds();
-    final OpId? origin =
-        index == 0 ? null : (index - 1 < visible.length ? visible[index - 1] : null);
+    final OpId? origin = index == 0
+        ? null
+        : (index - 1 < visible.length ? visible[index - 1] : null);
     final id = _nextId();
     _elems[id._key] = _TextElem(ch, origin, null);
   }
@@ -177,6 +180,7 @@ class TextCrdt {
   }
 
   /// The visible text.
+  @override
   String text() {
     final sb = StringBuffer();
     for (final id in _orderedIds()) {
@@ -223,6 +227,15 @@ class TextCrdt {
     }
     return text() != before;
   }
+
+  /// The visible lossless-tree value.
+  @override
+  String value() => text();
+
+  /// Join [other] through the identity-preserving delta path.
+  @override
+  bool mergeFrom(CrdtTree<Map<int, int>, List<TextOp>, String> other) =>
+      applyDelta(other.deltaSince(versionVector()));
 
   void _mergeElem(OpId id, _TextElem oe) {
     _counter = [
@@ -277,10 +290,11 @@ class TextCrdt {
 
   /// Version vector: `{peer → max counter}` over both insert ids and tombstone
   /// delete ids. Absent peer = 0.
+  @override
   Map<int, int> versionVector() {
     final vv = <int, int>{};
-    void bump(OpId id) =>
-        vv[id.peer] = (vv[id.peer] ?? 0) > id.counter ? vv[id.peer]! : id.counter;
+    void bump(OpId id) => vv[id.peer] =
+        (vv[id.peer] ?? 0) > id.counter ? vv[id.peer]! : id.counter;
 
     for (final entry in _elems.entries) {
       final id = OpId._fromKey(entry.key);
@@ -293,6 +307,7 @@ class TextCrdt {
 
   /// Elements whose insert id or tombstone delete id is newer than [theirVv].
   /// A whole-state snapshot is `deltaSince({})`.
+  @override
   List<TextOp> deltaSince(Map<int, int> theirVv) {
     bool seen(OpId id) => id.counter <= (theirVv[id.peer] ?? 0);
     final out = <TextOp>[];
@@ -310,6 +325,7 @@ class TextCrdt {
 
   /// Apply a delta. Same commutative/associative/idempotent algebra as [merge].
   /// Returns whether the visible text changed.
+  @override
   bool applyDelta(List<TextOp> ops) {
     final before = text();
     for (final op in ops) {
