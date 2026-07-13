@@ -363,6 +363,83 @@ void main() {
       expect((q2.tryPop() as QueuePopValue).value, 'a');
     });
   });
+
+  // Minimal contract (Phase 0, #relaycell): a raw-channel-style backend with
+  // only tryPush/tryPop/len/isClosed/close — the default (absent) peek/capacity
+  // — is fully conforming, with no head reader and never full.
+  group('minimal contract (raw channel)', () {
+    test('conforms with no peek / no capacity', () {
+      final ctx = Context();
+      final q = QueueCell<int>(ctx, _MinimalFifo<int>());
+
+      expect(q.isEmpty(), isTrue);
+      expect(q.tryPush(1), isNull);
+      expect(q.tryPush(2), isNull);
+      expect(q.len(), 2);
+
+      // No peek → head is null; no capacity → never full.
+      expect(q.head(), isNull);
+      expect(q.isFull(), isFalse);
+      expect(q.capacity(), isNull);
+
+      expect((q.tryPop() as QueuePopValue).value, 1);
+      expect((q.tryPop() as QueuePopValue).value, 2);
+      expect(q.isEmpty(), isTrue);
+
+      q.close();
+      expect(q.isClosed(), isTrue);
+      expect(q.tryPush(3), QueuePushError.closed);
+      expect(q.tryPop(), isA<QueuePopFailed>());
+    });
+
+    test('reader-kinds stay reactive without peek', () {
+      final ctx = Context();
+      final q = QueueCell<int>(ctx, _MinimalFifo<int>());
+      final log = <int>[];
+      Effect(ctx, (_) {
+        log.add(q.len());
+        return null;
+      });
+
+      expect(log, equals([0]));
+      q.tryPush(10);
+      expect(log, equals([0, 1]));
+      q.tryPop();
+      expect(log, equals([0, 1, 0]));
+    });
+  });
+}
+
+/// A raw-channel-style backend implementing ONLY the required contract. Uses
+/// `extends` (not `implements`) to inherit the default (absent) peek/capacity.
+class _MinimalFifo<T> extends QueueStorage<T> {
+  final List<T> _buf = [];
+  bool _closed = false;
+
+  @override
+  QueuePushError? tryPush(T value) {
+    if (_closed) return QueuePushError.closed;
+    _buf.add(value);
+    return null;
+  }
+
+  @override
+  QueuePopResult<T> tryPop() {
+    if (_buf.isNotEmpty) return QueuePopValue<T>(_buf.removeAt(0));
+    return QueuePopFailed<T>(
+      _closed ? QueuePopError.closed : QueuePopError.empty,
+    );
+  }
+
+  @override
+  int len() => _buf.length;
+
+  @override
+  bool isClosed() => _closed;
+
+  @override
+  void close() => _closed = true;
+  // NB: no peek(), no capacity() — the QueueStorage defaults apply.
 }
 
 /// A minimal custom bounded backend proving the [QueueStorage] adapter seam.

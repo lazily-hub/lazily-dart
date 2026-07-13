@@ -30,6 +30,7 @@ class Context {
 
   int _batchDepth = 0;
   final Set<Cell> _batchedCells = Set.identity();
+  final Set<Slot> _batchedSlots = Set.identity();
   final List<Effect> _pendingEffects = [];
   final Set<Effect> _scheduledEffects = Set.identity();
   bool _flushingEffects = false;
@@ -87,14 +88,36 @@ class Context {
   }
 
   void _flushBatch() {
-    if (_batchedCells.isEmpty) {
+    if (_batchedCells.isEmpty && _batchedSlots.isEmpty) {
       _flushEffects();
       return;
     }
     final cells = _batchedCells.toList();
     _batchedCells.clear();
+    final slots = _batchedSlots.toList();
+    _batchedSlots.clear();
     for (final cell in cells) {
       cell._invalidate();
+    }
+    for (final slot in slots) {
+      slot._invalidate();
+    }
+    _flushEffects();
+  }
+
+  /// Batch-aware external invalidation of derived slots — the mechanism behind
+  /// demand-driven readers (e.g. [QueueCell] reader-kinds) that derive from an
+  /// out-of-graph mutation source. Evicts each slot's cache and cascades to its
+  /// dependents, then flushes effects once. Inside a [batch] the flush is
+  /// deferred to the boundary. A slot with no dependents cascades to nothing, so
+  /// an unobserved op pays effectively nothing (store-without-cascade).
+  void invalidateSlots(List<Slot> slots) {
+    if (_batchDepth > 0) {
+      _batchedSlots.addAll(slots);
+      return;
+    }
+    for (final slot in slots) {
+      slot._invalidate();
     }
     _flushEffects();
   }

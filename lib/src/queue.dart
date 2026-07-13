@@ -192,15 +192,18 @@ abstract class QueueStorage<T> {
   /// queue drains (returns the next element).
   QueuePopResult<T> tryPop();
 
-  /// Peek the current head element without removing it. `null` when empty.
-  T? peek();
+  /// **Optional capability.** Peek the current head element without removing
+  /// it, `null` when empty. The default returns `null` — a backend that cannot
+  /// peek (a raw channel) is fully conforming and simply has no `head` reader.
+  T? peek() => null;
 
-  /// Current number of buffered elements.
+  /// Current number of buffered elements. **Required.**
   int len();
 
-  /// Bounded capacity, or `null` for an unbounded backend. When non-null, the
-  /// shell exposes `is_full` as a reactive read.
-  int? capacity();
+  /// **Optional capability.** Bounded capacity, or `null` for an unbounded
+  /// backend (the default). When non-null, the shell exposes `is_full` as a
+  /// reactive read.
+  int? capacity() => null;
 
   /// Whether the queue has been closed. Close is terminal — once true, it
   /// stays true.
@@ -331,13 +334,20 @@ class VecDequeStorage<T> implements QueueStorage<T> {
 class QueueCell<T> {
   /// Creates a reactive queue backed by [storage], bound to [ctx].
   QueueCell(this.ctx, this.storage) {
-    final len0 = storage.len();
-    final cap0 = storage.capacity();
-    _headCell = Cell<Object>(ctx, storage.peek() ?? _noHead);
-    _lenCell = Cell<int>(ctx, len0);
-    _isEmptyCell = Cell<bool>(ctx, len0 == 0);
-    _isFullCell = Cell<bool>(ctx, cap0 != null && len0 >= cap0);
-    _closedCell = Cell<bool>(ctx, storage.isClosed());
+    final s = storage;
+    _capacity = s.capacity();
+    final cap = _capacity;
+    // Demand-driven reader-kinds: memoized Slots deriving from storage (were
+    // eagerly-Set Cells). Each re-derives on first read after invalidation; the
+    // shell invalidates only the ones that provably changed on an op (see
+    // [_invalidateReaders]). `closed` stays a Cell (a direct input, set by
+    // [close]). The head Slot holds either [_noHead] (empty / no peek) or a real
+    // element (typed `Object` because a Slot value here is never null).
+    _headSlot = Slot<Object>(ctx, (_) => s.peek() ?? _noHead);
+    _lenSlot = Slot<int>(ctx, (_) => s.len());
+    _isEmptySlot = Slot<bool>(ctx, (_) => s.len() == 0);
+    _isFullSlot = Slot<bool>(ctx, (_) => cap != null && s.len() >= cap);
+    _closedCell = Cell<bool>(ctx, s.isClosed());
   }
 
   /// Create an unbounded queue (the default reference backend).
@@ -359,35 +369,35 @@ class QueueCell<T> {
   /// [VecDequeStorage.toList]).
   final QueueStorage<T> storage;
 
-  // Reader-kind version cells. The shell re-derives these from storage after
-  // each op; the `!=` guard on Cell.value's setter means a cell whose value
-  // did not change is not invalidated — this is what implements reader-kind
-  // independence for free.
-  late final Cell<Object> _headCell;
-  late final Cell<int> _lenCell;
-  late final Cell<bool> _isEmptyCell;
-  late final Cell<bool> _isFullCell;
+  // Demand-driven reader-kinds — memoized Slots deriving from storage. `closed`
+  // stays a Cell (a direct input). See the constructor.
+  late final Slot<Object> _headSlot;
+  late final Slot<int> _lenSlot;
+  late final Slot<bool> _isEmptySlot;
+  late final Slot<bool> _isFullSlot;
   late final Cell<bool> _closedCell;
 
-  /// Re-derive the reader-kind cells from storage and write them back, in one
-  /// atomic invalidation pass (a [Context.batch] groups the writes so an
-  /// observer never sees a partial state — e.g. `len` bumped but `is_full` not
-  /// yet flipped). The `!=` guard on Cell.value's setter suppresses
-  /// invalidation for any cell whose value did not change — this is the
-  /// reader-kind independence law. `closed` is intentionally NOT touched here:
-  /// it only changes via [close].
-  void _syncContent() {
-    final lenVal = storage.len();
-    final cap = storage.capacity();
-    final isFullVal = cap != null && lenVal >= cap;
-    final headVal = storage.peek() ?? _noHead;
-    final isEmptyVal = lenVal == 0;
-    ctx.batch(() {
-      _headCell.value = headVal;
-      _lenCell.value = lenVal;
-      _isEmptyCell.value = isEmptyVal;
-      _isFullCell.value = isFullVal;
-    });
+  // `capacity` is an optional, fixed backend capability — cached once.
+  late final int? _capacity;
+
+  /// Invalidate exactly the reader-kind Slots whose derived value provably
+  /// changed on a successful op that took the queue from [lenBefore] to
+  /// [lenAfter], in one atomic pass so an observer never sees a partial state.
+  /// No reader value is derived here — invalidating a Slot only evicts its cache
+  /// and cascades to dependents (each re-derives lazily on its next read), so an
+  /// unobserved reader pays effectively nothing. [headChanged] is passed by the
+  /// caller because head depends on op *direction*, not just `len` (a pop always
+  /// changes head; a push changes it only from empty) — so no `peek` is needed.
+  /// `closed` is never touched here: it changes only via [close].
+  void _invalidateReaders(int lenBefore, int lenAfter, bool headChanged) {
+    final changed = <Slot>[_lenSlot]; // len always changes on a successful op
+    if ((lenBefore == 0) != (lenAfter == 0)) changed.add(_isEmptySlot);
+    final cap = _capacity;
+    if (cap != null && (lenBefore >= cap) != (lenAfter >= cap)) {
+      changed.add(_isFullSlot);
+    }
+    if (headChanged) changed.add(_headSlot);
+    ctx.invalidateSlots(changed);
   }
 
   /// Append [value] to the tail of the queue.
@@ -402,8 +412,10 @@ class QueueCell<T> {
   /// `is_empty` readers as appropriate; `is_full` when transitioning onto
   /// capacity. Does not touch `closed`.
   QueuePushError? tryPush(T value) {
+    final lenBefore = storage.len();
     final err = storage.tryPush(value);
-    if (err == null) _syncContent();
+    // Head changes on a push only when the queue was empty.
+    if (err == null) _invalidateReaders(lenBefore, lenBefore + 1, lenBefore == 0);
     return err;
   }
 
@@ -418,8 +430,12 @@ class QueueCell<T> {
   /// `is_empty` (when transitioning to empty) readers as appropriate;
   /// `is_full` when transitioning off capacity.
   QueuePopResult<T> tryPop() {
+    final lenBefore = storage.len();
     final result = storage.tryPop();
-    if (result is QueuePopValue<T>) _syncContent();
+    // A successful pop always advances head and decrements len.
+    if (result is QueuePopValue<T>) {
+      _invalidateReaders(lenBefore, lenBefore - 1, true);
+    }
     return result;
   }
 
@@ -441,17 +457,17 @@ class QueueCell<T> {
   /// A reader is invalidated when the head value *changes* — every pop, and a
   /// push only when transitioning from empty.
   T? head() {
-    final v = _headCell.value;
+    final v = _headSlot();
     return identical(v, _noHead) ? null : v as T;
   }
 
   /// Reactive read of the number of buffered elements. Invalidated whenever
   /// the count changes (every successful push/pop).
-  int len() => _lenCell.value;
+  int len() => _lenSlot();
 
   /// Reactive emptiness check. Invalidated only on the empty ↔ non-empty
   /// transition.
-  bool isEmpty() => _isEmptyCell.value;
+  bool isEmpty() => _isEmptySlot();
 
   /// Reactive fullness check (only meaningful when the backend is bounded).
   /// Invalidated on the full ↔ not-full transition — this is the backpressure
@@ -459,7 +475,7 @@ class QueueCell<T> {
   /// transitions full → not-full invalidates the producer's [isFull]
   /// subscription and the producer resumes. For an unbounded backend this is
   /// always `false` and never invalidates.
-  bool isFull() => _isFullCell.value;
+  bool isFull() => _isFullSlot();
 
   /// Reactive read of the closed flag. Invalidated only on the open → closed
   /// transition.
@@ -467,8 +483,8 @@ class QueueCell<T> {
 
   // -- Non-reactive storage access ------------------------------------------
 
-  /// The backend's capacity, or `null` if unbounded.
-  int? capacity() => storage.capacity();
+  /// The backend's capacity, or `null` if unbounded. Cached at construction.
+  int? capacity() => _capacity;
 
   /// Snapshot the buffered elements in FIFO order. Non-reactive — for
   /// debugging, snapshot/serde, and conformance-fixture verification. There
