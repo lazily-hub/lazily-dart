@@ -71,13 +71,21 @@ void main() {
   });
 
   test('stale file handle cannot regress serialized cursor', () {
+    final scenario = _scenario('stale handle cannot regress serialized cursor');
     final directory = Directory.systemTemp.createTempSync('lazily-cursor-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final path = '${directory.path}/outbox.jsonl';
-    final stale = FileOutboxStore(path);
-    final current = FileOutboxStore(path);
-    current.saveCursor(9);
-    stale.saveCursor(3);
-    expect(FileOutboxStore(path).loadCursor(), 9);
+    final handles = <String, StoredOutbox<FileOutboxStore>>{
+      'stale': StoredOutbox(FileOutboxStore(path)),
+      'current': StoredOutbox(FileOutboxStore(path)),
+    };
+    for (final save in (scenario['save_cursor'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()) {
+      handles[save['handle']]!.ackThrough(save['epoch'] as int);
+    }
+    final expected =
+        (scenario['expect'] as Map<String, dynamic>)['loaded_cursor'];
+    expect(handles['stale']!.ackedThrough, expected);
+    expect(FileOutboxStore(path).loadCursor(), expected);
   });
 }

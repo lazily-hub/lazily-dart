@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.17.1
+
+### Fixed
+
+- **Serialized monotonic outbox cursors.** Every `StoredOutbox` operation
+  refreshes the persisted acknowledgement cursor, so a stale handle cannot
+  regress replay or retention semantics after another handle advances the same
+  durable store.
+
 ## 0.17.0
 
 ### Added

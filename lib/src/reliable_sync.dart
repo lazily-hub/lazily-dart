@@ -231,7 +231,11 @@ class StoredOutbox<S extends OutboxStore> implements DurableOutbox {
   Epoch _ackedThrough;
 
   /// The highest loaded or observed peer acknowledgement.
-  Epoch get ackedThrough => _ackedThrough;
+  Epoch get ackedThrough {
+    final persisted = store.loadCursor();
+    if (persisted > _ackedThrough) _ackedThrough = persisted;
+    return _ackedThrough;
+  }
 
   @override
   void append(Epoch epoch, IpcMessage msg) =>
@@ -239,16 +243,19 @@ class StoredOutbox<S extends OutboxStore> implements DurableOutbox {
 
   @override
   void ackThrough(Epoch epoch) {
-    if (epoch > _ackedThrough) {
-      _ackedThrough = epoch;
-      store.saveCursor(epoch);
+    var target = ackedThrough;
+    if (epoch > target) target = epoch;
+    if (target > _ackedThrough) {
+      store.saveCursor(target);
+      _ackedThrough = target;
     }
-    store.deleteThrough(_ackedThrough);
+    store.deleteThrough(target);
   }
 
   @override
   List<OutboxFrame> replayFrom(Epoch cursor) {
-    final effective = cursor > _ackedThrough ? cursor : _ackedThrough;
+    final persisted = ackedThrough;
+    final effective = cursor > persisted ? cursor : persisted;
     return store
         .scanAfter(effective)
         .map((entry) => (entry.$1, IpcMessage.decodeJson(entry.$2)))
@@ -257,7 +264,7 @@ class StoredOutbox<S extends OutboxStore> implements DurableOutbox {
 
   @override
   List<Epoch> retainedEpochs() =>
-      store.scanAfter(_ackedThrough).map((entry) => entry.$1).toList();
+      store.scanAfter(ackedThrough).map((entry) => entry.$1).toList();
 }
 
 /// Ordered process-local [OutboxStore].
