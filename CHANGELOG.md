@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.17.2
+
+### Fixed
+
+- **TopicCell lifecycle conformance.** Durable subscriber cursors remain frozen
+  while disconnected, reads are unavailable offline, advances at the tail are
+  no-ops, invalid ephemeral snapshots are rejected, and GC preserves absolute
+  cursor offsets.
+
 ## 0.17.1
 
 ### Fixed
