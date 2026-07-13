@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.14.0
+
+### Added
+
+- **Merge algebra + `MergeCell` (Phase 1, `#relaycell`).** `MergePolicy<T>` (an
+  associative fold with commutative/idempotent/conflates flags) with factories
+  keepLatest/sum/max/setUnion/rawFifo; `MergeCell<T>` generalizes `Cell`
+  (`Cell ≡ MergeCell(KeepLatest)`), a source whose write is a merge. Law-tests +
+  cross-language `mergecell_algebra.json` fixture replay.
+
 ## 0.13.0
 
 ### Changed
