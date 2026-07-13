@@ -254,8 +254,8 @@ class VecDequeStorage<T> implements QueueStorage<T> {
     List<T>? elements,
     int? capacity,
     bool closed = false,
-  }) : _capacity = capacity,
-       _closed = closed {
+  })  : _capacity = capacity,
+        _closed = closed {
     if (capacity != null && capacity <= 0) {
       throw ArgumentError('VecDequeStorage capacity must be > 0');
     }
@@ -415,7 +415,8 @@ class QueueCell<T> {
     final lenBefore = storage.len();
     final err = storage.tryPush(value);
     // Head changes on a push only when the queue was empty.
-    if (err == null) _invalidateReaders(lenBefore, lenBefore + 1, lenBefore == 0);
+    if (err == null)
+      _invalidateReaders(lenBefore, lenBefore + 1, lenBefore == 0);
     return err;
   }
 
@@ -504,23 +505,235 @@ class QueueCell<T> {
 }
 
 // ---------------------------------------------------------------------------
-// TopicCell / WorkQueueCell — future-work stubs (documented, not in v1).
+// TopicCell — broadcast log with independent subscriber cursors (`#lztopiccell`).
 // ---------------------------------------------------------------------------
-//
-// `TopicCell` (SPMC broadcast / MPMC pub-sub) and `WorkQueueCell` (true MPMC
-// with exclusive handoff) are genuinely distinct primitives — they differ in
-// *invalidation model and handoff semantics*, not producer/consumer
-// cardinality (see `lazily-spec/cell-model.md` § "Future queue primitives").
-//
-// They are reserved for future work and are NOT in v1 conformance:
-//
-// - **TopicCell** — every subscriber receives every pushed element. Each
-//   subscriber maintains its own cursor; the topic retains elements until all
-//   cursors have advanced past them (GC frontier = slowest subscriber). Lands
-//   with the distributed-queue PRD Phase 3. Formal stub:
-//   `lazily-formal/LazilyFormal/TopicCell.lean`.
-//
-// - **WorkQueueCell** — N consumers compete for elements from a shared FIFO;
+
+/// Whether a topic subscription survives disconnect and participates in GC.
+enum TopicDurability { durable, ephemeral }
+
+/// Result of subscribing a stable subscriber id.
+enum TopicSubscribeOutcome { subscribed, reconnected, alreadySubscribed }
+
+/// Serializable state for one topic subscriber.
+final class TopicSubscriptionSnapshot {
+  const TopicSubscriptionSnapshot({
+    required this.subscriberId,
+    required this.cursor,
+    required this.durability,
+    required this.connected,
+  });
+
+  final String subscriberId;
+  final int cursor;
+  final TopicDurability durability;
+  final bool connected;
+}
+
+/// Serializable retained log and stable subscription table.
+final class TopicSnapshot<T> {
+  const TopicSnapshot({
+    required this.baseOffset,
+    required this.elements,
+    required this.subscriptions,
+  });
+
+  final int baseOffset;
+  final List<T> elements;
+  final List<TopicSubscriptionSnapshot> subscriptions;
+}
+
+final class _TopicSubscription {
+  _TopicSubscription(this.cursor, this.durability, this.connected);
+
+  int cursor;
+  final TopicDurability durability;
+  bool connected;
+}
+
+/// Broadcast topic whose subscribers read and advance independent cursors.
+///
+/// Durable subscriptions keep their absolute cursor while offline. Ephemeral
+/// subscriptions are removed on disconnect. [gc] drops only the prefix below
+/// the slowest durable cursor and therefore invalidates no reader.
+final class TopicCell<T> {
+  TopicCell(this.ctx, [TopicSnapshot<T>? snapshot]) {
+    if (snapshot != null) {
+      _baseOffset = snapshot.baseOffset;
+      _elements.addAll(snapshot.elements);
+      final tail = tailOffset;
+      for (final saved in snapshot.subscriptions) {
+        if (saved.cursor < _baseOffset || saved.cursor > tail) {
+          throw ArgumentError(
+              'topic subscription cursor is outside retained log');
+        }
+        _subscriptions[saved.subscriberId] = _TopicSubscription(
+          saved.cursor,
+          saved.durability,
+          saved.connected,
+        );
+        _ensureReader(saved.subscriberId);
+      }
+    }
+  }
+
+  final Context ctx;
+  int _baseOffset = 0;
+  final List<T> _elements = <T>[];
+  final Map<String, _TopicSubscription> _subscriptions = {};
+  final Map<String, Slot<List<T>>> _readers = {};
+
+  int get baseOffset => _baseOffset;
+  int get tailOffset => _baseOffset + _elements.length;
+
+  Slot<List<T>> _ensureReader(String subscriberId) => _readers.putIfAbsent(
+        subscriberId,
+        () => Slot<List<T>>(ctx, (_) => readUntracked(subscriberId)),
+      );
+
+  void _invalidate(Iterable<String> subscriberIds) {
+    final changed = <Slot>[];
+    for (final id in subscriberIds) {
+      final reader = _readers[id];
+      if (reader != null) changed.add(reader);
+    }
+    if (changed.isNotEmpty) ctx.invalidateSlots(changed);
+  }
+
+  /// Start at the current tail or resume an offline durable cursor.
+  TopicSubscribeOutcome subscribe(
+    String subscriberId, [
+    TopicDurability durability = TopicDurability.durable,
+  ]) {
+    final existing = _subscriptions[subscriberId];
+    if (existing != null) {
+      if (existing.connected) return TopicSubscribeOutcome.alreadySubscribed;
+      if (existing.durability != TopicDurability.durable) {
+        throw StateError('only durable subscriptions can reconnect');
+      }
+      existing.connected = true;
+      _invalidate([subscriberId]);
+      return TopicSubscribeOutcome.reconnected;
+    }
+    _subscriptions[subscriberId] =
+        _TopicSubscription(tailOffset, durability, true);
+    _ensureReader(subscriberId);
+    return TopicSubscribeOutcome.subscribed;
+  }
+
+  void reconnect(String subscriberId) {
+    final subscription = _subscriptions[subscriberId];
+    if (subscription == null ||
+        subscription.durability != TopicDurability.durable) {
+      throw StateError('durable subscription not found');
+    }
+    if (!subscription.connected) {
+      subscription.connected = true;
+      _invalidate([subscriberId]);
+    }
+  }
+
+  void disconnect(String subscriberId) {
+    final subscription = _subscriptions[subscriberId];
+    if (subscription == null || !subscription.connected) return;
+    subscription.connected = false;
+    if (subscription.durability == TopicDurability.ephemeral) {
+      _subscriptions.remove(subscriberId);
+    }
+    _invalidate([subscriberId]);
+  }
+
+  /// Append a value and independently invalidate every connected reader.
+  int publish(T value) {
+    final offset = tailOffset;
+    _elements.add(value);
+    _invalidate(
+      _subscriptions.entries
+          .where((entry) => entry.value.connected)
+          .map((entry) => entry.key),
+    );
+    return offset;
+  }
+
+  List<T> readUntracked(String subscriberId) {
+    final subscription = _subscriptions[subscriberId];
+    if (subscription == null) throw StateError('subscription not found');
+    final start = subscription.cursor - _baseOffset;
+    return List<T>.unmodifiable(_elements.sublist(start));
+  }
+
+  /// Reactively read the retained suffix at this subscriber's cursor.
+  List<T> readStream(String subscriberId) => _ensureReader(subscriberId)();
+
+  T? read(String subscriberId) {
+    final stream = readStream(subscriberId);
+    return stream.isEmpty ? null : stream.first;
+  }
+
+  int advance(String subscriberId, [int count = 1]) {
+    final subscription = _subscriptions[subscriberId];
+    if (subscription == null ||
+        count < 0 ||
+        subscription.cursor + count > tailOffset) {
+      throw StateError('invalid topic cursor advance');
+    }
+    if (count > 0) {
+      subscription.cursor += count;
+      _invalidate([subscriberId]);
+    }
+    return subscription.cursor;
+  }
+
+  /// Remove the prefix below all durable cursors without invalidating readers.
+  int gc() {
+    var frontier = tailOffset;
+    for (final subscription in _subscriptions.values) {
+      if (subscription.durability == TopicDurability.durable &&
+          subscription.cursor < frontier) {
+        frontier = subscription.cursor;
+      }
+    }
+    final removed = frontier - _baseOffset;
+    _elements.removeRange(0, removed);
+    _baseOffset = frontier;
+    return removed;
+  }
+
+  /// Model a process restart; persisted state and reader values are stable.
+  void restart() {}
+
+  List<T> elements() => List<T>.unmodifiable(_elements);
+
+  TopicSubscriptionSnapshot? subscription(String subscriberId) {
+    final subscription = _subscriptions[subscriberId];
+    if (subscription == null) return null;
+    return TopicSubscriptionSnapshot(
+      subscriberId: subscriberId,
+      cursor: subscription.cursor,
+      durability: subscription.durability,
+      connected: subscription.connected,
+    );
+  }
+
+  Slot<List<T>> readerHandle(String subscriberId) =>
+      _ensureReader(subscriberId);
+
+  TopicSnapshot<T> snapshot() => TopicSnapshot<T>(
+        baseOffset: _baseOffset,
+        elements: List<T>.unmodifiable(_elements),
+        subscriptions: List<TopicSubscriptionSnapshot>.unmodifiable(
+          _subscriptions.entries.map(
+            (entry) => TopicSubscriptionSnapshot(
+              subscriberId: entry.key,
+              cursor: entry.value.cursor,
+              durability: entry.value.durability,
+              connected: entry.value.connected,
+            ),
+          ),
+        ),
+      );
+}
+
+// `WorkQueueCell` — N consumers compete for elements from a shared FIFO;
 //   each element is delivered to exactly one consumer (exclusive handoff).
 //   This requires an authority (designated leader peer) to serialize
 //   pop-assignment — pure CRDT cannot provide it. Lands with the

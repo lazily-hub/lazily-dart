@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.16.0
+
+### Added
+
+- **`TopicCell` broadcast topics (`#lztopiccell`).** Independent absolute
+  subscriber cursors, durable offline replay, ephemeral disconnect lifecycle,
+  per-subscriber reactive invalidation, snapshot restore, and safe prefix GC at
+  the slowest durable cursor.
+
 ## 0.15.0
 
 ### Added
