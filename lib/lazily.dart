@@ -31,6 +31,7 @@ export 'src/lossless_tree_crdt.dart';
 export 'src/merge.dart';
 export 'src/queue.dart';
 export 'src/registers.dart';
+export 'src/relay.dart';
 export 'src/sem_tree.dart';
 export 'src/seq_crdt.dart';
 export 'src/stable_id.dart';

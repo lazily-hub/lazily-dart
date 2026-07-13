@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.15.0
+
+### Added
+
+- **RelayCell — Phases 2–6 (`#relaycell`).** The algebra-typed conflating relay,
+  ported from lazily-rs: `RelayCell<T>` (hot head under a `MergePolicy`, reactive
+  `BackpressurePolicy`, `Overflow` block/dropNewest/dropOldest/conflate/spill,
+  demand-driven `depth`/`isFull`/`isEmpty` slots; rejects `conflate` for a
+  non-conflating policy); `SpillStore<T>` paged durable tail (`reconstruct`
+  spill_lossless, `replayUnacked` idempotent replay, ack-before-reclaim);
+  `RelayTransport<T>` seam (`InProcTransport`/`FramedTransport`); `Outbox<T>` /
+  `Inbox<T>` role facades (producer backpressure via `isFull`; remote credit
+  meter); and the Phase-6 policies `RatePolicy`/`WindowPolicy`/`ExpiryPolicy`/
+  `PriorityStorage<T>`/`KeyedRelay<K,T>`. Logical-clock time for determinism.
+
 ## 0.14.0
 
 ### Added
