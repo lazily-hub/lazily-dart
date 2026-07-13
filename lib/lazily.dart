@@ -28,6 +28,7 @@ export 'src/async_reactive_family.dart';
 export 'src/collections.dart';
 export 'src/core.dart';
 export 'src/lossless_tree_crdt.dart';
+export 'src/merge.dart';
 export 'src/queue.dart';
 export 'src/registers.dart';
 export 'src/sem_tree.dart';
