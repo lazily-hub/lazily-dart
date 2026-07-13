@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.18.0
+
+### Added
+
+- **`WorkQueueCell` competing-consumer delivery (`#lzworkqueue`).** Exclusive
+  FIFO claims use stable item ids and fresh delivery ids, worker-scoped
+  ack/nack settlement, strict visibility expiry, tail redelivery, bounded
+  dead-letter handling, and independent reactive count readers.
+
 ## 0.17.2
 
 ### Fixed
