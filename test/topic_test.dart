@@ -45,4 +45,45 @@ void main() {
     topic.subscribe('viewer', TopicDurability.ephemeral);
     expect(topic.subscription('viewer')!.cursor, topic.tailOffset);
   });
+
+  test('tail and offline advance are no-ops', () {
+    final topic = TopicCell<String>(Context());
+    topic.subscribe('worker');
+    topic.publish('a');
+    expect(topic.advance('worker'), 1);
+    expect(topic.advance('worker'), 1);
+
+    topic.disconnect('worker');
+    topic.publish('b');
+    expect(topic.readStream('worker'), isEmpty);
+    expect(topic.advance('worker'), 1);
+    expect(topic.subscription('worker')!.cursor, 1);
+
+    topic.reconnect('worker');
+    expect(topic.readStream('worker'), ['b']);
+    expect(topic.gc(), 1);
+    expect(topic.baseOffset, 1);
+    expect(topic.subscription('worker')!.cursor, 1);
+  });
+
+  test('snapshot rejects disconnected ephemeral subscription', () {
+    expect(
+      () => TopicCell<String>(
+        Context(),
+        const TopicSnapshot<String>(
+          baseOffset: 0,
+          elements: [],
+          subscriptions: [
+            TopicSubscriptionSnapshot(
+              subscriberId: 'viewer',
+              cursor: 0,
+              durability: TopicDurability.ephemeral,
+              connected: false,
+            ),
+          ],
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
 }

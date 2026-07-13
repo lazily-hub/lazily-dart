@@ -558,6 +558,9 @@ final class _TopicSubscription {
 final class TopicCell<T> {
   TopicCell(this.ctx, [TopicSnapshot<T>? snapshot]) {
     if (snapshot != null) {
+      if (snapshot.baseOffset < 0) {
+        throw ArgumentError('topic base offset must be non-negative');
+      }
       _baseOffset = snapshot.baseOffset;
       _elements.addAll(snapshot.elements);
       final tail = tailOffset;
@@ -565,6 +568,10 @@ final class TopicCell<T> {
         if (saved.cursor < _baseOffset || saved.cursor > tail) {
           throw ArgumentError(
               'topic subscription cursor is outside retained log');
+        }
+        if (saved.durability == TopicDurability.ephemeral && !saved.connected) {
+          throw ArgumentError(
+              'disconnected ephemeral topic subscription must be removed');
         }
         _subscriptions[saved.subscriberId] = _TopicSubscription(
           saved.cursor,
@@ -656,7 +663,9 @@ final class TopicCell<T> {
 
   List<T> readUntracked(String subscriberId) {
     final subscription = _subscriptions[subscriberId];
-    if (subscription == null) throw StateError('subscription not found');
+    if (subscription == null || !subscription.connected) {
+      return List<T>.unmodifiable(const []);
+    }
     final start = subscription.cursor - _baseOffset;
     return List<T>.unmodifiable(_elements.sublist(start));
   }
@@ -671,9 +680,13 @@ final class TopicCell<T> {
 
   int advance(String subscriberId, [int count = 1]) {
     final subscription = _subscriptions[subscriberId];
-    if (subscription == null ||
-        count < 0 ||
-        subscription.cursor + count > tailOffset) {
+    if (subscription == null || count < 0) {
+      throw StateError('invalid topic cursor advance');
+    }
+    if (!subscription.connected || subscription.cursor == tailOffset) {
+      return subscription.cursor;
+    }
+    if (subscription.cursor + count > tailOffset) {
       throw StateError('invalid topic cursor advance');
     }
     if (count > 0) {
