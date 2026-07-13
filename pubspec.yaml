@@ -4,7 +4,7 @@ description: >-
   dependency tracking and cache invalidation, plus the lazily-spec wire protocol
   for mirroring graph state across processes and languages. Pure Dart: Flutter,
   web, and native.
-version: 0.12.0
+version: 0.13.0
 repository: https://github.com/lazily-hub/lazily-dart
 issue_tracker: https://github.com/lazily-hub/lazily-dart/issues
 topics: [reactive, signals, reactive-programming, state, flutter]

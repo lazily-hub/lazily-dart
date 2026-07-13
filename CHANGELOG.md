@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.13.0
+
+### Changed
+
+- **Demand-driven queue reader-kinds + optional `peek`/`capacity` (Phase 0,
+  `#relaycell`).** `QueueCell` reader-kinds (`head`/`len`/`isEmpty`/`isFull`) are
+  now demand-driven memoized `Slot`s (were eagerly-set `Cell`s): a successful
+  push/pop derives no reader value and invalidates only the readers whose value
+  provably changed. `peek`/`capacity` become optional `QueueStorage` capabilities
+  (default method bodies returning `null`) — the minimal contract is
+  `tryPush`/`tryPop`/`len`/`isClosed`/`close`, so a raw-channel-style backend
+  conforms directly (no `head`/`isFull` reader). Observable semantics are
+  unchanged; all conformance fixtures stay green.
+
 ## 0.12.0
 
 ### Added
