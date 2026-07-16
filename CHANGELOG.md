@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.20.0
+
+### Changed
+
+- **Reactive-core performance + memory pass**, porting the proven `lazily-rs`
+  hot-path patterns. Observable semantics are unchanged (all 399 tests +
+  `lazily-formal` Lean proofs stay green); the wins are in allocation and
+  per-op work:
+  - **On-node value cache** (drops the `Context._cache` `Map.identity`). Slot /
+    `Memo` / `_SignalSlot` values now live as direct fields on the node
+    (`_cachedValue` + a `_cacheGen`), so a cached read is a single field load
+    with no map lookup or hashing. `Context.clear()` becomes an O(1) generation
+    bump. The single biggest win for `viewport_recalc`.
+  - **Iterative DFS invalidation** over a `Context`-owned reusable stack,
+    replacing the recursive cascade that allocated a `.toList()` snapshot per
+    node (mirrors `mark_frontier_locked`). `Memo`'s eager-recompute-and-guard
+    now expands into the same shared stack. Reentrant cascades (eager `Signal`
+    recompute) fall back to a local stack.
+  - **Small-list edges** instead of a per-node `Set` on both sides (mirrors
+    `SmallVec<[SlotId; 2]>`). The edge list is allocated lazily on first edge
+    and identity-deduped; nodes that never connect allocate nothing. Removes
+    two empty `Set` allocations per node (4M at the 2M-cell scale benchmark).
+  - **`_flushEffects` uses a head pointer** instead of O(n) `removeAt(0)`
+    (mirrors `VecDeque::pop_front`); `Effect.dispose` no longer shifts the
+    queue.
+  - **`Cell.subscribe` stores the typed observer directly** (drops the
+    per-subscribe wrapper closure) and `_notifyObservers` early-outs when there
+    are no observers.
+  - **Lazy batch sets** — `_batchedCells` / `_batchedSlots` are allocated on
+    first `batch()` entry instead of eagerly at every `Context` construction.
+  - `_detachUpstream` early-returns when there are no upstream edges.
+
+### Performance (benchmark deltas vs 0.19.0)
+
+- Micro: `Cell read/write` 0.0512 → 0.0424 µs; `Slot recompute` 0.2036 → 0.1170
+  µs; `Memo equality guard` 0.1540 → 0.0777 µs; `batch coalesce` 2.163 → 1.276
+  µs.
+- Scale (2M cells): `build` 490 → 252 ms; `cold_full_recalc` 573 → 308 ms;
+  `viewport_recalc` **32.8 µs → 7.7 µs**; `full_recalc_invalidate_all` 782 →
+  239 ms.
+- Scale (10M cells / full Google Sheets workbook): `cold_full_recalc` 4.02 →
+  1.08 s; `full_recalc_invalidate_all` 5.00 → 1.21 s; `viewport_recalc` 29.5 →
+  7.58 µs.
+
 ## 0.19.0
 
 ### Added

@@ -54,24 +54,27 @@ scope + node allocation, not just the isolated operation — this matches the
 
 | Benchmark | µs/op | ops/s | What it measures |
 |-----------|------:|------:|------------------|
-| `Cell read/write` | 0.0512 | 19,527,436 | New `Context` + `Cell`, one guarded write, one read — the core mutation path. |
-| `Slot recompute` | 0.2036 | 4,911,591 | Two cells + a dependent `Slot`; edit one cell, re-pull the slot (edge re-tracking + recompute). |
-| `Memo equality guard (cache hit)` | 0.1540 | 6,495,615 | `Memo` recompute that yields an equal value, suppressing the downstream cascade. |
-| `batch coalesce (10 cells)` | 2.1630 | 462,327 | 10 cell writes inside one `batch`, coalesced into a single invalidation pass, driving one `Effect`. |
-| `CellMap insert + read` | 1.2240 | 817,013 | 10 keyed `CellMap` inserts + one read on the keyed collection. |
-| `TextCrdt insert 100 chars` | 961.80 | 1,040 | Build a `TextCrdt` of 100 characters (Fugue/RGA ordering rebuilt per insert). |
-| `SeqCrdt insert 100 elements` | 138.64 | 7,213 | Build a move-aware `SeqCrdt` of 100 elements (fractional-index positions + LWW registers). |
+| `Cell read/write` | 0.0424 | 23,579,344 | New `Context` + `Cell`, one guarded write, one read — the core mutation path. |
+| `Slot recompute` | 0.1170 | 8,547,009 | Two cells + a dependent `Slot`; edit one cell, re-pull the slot (edge re-tracking + recompute). |
+| `Memo equality guard (cache hit)` | 0.0777 | 12,870,013 | `Memo` recompute that yields an equal value, suppressing the downstream cascade. |
+| `batch coalesce (10 cells)` | 1.2760 | 783,699 | 10 cell writes inside one `batch`, coalesced into a single invalidation pass, driving one `Effect`. |
+| `CellMap insert + read` | 1.4360 | 696,379 | 10 keyed `CellMap` inserts + one read on the keyed collection. |
+| `TextCrdt insert 100 chars` | 938.41 | 1,066 | Build a `TextCrdt` of 100 characters (Fugue/RGA ordering rebuilt per insert). |
+| `SeqCrdt insert 100 elements` | 134.71 | 7,423 | Build a move-aware `SeqCrdt` of 100 elements (fractional-index positions + LWW registers). |
 
 ### Notes
 
 - The reactive-core steady state (`Cell read/write`, `Slot recompute`, `Memo`)
   is sub-microsecond even with a fresh `Context` allocated every iteration —
-  reads and equality-guarded writes are cheap.
+  reads and equality-guarded writes are cheap. Since the 0.20.0 core
+  optimizations (on-node value cache, iterative DFS cascade, small-list edges),
+  `Slot recompute` and the `Memo` guard are ~2× and ~2.7× faster respectively
+  than the 0.19.0 baseline.
 - The CRDT builders (`TextCrdt`, `SeqCrdt`) measure *whole-document
   construction* (100 ops), not per-op cost — divide by 100 for per-insert.
   They are the heaviest paths because visible order is recomputed as a pure
   function of the element set on each mutation, matching the spec's determinism
-  requirement.
+  requirement. They are essentially unchanged by the core work (variance only).
 - These are single-threaded micro-benchmarks. Dart has no shared-memory
   threads (isolates = separate heaps), so the concurrency surfaces are
   correctness-tested rather than benchmarked here.
@@ -99,10 +102,10 @@ reactive nodes**. Four scenarios cover the spreadsheet lifecycle:
 
 | Benchmark | Time | Per cell | What it measures |
 |-----------|-----:|---------:|------------------|
-| `build` | 490 ms | ~245 ns | Construct all 2N nodes (formulas lazy, not yet computed). |
-| `cold_full_recalc` | 573 ms | ~286 ns | First read of every formula — forces every compute + edge-tracking. |
-| `viewport_recalc` | **32.8 µs** | — | Edit one input, read only a 1,000-cell viewport. ~17,000× cheaper than a full cold recalc. |
-| `full_recalc_invalidate_all` | 782 ms | ~391 ns | Touch every input, then read every formula (worst-case full-sheet edit; avg of 3). |
+| `build` | 252 ms | ~126 ns | Construct all 2N nodes (formulas lazy, not yet computed). |
+| `cold_full_recalc` | 308 ms | ~154 ns | First read of every formula — forces every compute + edge-tracking. |
+| `viewport_recalc` | **7.7 µs** | — | Edit one input, read only a 1,000-cell viewport. ~40,000× cheaper than a full cold recalc. |
+| `full_recalc_invalidate_all` | 239 ms | ~120 ns | Touch every input, then read every formula (worst-case full-sheet edit; avg of 3). |
 
 ### 5,000,000 rows (10M cells — a full Google Sheets workbook)
 
@@ -112,14 +115,14 @@ input cells + 5,000,000 formula cells (`LAZILY_SCALE_N=5000000`) — the full
 
 | Benchmark | Time | Per cell | What it measures |
 |-----------|-----:|---------:|------------------|
-| `build` | 2.50 s | ~250 ns | Build the full 10M-cell workbook. |
-| `cold_full_recalc` | 4.02 s | ~402 ns | Compute all 5M formulas cold. |
-| `viewport_recalc` | **29.5 µs** | — | Edit one input, read a 1,000-cell viewport. ~136,000× cheaper than a full cold recalc. |
-| `full_recalc_invalidate_all` | 5.00 s | ~500 ns | Re-edit every input, recompute the whole workbook (avg of 3). |
+| `build` | 1.42 s | ~142 ns | Build the full 10M-cell workbook. |
+| `cold_full_recalc` | 1.08 s | ~108 ns | Compute all 5M formulas cold. |
+| `viewport_recalc` | **7.58 µs** | — | Edit one input, read a 1,000-cell viewport. ~142,000× cheaper than a full cold recalc. |
+| `full_recalc_invalidate_all` | 1.21 s | ~121 ns | Re-edit every input, recompute the whole workbook (avg of 3). |
 
-So lazily-dart backs a **full-capacity Google Sheets workbook**: build ~2.5 s,
-full cold recompute ~4 s, and a one-cell edit + bounded-viewport read stays in
-the **~30 µs** range — because the lazy pull-based model leaves off-viewport
+So lazily-dart backs a **full-capacity Google Sheets workbook**: build ~1.4 s,
+full cold recompute ~1.1 s, and a one-cell edit + bounded-viewport read stays in
+the **~7–8 µs** range — because the lazy pull-based model leaves off-viewport
 formulas dirty and never recomputes them (only ~2 formulas actually recompute
 per edit, regardless of sheet size — the property a viewport-rendered
 spreadsheet needs).
@@ -138,18 +141,17 @@ you create, so the `scale` group measures the populated-cell path that matters.
 
 ### A note on viewport scaling
 
-lazily-dart's viewport recalc is **effectively size-independent**: ~32.8 µs at
-2M cells and ~29.5 µs at 10M cells (the small difference is run-to-run noise,
+lazily-dart's viewport recalc is **effectively size-independent**: ~7.7 µs at
+2M cells and ~7.58 µs at 10M cells (the small difference is run-to-run noise,
 not a size trend). The lazy pull-based model recomputes only the ~2 formulas
 that actually depend on the edited input; the other ~998 viewport reads are
-identity-cache hits. Dart's `Map.identity` keeps those lookups O(1) without the
-cache/TLB degradation lazily-go reported at 10M cells (where its single big Go
-map grew per-lookup latency from ~25 µs to ~103 µs). So lazily-dart's flat
-viewport curve tracks lazily-rs's slotmap behavior more closely than
-lazily-go's. Reported as measured — the point is that a one-cell edit plus a
-bounded-viewport read never touches off-viewport formulas, so it stays cheap
-(~30 µs, **~136,000× cheaper than a full recalc** at 10M cells) no matter how
-large the sheet grows.
+identity-cache hits. Since 0.20.0 the slot value lives directly on the node (no
+`Map.identity` lookup), and the invalidation cascade is an iterative DFS over a
+reusable stack (no per-node snapshot), so a one-cell edit pays for two field
+writes plus two recomputes and nothing else — regardless of graph size. So a
+one-cell edit plus a bounded-viewport read never touches off-viewport formulas,
+and stays cheap (**~7.6 µs, ~142,000× cheaper than a full recalc** at 10M
+cells) no matter how large the sheet grows.
 
 [rs-scale]: https://github.com/lazily-hub/lazily-rs/blob/main/benches/scale.rs
 [go-scale]: https://github.com/lazily-hub/lazily-go/blob/main/scale_bench_test.go

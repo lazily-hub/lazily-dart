@@ -25,34 +25,59 @@ library;
 /// created with (and thus share) the same [Context]. The cache keys on object
 /// identity, so each reactive instance is cached independently.
 class Context {
-  final Map<Object, Object?> _cache = Map.identity();
+  /// The value cache lives ON-NODE ([Slot._cachedValue] / [Slot._cacheGen]):
+  /// a slot is "cached" iff its `_cacheGen == _generation`. [clear] bumps this
+  /// counter, invalidating every slot in O(1) without the [Context] having to
+  /// enumerate them (mirrors lazily-rs `SlotNode.value: Option<…>` as a direct
+  /// field). This drops the former `Map.identity` cache — the single biggest
+  /// allocation and per-lookup-cost source at viewport scale.
+  int _generation = 0;
+  int _cachedCount = 0;
+
   final List<_ReactiveNode> _stack = [];
 
   int _batchDepth = 0;
-  final Set<Cell> _batchedCells = Set.identity();
-  final Set<Slot> _batchedSlots = Set.identity();
+  Set<Cell>? _batchedCells;
+  Set<Slot>? _batchedSlots;
   final List<Effect> _pendingEffects = [];
+  int _pendingEffectsHead = 0;
   final Set<Effect> _scheduledEffects = Set.identity();
   bool _flushingEffects = false;
 
-  /// The number of cached values.
-  int get size => _cache.length;
+  /// Reusable DFS stack for invalidation cascades (see [_cascadeFrom]).
+  /// Allocated once per [Context]; cleared at the end of each top-level cascade.
+  final List<_ReactiveNode> _invalidateStack = [];
+  int _invalidateNesting = 0;
 
-  /// Whether [node] currently has a cached value.
-  bool contains(_ReactiveNode node) => _cache.containsKey(node);
+  /// The number of cached slot values.
+  int get size => _cachedCount;
+
+  /// Whether [node] currently has a cached value. Only [Slot]s (and subclasses
+  /// like [Memo] / `_SignalSlot`) cache values; cells hold their value directly
+  /// and effects never cache.
+  bool contains(_ReactiveNode node) =>
+      node is Slot && node._isCachedInGeneration(this);
 
   /// The cached value for [node] (untyped), or `null` if absent.
-  Object? read(_ReactiveNode node) => _cache[node];
+  Object? read(_ReactiveNode node) {
+    final slot = node as Slot;
+    return slot._isCachedInGeneration(this) ? slot._cachedValue : null;
+  }
 
   /// Cache a value for [node].
-  void write(_ReactiveNode node, Object? value) => _cache[node] = value;
+  void write(_ReactiveNode node, Object? value) =>
+      (node as Slot)._markCachedValue(value, this);
 
   /// Remove the cached value for [node].
-  void evict(_ReactiveNode node) => _cache.remove(node);
+  void evict(_ReactiveNode node) => (node as Slot)._uncache(this);
 
-  /// Drop every cached value. Dependency edges are re-established lazily as
-  /// slots are read again.
-  void clear() => _cache.clear();
+  /// Drop every cached value in O(1) by bumping the generation: each slot's
+  /// `_cacheGen` is now stale, so it reports uncached and recomputes on next
+  /// read. Dependency edges are re-established lazily as slots are read again.
+  void clear() {
+    _generation++;
+    _cachedCount = 0;
+  }
 
   /// The slot currently computing, if any.
   _ReactiveNode? get _current => _stack.isEmpty ? null : _stack.last;
@@ -67,6 +92,10 @@ class Context {
   /// Re-entrant: nested [batch] calls bump the depth; only the outermost exit
   /// triggers the flush.
   void batch(void Function() run) {
+    if (_batchDepth == 0) {
+      _batchedCells ??= Set.identity();
+      _batchedSlots ??= Set.identity();
+    }
     _batchDepth++;
     try {
       run();
@@ -80,7 +109,7 @@ class Context {
   /// when a batch is active, otherwise cascades immediately + flushes effects.
   void _cellChanged(Cell cell) {
     if (_batchDepth > 0) {
-      _batchedCells.add(cell);
+      _batchedCells!.add(cell);
     } else {
       cell._invalidate();
       _flushEffects();
@@ -88,19 +117,26 @@ class Context {
   }
 
   void _flushBatch() {
-    if (_batchedCells.isEmpty && _batchedSlots.isEmpty) {
+    final cells = _batchedCells;
+    final slots = _batchedSlots;
+    if ((cells == null || cells.isEmpty) && (slots == null || slots.isEmpty)) {
       _flushEffects();
       return;
     }
-    final cells = _batchedCells.toList();
-    _batchedCells.clear();
-    final slots = _batchedSlots.toList();
-    _batchedSlots.clear();
-    for (final cell in cells) {
-      cell._invalidate();
+    // Drop the references and iterate the locals directly — no `.toList()`
+    // snapshot needed. `_batchDepth` is already 0 here, and a cascade never
+    // writes a [Cell], so these sets are not re-populated mid-flush.
+    _batchedCells = null;
+    _batchedSlots = null;
+    if (cells != null) {
+      for (final cell in cells) {
+        cell._invalidate();
+      }
     }
-    for (final slot in slots) {
-      slot._invalidate();
+    if (slots != null) {
+      for (final slot in slots) {
+        slot._invalidate();
+      }
     }
     _flushEffects();
   }
@@ -113,13 +149,40 @@ class Context {
   /// an unobserved op pays effectively nothing (store-without-cascade).
   void invalidateSlots(List<Slot> slots) {
     if (_batchDepth > 0) {
-      _batchedSlots.addAll(slots);
+      _batchedSlots!.addAll(slots);
       return;
     }
     for (final slot in slots) {
       slot._invalidate();
     }
     _flushEffects();
+  }
+
+  /// Iterative DFS invalidation cascade. Fires [root]'s invalidation hook and
+  /// every transitively-reached dependent's hook (once per reach), clearing each
+  /// node's `_dependents` set as it is expanded — that clear is the visited
+  /// mark, so a node reached through multiple parents is expanded at most once.
+  ///
+  /// Replaces the former recursive cascade which allocated a `.toList()`
+  /// snapshot per node (mirrors `mark_frontier_locked` in lazily-rs). The stack
+  /// is owned by the [Context] and reused across cascades; reentrant cascades
+  /// (e.g. an eager [Signal] recompute fired from within `_SignalSlot.onInvalidate`)
+  /// fall back to a fresh local stack so the outer iteration is not corrupted.
+  void _cascadeFrom(_ReactiveNode root) {
+    final nested = _invalidateNesting > 0;
+    final List<_ReactiveNode> stack =
+        nested ? <_ReactiveNode>[] : _invalidateStack;
+    _invalidateNesting++;
+    stack.add(root);
+    try {
+      while (stack.isNotEmpty) {
+        final node = stack.removeLast();
+        node._invalidateInto(stack);
+      }
+    } finally {
+      stack.clear();
+      _invalidateNesting--;
+    }
   }
 
   void _scheduleEffect(Effect effect) {
@@ -132,12 +195,17 @@ class Context {
     if (_flushingEffects) return;
     _flushingEffects = true;
     try {
-      while (true) {
-        if (_pendingEffects.isEmpty) break;
-        final effect = _pendingEffects.removeAt(0);
+      // FIFO with a head pointer instead of O(n) `removeAt(0)` (mirrors
+      // lazily-rs `VecDeque::pop_front`). `_rerun` may append more effects; the
+      // loop re-reads `length` each iteration so they are processed in order.
+      while (_pendingEffectsHead < _pendingEffects.length) {
+        final effect = _pendingEffects[_pendingEffectsHead];
+        _pendingEffectsHead++;
         _scheduledEffects.remove(effect);
         effect._rerun();
       }
+      _pendingEffects.clear();
+      _pendingEffectsHead = 0;
     } finally {
       _flushingEffects = false;
     }
@@ -151,12 +219,52 @@ class Context {
 /// - [_dependencies] — nodes this one read during its last computation
 ///   (upstream). When this node recomputes, it first detaches from its prior
 ///   upstream edges so stale edges never accumulate.
+///
+/// Edges are stored as lazily-allocated [List]s rather than per-node [Set]s
+/// (mirrors lazily-rs `SmallVec<[SlotId; 2]>`). The overwhelming majority of
+/// reactive nodes have 0–2 edges on either side, so a linear-scan dedup on a
+/// tiny list beats the allocation + hash overhead of an empty `Set` per node
+/// (4M `Set` allocations at the 2M-cell scale benchmark become ~0 for never-
+/// connected nodes).
 abstract class _ReactiveNode {
-  final Set<_ReactiveNode> _dependents = {};
-  final Set<_ReactiveNode> _dependencies = {};
+  List<_ReactiveNode>? _dependents;
+  List<_ReactiveNode>? _dependencies;
+
+  /// The context this node belongs to. Concrete subclasses provide this as a
+  /// field; the base declares it so [_invalidate] / [_detachUpstream] can route
+  /// through the [Context]-owned cascade stack and cache.
+  Context get ctx;
 
   /// Hook called when this node is invalidated, before the downstream cascade.
   void onInvalidate() {}
+
+  /// Register [child] as a dependent of this node (downstream edge), allocating
+  /// the edge list on first use. Identity-deduped to survive a slot reading
+  /// this node more than once in a single computation.
+  void _addDependent(_ReactiveNode child) {
+    final deps = _dependents;
+    if (deps == null) {
+      _dependents = [child];
+    } else if (!deps.contains(child)) {
+      deps.add(child);
+    }
+  }
+
+  /// Register [dep] as an upstream dependency of this node, allocating the edge
+  /// list on first use. Identity-deduped (symmetric with [_addDependent]).
+  void _addDependency(_ReactiveNode dep) {
+    final deps = _dependencies;
+    if (deps == null) {
+      _dependencies = [dep];
+    } else if (!deps.contains(dep)) {
+      deps.add(dep);
+    }
+  }
+
+  /// Remove [child] from this node's downstream edge list (identity match).
+  void _removeDependent(_ReactiveNode child) {
+    _dependents?.remove(child);
+  }
 
   /// Register the currently-computing slot (if any) as a dependent of this
   /// node, and record the reverse edge on the computing slot. Called whenever
@@ -164,31 +272,40 @@ abstract class _ReactiveNode {
   void _track(Context ctx) {
     final parent = ctx._current;
     if (parent != null) {
-      _dependents.add(parent);
-      parent._dependencies.add(this);
+      _addDependent(parent);
+      parent._addDependency(this);
     }
   }
 
   /// Detach this node from all of its current upstream dependencies. Called
   /// before a recompute so dependency edges reflect only the most recent
-  /// computation.
+  /// computation. The list is cleared in place (reused on the next recompute).
   void _detachUpstream() {
-    for (final dep in _dependencies) {
-      dep._dependents.remove(this);
+    final deps = _dependencies;
+    if (deps == null || deps.isEmpty) return;
+    for (final dep in deps) {
+      dep._removeDependent(this);
     }
-    _dependencies.clear();
+    deps.clear();
   }
 
-  /// Invalidate this node: run its [onInvalidate] hook, snapshot its
-  /// dependents, clear them, and cascade.
-  void _invalidate() {
+  /// Invalidate this node: run its [onInvalidate] hook and cascade the
+  /// invalidation to every transitively-reached dependent. Driven by the
+  /// [Context]-owned iterative DFS (see [Context._cascadeFrom]).
+  void _invalidate() => ctx._cascadeFrom(this);
+
+  /// Expand this node's invalidation into [stack]: fire [onInvalidate], then
+  /// push this node's current dependents onto [stack] (clearing the local list,
+  /// which serves as the visited mark). Overridden by [Memo] to gate the
+  /// cascade behind its equality guard.
+  void _invalidateInto(List<_ReactiveNode> stack) {
     onInvalidate();
-    if (_dependents.isEmpty) return;
-    final snapshot = _dependents.toList();
-    _dependents.clear();
-    for (final dependent in snapshot) {
-      dependent._invalidate();
+    final deps = _dependents;
+    if (deps == null || deps.isEmpty) return;
+    for (final dep in deps) {
+      stack.add(dep);
     }
+    deps.clear();
   }
 }
 
@@ -214,23 +331,61 @@ class Slot<T> extends _ReactiveNode {
       : _compute = compute;
 
   /// The context this slot belongs to.
+  @override
   final Context ctx;
   final T Function(Context ctx) _compute;
 
   /// Optional human-readable name for debugging.
   final String? name;
 
+  // -- On-node value cache (replaces the former `Context._cache` Map) --------
+  //
+  // A slot is cached iff [_cacheGen] equals [Context._generation]. The cached
+  // value lives directly on the node as [_cachedValue], so reads/writes are
+  // plain field accesses — no `Map.identity` lookup, no hashing, no per-entry
+  // storage. Only the owning slot touches its own cache entry.
+  T? _cachedValue;
+  int _cacheGen = -1;
+
+  /// Whether this slot holds a value cached in [ctx]'s current generation.
+  bool _isCachedInGeneration(Context ctx) => _cacheGen == ctx._generation;
+
+  /// Mark this slot cached with [value] against [ctx]'s current generation.
+  /// Called via [Context.write]; transitions absent→present increment the
+  /// context's cached count exactly once.
+  void _markCachedValue(Object? value, Context ctx) {
+    final gen = ctx._generation;
+    if (_cacheGen != gen) {
+      ctx._cachedCount++;
+      _cacheGen = gen;
+    }
+    _cachedValue = value as T;
+  }
+
+  /// Evict this slot's cached value (if any). Called via [Context.evict].
+  void _uncache(Context ctx) {
+    if (_cacheGen == ctx._generation) {
+      _cacheGen = -1;
+      ctx._cachedCount--;
+    }
+  }
+
   /// Read (and cache if needed) the value. The object is callable: `slot()`.
   T call() {
     _track(ctx);
-    if (ctx.contains(this)) {
-      return ctx.read(this) as T;
+    final gen = ctx._generation;
+    if (_cacheGen == gen) {
+      return _cachedValue as T;
     }
     _detachUpstream();
     ctx._stack.add(this);
     try {
       final value = _compute(ctx);
-      ctx.write(this, value);
+      if (_cacheGen != gen) {
+        ctx._cachedCount++;
+        _cacheGen = gen;
+      }
+      _cachedValue = value;
       return value;
     } finally {
       ctx._stack.removeLast();
@@ -238,7 +393,7 @@ class Slot<T> extends _ReactiveNode {
   }
 
   /// The cached value without recomputing, or `null` if not currently cached.
-  T? get peek => ctx.contains(this) ? ctx.read(this) as T : null;
+  T? get peek => _cacheGen == ctx._generation ? _cachedValue : null;
 
   /// Detach this slot from the graph: evict its cached value and invalidate its
   /// dependents. Used by [SlotMap] when an entry is removed — the orphaned slot
@@ -249,7 +404,7 @@ class Slot<T> extends _ReactiveNode {
   }
 
   @override
-  void onInvalidate() => ctx.evict(this);
+  void onInvalidate() => _uncache(ctx);
 
   @override
   String toString() => name != null ? 'Slot(${name!})' : 'Slot';
@@ -270,7 +425,7 @@ class Cell<T> extends _ReactiveNode {
   /// The context this cell belongs to.
   final Context ctx;
   T _value;
-  final List<void Function()> _observers = [];
+  final List<void Function(T value)> _observers = [];
 
   /// The current value. Reading inside a computation subscribes the reader.
   T get value {
@@ -301,9 +456,8 @@ class Cell<T> extends _ReactiveNode {
   /// Returns a disposer; call it to stop observing. Observers are not cleared
   /// on invalidation.
   void Function() subscribe(void Function(T value) observer) {
-    void wrapper() => observer(_value);
-    _observers.add(wrapper);
-    return () => _observers.remove(wrapper);
+    _observers.add(observer);
+    return () => _observers.remove(observer);
   }
 
   /// Force-invalidate this cell's dependents without changing the value.
@@ -318,8 +472,10 @@ class Cell<T> extends _ReactiveNode {
   }
 
   void _notifyObservers() {
+    if (_observers.isEmpty) return;
+    // Snapshot: an observer may subscribe/dispose others during notification.
     for (final observer in _observers.toList()) {
-      observer();
+      observer(_value);
     }
   }
 
@@ -419,7 +575,7 @@ class _SignalSlot<T> extends Slot<T> {
     // Evict the cached slot value so the re-pull actually recomputes, then
     // eagerly recompute the owning signal (which re-establishes upstream
     // edges and cascades downstream only if the value changed).
-    ctx.evict(this);
+    _uncache(ctx);
     signal?._eagerRecompute();
   }
 }
@@ -467,7 +623,10 @@ class Effect extends _ReactiveNode {
   void dispose() {
     if (!_active) return;
     _active = false;
-    ctx._pendingEffects.remove(this);
+    // Do NOT remove from `_pendingEffects` by value — that would shift entries
+    // and corrupt the FIFO head pointer. A queued-but-disposed effect is a
+    // no-op when popped (`_rerun` guards on `_active`), and `_detachUpstream`
+    // below ensures its `onInvalidate` never fires again.
     ctx._scheduledEffects.remove(this);
     _detachUpstream();
     final c = _cleanup;
@@ -528,7 +687,7 @@ class Memo<T> extends Slot<T> {
   bool _guardActive = false;
 
   @override
-  void _invalidate() {
+  void _invalidateInto(List<_ReactiveNode> stack) {
     if (_guardActive) return;
     _guardActive = true;
     try {
@@ -540,23 +699,27 @@ class Memo<T> extends Slot<T> {
       } finally {
         ctx._stack.removeLast();
       }
-      final hasOld = ctx.contains(this);
-      if (hasOld) {
-        final old = ctx.read(this) as T;
-        if (newValue == old) {
+      final gen = ctx._generation;
+      if (_cacheGen == gen) {
+        if (newValue == _cachedValue) {
           // Value unchanged — suppress the downstream cascade. Dependents
           // stay cached; edges are already re-established by the recompute.
           return;
         }
+      } else {
+        // First compute — count this newly cached slot.
+        ctx._cachedCount++;
+        _cacheGen = gen;
       }
-      // Value changed (or first compute) — update cache and cascade.
-      ctx.write(this, newValue);
-      if (_dependents.isEmpty) return;
-      final snapshot = _dependents.toList();
-      _dependents.clear();
-      for (final dependent in snapshot) {
-        dependent._invalidate();
+      // Value changed (or first compute) — update cache and cascade by pushing
+      // dependents onto the shared DFS stack (no per-node `.toList()`).
+      _cachedValue = newValue;
+      final deps = _dependents;
+      if (deps == null || deps.isEmpty) return;
+      for (final dependent in deps) {
+        stack.add(dependent);
       }
+      deps.clear();
     } finally {
       _guardActive = false;
     }
