@@ -560,6 +560,7 @@ class LosslessTreeCrdt {
   LosslessTreeCrdt(this._peer)
       : _counter = 0,
         _nodes = {},
+        _childrenByParent = {},
         _frontier = TreeVersionFrontier(),
         _log = [],
         _buffered = [] {
@@ -577,6 +578,7 @@ class LosslessTreeCrdt {
     this._peer,
     this._counter,
     this._nodes,
+    this._childrenByParent,
     this._frontier,
     this._log,
     this._buffered,
@@ -585,15 +587,36 @@ class LosslessTreeCrdt {
   int _peer;
   int _counter;
   final Map<TreeNodeId, _NodeRecord> _nodes;
+  // Secondary parent→children index (#lzlivelchildidx). Stores child ids (not
+  // records) so the index survives record-body replacement on LeafEdit /
+  // SplitLeaf; tombstone/reorder mutate the underlying record in place, so the
+  // index only needs parent→child membership. Replaces the O(N) full-scan in
+  // `_liveChildren` that made `render` O(N²).
+  final Map<TreeNodeId, List<TreeNodeId>> _childrenByParent;
   final TreeVersionFrontier _frontier;
   final List<TreeOp> _log;
   final List<TreeOp> _buffered;
 
   /// Fork this replica's full state under a new owning [peer] (deep copy, new
   /// identity).
-  LosslessTreeCrdt fork(int peer) =>
-      LosslessTreeCrdt._(peer, _counter, _copyNodes(), _frontier._deepCopy(),
-          List<TreeOp>.from(_log), List<TreeOp>.from(_buffered));
+  LosslessTreeCrdt fork(int peer) {
+    final copiedNodes = _copyNodes();
+    final index = <TreeNodeId, List<TreeNodeId>>{};
+    for (final entry in copiedNodes.entries) {
+      final parent = entry.value.parent;
+      if (parent == null) continue;
+      (index[parent] ??= <TreeNodeId>[]).add(entry.key);
+    }
+    return LosslessTreeCrdt._(
+      peer,
+      _counter,
+      copiedNodes,
+      index,
+      _frontier._deepCopy(),
+      List<TreeOp>.from(_log),
+      List<TreeOp>.from(_buffered),
+    );
+  }
 
   Map<TreeNodeId, _NodeRecord> _copyNodes() {
     final out = <TreeNodeId, _NodeRecord>{};
@@ -623,16 +646,25 @@ class LosslessTreeCrdt {
     return TreeOpId(_counter, _peer);
   }
 
+  /// Add [childId] under [parent] in the secondary index (idempotent under
+  /// apply replay).
+  void _indexAdd(TreeNodeId parent, TreeNodeId childId) {
+    final bucket = _childrenByParent[parent] ??= <TreeNodeId>[];
+    if (!bucket.contains(childId)) bucket.add(childId);
+  }
+
   /// The live children of [parent], in rendered (SortKey) order.
   List<TreeNodeId> _liveChildren(TreeNodeId parent) {
-    final kids = <MapEntry<TreeNodeId, _NodeRecord>>[];
-    for (final entry in _nodes.entries) {
-      if (entry.value.parent == parent && entry.value.tomb == null) {
-        kids.add(entry);
-      }
+    final bucket = _childrenByParent[parent];
+    if (bucket == null) return const [];
+    // Tombstones stay in the bucket (logical delete); filter + sort at read.
+    final live = <MapEntry<TreeNodeId, _NodeRecord>>[];
+    for (final id in bucket) {
+      final rec = _nodes[id];
+      if (rec != null && rec.tomb == null) live.add(MapEntry(id, rec));
     }
-    kids.sort((a, b) => a.value.sort.compareTo(b.value.sort));
-    return kids.map((e) => e.key).toList();
+    live.sort((a, b) => a.value.sort.compareTo(b.value.sort));
+    return live.map((e) => e.key).toList();
   }
 
   /// Render the whole document by concatenating live-leaf text in tree order.
@@ -905,6 +937,7 @@ class LosslessTreeCrdt {
           tomb: null,
           textHead: op.id,
         );
+        _indexAdd(k.parent, k.id);
       case TreeOpKindTombstone():
         final rec = _nodes[k.node];
         if (rec == null) return;
@@ -949,6 +982,7 @@ class LosslessTreeCrdt {
     // rebuild byte-identical leaf state.
     rec.body = _LeafBody(kind, TextCrdt.fromStr(node.op.peer, head));
     rec.textHead = opId;
+    final existedBefore = _nodes.containsKey(newNode);
     _nodes.putIfAbsent(
       newNode,
       () => _NodeRecord(
@@ -960,6 +994,7 @@ class LosslessTreeCrdt {
         textHead: opId,
       ),
     );
+    if (!existedBefore && parent != null) _indexAdd(parent, newNode);
   }
 
   void _applyMerge(TreeNodeId left, TreeNodeId right, TreeOpId opId) {

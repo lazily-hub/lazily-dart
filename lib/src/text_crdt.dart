@@ -50,22 +50,18 @@ class OpId implements Comparable<OpId> {
     final m = v as Map<String, dynamic>;
     return OpId(m['counter'] as int, m['peer'] as int);
   }
-
-  String get _key => '$counter:$peer';
-
-  static OpId _fromKey(String k) {
-    final i = k.indexOf(':');
-    return OpId(int.parse(k.substring(0, i)), int.parse(k.substring(i + 1)));
-  }
 }
 
 class _TextElem {
-  _TextElem(this.ch, this.origin, this.deleted);
+  _TextElem(this.id, this.ch, this.origin, this.deleted);
+  // `id` stored on the elem so iteration over map values recovers the OpId
+  // without re-parsing a string key (#lzopidkeytuple).
+  final OpId id;
   final String ch; // single code point
   final OpId? origin; // null = document start
   OpId? deleted; // the delete op id; null = live
 
-  _TextElem copy() => _TextElem(ch, origin, deleted);
+  _TextElem copy() => _TextElem(id, ch, origin, deleted);
 }
 
 /// A single text-CRDT operation in delta-sync wire form.
@@ -101,7 +97,18 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   final int _peer;
   int _counter = 0;
 
-  final Map<String, _TextElem> _elems = {};
+  // Element map keyed by the Dart 3 record `(counter, peer)` — value semantics
+  // gives correct `==`/`hashCode` for free, eliminating the per-lookup string
+  // allocation + per-traversal string parse the previous `Map<String, _TextElem>`
+  // paid (#lzopidkeytuple).
+  final Map<(int, int), _TextElem> _elems = {};
+
+  // Cached visible orderings (#lztextordcache). Both null after every mutation;
+  // populated lazily on the next read. Repeated text() / len() between
+  // mutations drops O(N log N) -> O(1) (after the first rebuild) instead of
+  // rebuilding per call.
+  List<OpId>? _orderedLiveCache;
+  List<OpId>? _orderedAllCache;
 
   /// The peer id of this replica.
   int get peer => _peer;
@@ -118,33 +125,51 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
     return OpId(_counter, _peer);
   }
 
+  void _invalidateOrdered() {
+    _orderedLiveCache = null;
+    _orderedAllCache = null;
+  }
+
   /// Visible ordering (pre-order DFS of the origin tree, siblings descending
   /// by OpId).
   List<OpId> _orderedIds({bool includeDeleted = false}) {
-    final byOrigin = <String, List<OpId>>{};
-    for (final entry in _elems.entries) {
-      final id = OpId._fromKey(entry.key);
-      final ok = entry.value.origin?._key ?? '<root>';
-      (byOrigin[ok] ??= <OpId>[]).add(id);
+    // Cache hit (#lztextordcache).
+    if (includeDeleted) {
+      if (_orderedAllCache != null) return _orderedAllCache!;
+    } else {
+      if (_orderedLiveCache != null) return _orderedLiveCache!;
+    }
+
+    final byOrigin = <(int, int)?, List<OpId>>{};
+    for (final elem in _elems.values) {
+      final originKey = elem.origin == null
+          ? null
+          : (elem.origin!.counter, elem.origin!.peer);
+      (byOrigin[originKey] ??= <OpId>[]).add(elem.id);
     }
     for (final list in byOrigin.values) {
       list.sort(OpId.desc);
     }
 
     final out = <OpId>[];
-    void dfs(String originKey) {
+    void dfs((int, int)? originKey) {
       final kids = byOrigin[originKey];
       if (kids == null) return;
       for (final id in kids) {
-        final elem = _elems[id._key]!;
+        final elem = _elems[(id.counter, id.peer)]!;
         if (includeDeleted || elem.deleted == null) {
           out.add(id);
         }
-        dfs(id._key);
+        dfs((id.counter, id.peer));
       }
     }
 
-    dfs('<root>');
+    dfs(null);
+    if (includeDeleted) {
+      _orderedAllCache = out;
+    } else {
+      _orderedLiveCache = out;
+    }
     return out;
   }
 
@@ -155,15 +180,26 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
         ? null
         : (index - 1 < visible.length ? visible[index - 1] : null);
     final id = _nextId();
-    _elems[id._key] = _TextElem(ch, origin, null);
+    _invalidateOrdered();
+    _elems[(id.counter, id.peer)] = _TextElem(id, ch, origin, null);
   }
 
-  /// Insert a multi-character [str] at the visible [index], iterating code points.
+  /// Insert a multi-character [str] at the visible [index] with origin chaining
+  /// (#lztextinsertchain): one `_orderedIds()` pass + N chain appends instead
+  /// of N full-tree rebuilds. Sequential chars chain naturally — char i+1's
+  /// left-origin is char i's just-minted OpId — so DFS visits them in chain
+  /// order (counter strictly increases under one peer). Concurrent inserts at
+  /// the same point still sort by peer tiebreak (standard CRDT convergence).
   void insertStr(int index, String str) {
-    var i = index;
+    final visible = _orderedIds();
+    OpId? origin = index == 0
+        ? null
+        : (index - 1 < visible.length ? visible[index - 1] : null);
+    _invalidateOrdered();
     for (final ch in str.runes) {
-      insert(i, String.fromCharCode(ch));
-      i++;
+      final id = _nextId();
+      _elems[(id.counter, id.peer)] = _TextElem(id, String.fromCharCode(ch), origin, null);
+      origin = id; // chain: next char's left-origin is this id
     }
   }
 
@@ -172,10 +208,13 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
     final visible = _orderedIds();
     if (index < 0 || index >= visible.length) return;
     final id = visible[index];
-    final elem = _elems[id._key]!;
+    final elem = _elems[(id.counter, id.peer)]!;
     final del = _nextId();
     if (elem.deleted == null) {
       elem.deleted = del;
+      // Tombstone flip changes the live (filtered) ordering but not the full
+      // DFS — only invalidate the live cache.
+      _orderedLiveCache = null;
     }
   }
 
@@ -184,13 +223,20 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   String text() {
     final sb = StringBuffer();
     for (final id in _orderedIds()) {
-      sb.write(_elems[id._key]!.ch);
+      sb.write(_elems[(id.counter, id.peer)]!.ch);
     }
     return sb.toString();
   }
 
-  /// Count of live (non-deleted) elements.
-  int len() => _orderedIds().length;
+  /// Count of live (non-deleted) elements — O(N) fold, no list allocation
+  /// (#lzcrdtlenfold).
+  int len() {
+    var n = 0;
+    for (final elem in _elems.values) {
+      if (elem.deleted == null) n++;
+    }
+    return n;
+  }
 
   /// Whether there are no live elements (snake_case to match lazily-rs).
   bool get is_empty => len() == 0;
@@ -198,8 +244,14 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   /// Idiomatic Dart alias for [is_empty].
   bool get isEmpty => is_empty;
 
-  /// Count of tombstoned (deleted) elements.
-  int tombstoneCount() => _elems.length - len();
+  /// Count of tombstoned (deleted) elements — O(N) fold (#lzcrdtlenfold).
+  int tombstoneCount() {
+    var n = 0;
+    for (final elem in _elems.values) {
+      if (elem.deleted != null) n++;
+    }
+    return n;
+  }
 
   /// The current clock position.
   OpId clock() => OpId(_counter, _peer);
@@ -209,9 +261,8 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   TextCrdt fork(int peer) {
     final copy = TextCrdt(peer);
     copy._counter = _counter;
-    for (final entry in _elems.entries) {
-      final e = entry.value;
-      copy._elems[entry.key] = _TextElem(e.ch, e.origin, e.deleted);
+    for (final elem in _elems.values) {
+      copy._elems[(elem.id.counter, elem.id.peer)] = elem.copy();
     }
     return copy;
   }
@@ -222,9 +273,11 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   /// State-based merge. Returns whether the visible text changed.
   bool merge(TextCrdt other) {
     final before = text();
-    for (final entry in other._elems.entries) {
-      _mergeElem(OpId._fromKey(entry.key), entry.value);
+    var anyChange = false;
+    for (final oe in other._elems.values) {
+      if (_mergeElem(oe.id, oe)) anyChange = true;
     }
+    if (anyChange) _invalidateOrdered();
     return text() != before;
   }
 
@@ -237,24 +290,30 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   bool mergeFrom(CrdtTree<Map<int, int>, List<TextOp>, String> other) =>
       applyDelta(other.deltaSince(versionVector()));
 
-  void _mergeElem(OpId id, _TextElem oe) {
-    _counter = [
-      _counter,
-      id.counter,
-      oe.deleted?.counter ?? 0,
-    ].reduce((a, b) => a > b ? a : b);
-    final existing = _elems[id._key];
+  bool _mergeElem(OpId id, _TextElem oe) {
+    // Inline max (avoids `[a, b, c].reduce(...)` alloc — audit Q2).
+    final observedMax = id.counter > (oe.deleted?.counter ?? 0)
+        ? id.counter
+        : (oe.deleted?.counter ?? 0);
+    _counter = _counter > observedMax ? _counter : observedMax;
+    final key = (id.counter, id.peer);
+    final existing = _elems[key];
     if (existing != null) {
       if (existing.deleted != null && oe.deleted != null) {
         // Concurrent deletes → smaller delete id wins (sticky on both).
         if (oe.deleted!.compareTo(existing.deleted!) < 0) {
           existing.deleted = oe.deleted;
+          return true;
         }
-      } else if (oe.deleted != null) {
+        return false;
+      } else if (oe.deleted != null && existing.deleted == null) {
         existing.deleted = oe.deleted;
+        return true;
       }
+      return false;
     } else {
-      _elems[id._key] = _TextElem(oe.ch, oe.origin, oe.deleted);
+      _elems[key] = _TextElem(id, oe.ch, oe.origin, oe.deleted);
+      return true;
     }
   }
 
@@ -264,11 +323,11 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   int gcWith(bool Function(OpId deleteOpId) isStable) {
     var removed = 0;
     while (true) {
-      final referenced = <String>{};
+      final referenced = <(int, int)>{};
       for (final e in _elems.values) {
-        if (e.origin != null) referenced.add(e.origin!._key);
+        if (e.origin != null) referenced.add((e.origin!.counter, e.origin!.peer));
       }
-      final collectable = <String>[];
+      final collectable = <(int, int)>[];
       for (final entry in _elems.entries) {
         final e = entry.value;
         if (e.deleted != null &&
@@ -283,6 +342,7 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
         removed++;
       }
     }
+    if (removed > 0) _invalidateOrdered();
     return removed;
   }
 
@@ -296,10 +356,9 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
     void bump(OpId id) => vv[id.peer] =
         (vv[id.peer] ?? 0) > id.counter ? vv[id.peer]! : id.counter;
 
-    for (final entry in _elems.entries) {
-      final id = OpId._fromKey(entry.key);
-      bump(id);
-      final del = entry.value.deleted;
+    for (final elem in _elems.values) {
+      bump(elem.id);
+      final del = elem.deleted;
       if (del != null) bump(del);
     }
     return vv;
@@ -311,13 +370,12 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   List<TextOp> deltaSince(Map<int, int> theirVv) {
     bool seen(OpId id) => id.counter <= (theirVv[id.peer] ?? 0);
     final out = <TextOp>[];
-    for (final entry in _elems.entries) {
-      final id = OpId._fromKey(entry.key);
-      final e = entry.value;
+    for (final elem in _elems.values) {
+      final id = elem.id;
       final insertNew = !seen(id);
-      final deleteNew = e.deleted != null && !seen(e.deleted!);
+      final deleteNew = elem.deleted != null && !seen(elem.deleted!);
       if (insertNew || deleteNew) {
-        out.add(TextOp(id: id, ch: e.ch, origin: e.origin, deleted: e.deleted));
+        out.add(TextOp(id: id, ch: elem.ch, origin: elem.origin, deleted: elem.deleted));
       }
     }
     return out;
@@ -328,9 +386,13 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
   @override
   bool applyDelta(List<TextOp> ops) {
     final before = text();
+    var anyChange = false;
     for (final op in ops) {
-      _mergeElem(op.id, _TextElem(op.ch, op.origin, op.deleted));
+      if (_mergeElem(op.id, _TextElem(op.id, op.ch, op.origin, op.deleted))) {
+        anyChange = true;
+      }
     }
+    if (anyChange) _invalidateOrdered();
     return text() != before;
   }
 }

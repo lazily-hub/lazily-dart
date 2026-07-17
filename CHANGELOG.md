@@ -6,6 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.21.0
+
+### Changed — performance (CRDT plane, Phase 1 of `tasks/agent-doc/plans/lazily-perf-memory-audit.md`)
+
+- **`TextCrdt._orderedIds` cache (`#lztextordcache`).** The DFS pre-order is
+  now memoized and invalidated on every mutation that changes the element set
+  (`insert`/`insertStr`/`merge`/`applyDelta`/`gcWith`). Repeated `text()` /
+  `len()` between mutations drops from O(N log N) per call to O(N) total
+  instead of N × O(N log N). Tombstone flips (`delete`) only invalidate the
+  live cache (the full DFS includes tombstones).
+- **`TextCrdt.insertStr` origin chaining (`#lztextinsertchain`).** `insertStr`
+  rewrites from N per-char `insert` calls to one `_orderedIds()` pass + N
+  chain appends. Drops O(N² log N) → O(N log N); concurrent inserts still
+  sort by peer tiebreak.
+- **`TextCrdt` element map keyed by `(counter, peer)` record (`#lzopidkeytuple`).**
+  Dart 3 records have value `==`/`hashCode`, so the previous `Map<String,
+  _TextElem>` (one string allocation + parse per lookup/traversal) becomes
+  `Map<(int, int), _TextElem>`. `_TextElem.id` stores the `OpId` directly so
+  iteration no longer reconstructs it from a string key.
+- **`TextCrdt.len` / `tombstoneCount` fold count (`#lzcrdtlenfold`).** Replaced
+  `_orderedIds().length` (O(N log N) + sort allocation) with an O(N) fold
+  over `_elems.values`.
+- **`LosslessTreeCrdt` parent→children index (`#lzlivelchildidx`).** A new
+  `_childrenByParent` map replaces the O(N) full-scan in `_liveChildren`.
+  `render()` drops from O(N²) to O(N). Maintained at every `CreateNode` /
+  `SplitLeaf` site; tombstones stay in the bucket (logical delete); `fork`
+  rebuilds from the copied node map.
+
 ## 0.20.0
 
 ### Changed
