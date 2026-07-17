@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.22.0
+
+### Changed — performance (Phase 2 quick wins: `#lzdartinlines`,
+`#lzdartuint8list`, `#lzdarthashint`, `#lzdartutf8fix`, `#lzdartreconcileidx`,
+`#lzdartobservercow`)
+
+- **`@pragma('vm:prefer-inline')` on 11 hot leaf helpers (`#lzdartinlines`).**
+  Added to the comparators that gate every CRDT ordering pass
+  (`Position.compareTo`, `OpId.compareTo`, `TreeOpId.compareTo`,
+  `SortKey.compareTo`), the UTF-8/FNV byte loops (`_utf8Len`, `_fnv1a`), the
+  wire `_listEquals`, and the reactive-core edge/cache helpers
+  (`_addDependent`, `_addDependency`, `_track`, `_isCachedInGeneration`). No
+  observable behavior change; 5–15% on JIT micro, larger in AOT.
+- **`Position.frac` / `SortKey.frac` are `Uint8List` (`#lzdartuint8list`).**
+  The fractional-index byte key is now a compact `Uint8List` instead of a
+  growable `List<int>`. `keyBetween` writes into a `BytesBuilder` and returns a
+  `Uint8List`; `Position.compareTo` / `SortKey.compareTo` index raw bytes with
+  no per-element boxing. Wire (`toWire`/`fromWire`) still carries a JSON byte
+  array. The ordering micro-path is faster and the layout is more AOT-friendly;
+  end-to-end `order()` is allocation-dominated so the JIT gain is modest there.
+- **`contentHash` uses `int` math, not `BigInt` (`#lzdarthashint`).** Replaced
+  the `BigInt`-per-byte loop (`~10–50× slower`) with the same fixed-width
+  `int` FNV-1a-64 core already used by `shm_blob_arena._fnv1a`. The two now
+  share that core explicitly; `contentHash` preserves the full 64-bit
+  wire-stable range (serialized as 16-char unsigned hex via a two-half
+  formatter), while `_fnv1a` keeps its 63-bit fold for the unsigned
+  `ShmBlobRef` fields — reconciling the former latent output-range divergence.
+  Also fixes an empty-string bug (the old `BigInt.parse(offset.toRadixString
+  (16))` negated the offset basis, so `''` hashed to `-340d…` instead of the
+  canonical `cbf29ce484222325`).
+- **`_utf8Bytes` correctness + `Uint8List` (`#lzdartutf8fix`).** Switched from
+  `s.codeUnits` (UTF-16 halves) to `s.runes` (Unicode scalars) and added the
+  4-byte branch, so supplementary-plane characters (emoji, etc.) now emit valid
+  UTF-8 instead of invalid 3-byte-per-surrogate sequences. Builds via
+  `BytesBuilder`. BMP/ASCII hashes are unchanged.
+- **`reconcileDiff` common-key index (`#lzdartreconcileidx`).** The inner
+  `commonKeys.indexOf(k)` (O(N) per common key ⇒ O(N²) move-minimization) is
+  replaced by a pre-built `commonIdxByKey` map (O(1) lookup). Overall
+  reconciliation drops from O(N²) to O(N log N). Measured 2.6× faster at 500
+  entries, 4.5× at 1k, 7.3× at 2k (per-elem cost is flat after, was growing
+  linearly before).
+- **`Cell._notifyObservers` copy-on-write (`#lzdartobservercow`).** The
+  observer list is now an immutable snapshot replaced on subscribe/unsubscribe,
+  so `_notifyObservers` iterates it directly with an indexed loop and drops the
+  per-write `.toList()` allocation. Reentrant subscribe/dispose during
+  notification swap in a fresh list, leaving the in-flight snapshot stable.
+
+### Performance (benchmark deltas vs 0.21.0)
+
+- Micro (`LAZILY_MICRO_ITERS=100000`): `contentHash realistic text` 18.40 →
+  7.38 µs (**2.5×**); `reconcileDiff 100-entry list` 33.14 → 25.81 µs (22% at
+  N=100; the asymptotic win grows with size — see scale table below). Reactive
+  core (`Cell read/write`, `Slot recompute`, `Memo`) unchanged within noise (the
+  inlines + observer COW are structural; the JIT bench is allocation-bound).
+- `reconcileDiff` scaling (focused bench, before → after): N=500 350.5 → 135.2
+  µs (2.6×); N=1000 1309.5 → 292.5 µs (4.5×); N=2000 4288.1 → 591.7 µs (7.3×).
+  Per-element cost is flat after (~290 ns) vs growing linearly before (331 →
+  701 → 1309 → 2144 ns/elem) — the classic O(N²)→O(N) knee.
+
 ## 0.21.0
 
 ### Changed — performance (CRDT plane, Phase 1 of `tasks/agent-doc/plans/lazily-perf-memory-audit.md`)

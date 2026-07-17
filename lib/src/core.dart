@@ -241,6 +241,7 @@ abstract class _ReactiveNode {
   /// Register [child] as a dependent of this node (downstream edge), allocating
   /// the edge list on first use. Identity-deduped to survive a slot reading
   /// this node more than once in a single computation.
+  @pragma('vm:prefer-inline')
   void _addDependent(_ReactiveNode child) {
     final deps = _dependents;
     if (deps == null) {
@@ -252,6 +253,7 @@ abstract class _ReactiveNode {
 
   /// Register [dep] as an upstream dependency of this node, allocating the edge
   /// list on first use. Identity-deduped (symmetric with [_addDependent]).
+  @pragma('vm:prefer-inline')
   void _addDependency(_ReactiveNode dep) {
     final deps = _dependencies;
     if (deps == null) {
@@ -269,6 +271,7 @@ abstract class _ReactiveNode {
   /// Register the currently-computing slot (if any) as a dependent of this
   /// node, and record the reverse edge on the computing slot. Called whenever
   /// this node is read.
+  @pragma('vm:prefer-inline')
   void _track(Context ctx) {
     final parent = ctx._current;
     if (parent != null) {
@@ -348,6 +351,7 @@ class Slot<T> extends _ReactiveNode {
   int _cacheGen = -1;
 
   /// Whether this slot holds a value cached in [ctx]'s current generation.
+  @pragma('vm:prefer-inline')
   bool _isCachedInGeneration(Context ctx) => _cacheGen == ctx._generation;
 
   /// Mark this slot cached with [value] against [ctx]'s current generation.
@@ -425,7 +429,12 @@ class Cell<T> extends _ReactiveNode {
   /// The context this cell belongs to.
   final Context ctx;
   T _value;
-  final List<void Function(T value)> _observers = [];
+  // Immutable snapshot of observers (`#lzdartobservercow`). Replaced — never
+  // mutated — on subscribe/unsubscribe, so [_notifyObservers] iterates this
+  // list directly without a per-write `.toList()` copy. Reentrant
+  // subscribe/dispose during notification swap in a fresh list, leaving the
+  // in-flight snapshot stable. The empty case shares a singleton `const []`.
+  List<void Function(T value)> _observers = const [];
 
   /// The current value. Reading inside a computation subscribes the reader.
   T get value {
@@ -456,8 +465,21 @@ class Cell<T> extends _ReactiveNode {
   /// Returns a disposer; call it to stop observing. Observers are not cleared
   /// on invalidation.
   void Function() subscribe(void Function(T value) observer) {
-    _observers.add(observer);
-    return () => _observers.remove(observer);
+    _observers = [..._observers, observer];
+    var disposed = false;
+    return () {
+      if (disposed) return;
+      disposed = true;
+      // Remove the first identical closure, matching the original
+      // `List.remove` semantics (functions compare by identity). Copy-on-write:
+      // a fresh list replaces the field so any in-flight notification keeps a
+      // stable snapshot.
+      final idx = _observers.indexOf(observer);
+      if (idx >= 0) {
+        _observers = List<void Function(T value)>.of(_observers)
+          ..removeAt(idx);
+      }
+    };
   }
 
   /// Force-invalidate this cell's dependents without changing the value.
@@ -472,10 +494,13 @@ class Cell<T> extends _ReactiveNode {
   }
 
   void _notifyObservers() {
-    if (_observers.isEmpty) return;
-    // Snapshot: an observer may subscribe/dispose others during notification.
-    for (final observer in _observers.toList()) {
-      observer(_value);
+    final observers = _observers;
+    if (observers.isEmpty) return;
+    // The snapshot is already stable — copy-on-write swaps in a fresh list on
+    // subscribe/unsubscribe, so a plain indexed loop is reentrancy-safe
+    // without the per-write `.toList()` allocation (`#lzdartobservercow`).
+    for (var i = 0; i < observers.length; i++) {
+      observers[i](_value);
     }
   }
 

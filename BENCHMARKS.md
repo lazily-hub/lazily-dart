@@ -54,13 +54,16 @@ scope + node allocation, not just the isolated operation — this matches the
 
 | Benchmark | µs/op | ops/s | What it measures |
 |-----------|------:|------:|------------------|
-| `Cell read/write` | 0.0424 | 23,579,344 | New `Context` + `Cell`, one guarded write, one read — the core mutation path. |
-| `Slot recompute` | 0.1170 | 8,547,009 | Two cells + a dependent `Slot`; edit one cell, re-pull the slot (edge re-tracking + recompute). |
-| `Memo equality guard (cache hit)` | 0.0777 | 12,870,013 | `Memo` recompute that yields an equal value, suppressing the downstream cascade. |
-| `batch coalesce (10 cells)` | 1.2760 | 783,699 | 10 cell writes inside one `batch`, coalesced into a single invalidation pass, driving one `Effect`. |
-| `CellMap insert + read` | 1.4360 | 696,379 | 10 keyed `CellMap` inserts + one read on the keyed collection. |
-| `TextCrdt insert 100 chars` | 938.41 | 1,066 | Build a `TextCrdt` of 100 characters (Fugue/RGA ordering rebuilt per insert). |
-| `SeqCrdt insert 100 elements` | 134.71 | 7,423 | Build a move-aware `SeqCrdt` of 100 elements (fractional-index positions + LWW registers). |
+| `Cell read/write` | 0.0479 | 20,881,186 | New `Context` + `Cell`, one guarded write, one read — the core mutation path. |
+| `Slot recompute` | 0.1064 | 9,395,847 | Two cells + a dependent `Slot`; edit one cell, re-pull the slot (edge re-tracking + recompute). |
+| `Memo equality guard (cache hit)` | 0.0708 | 14,116,318 | `Memo` recompute that yields an equal value, suppressing the downstream cascade. |
+| `batch coalesce (10 cells)` | 1.2626 | 792,016 | 10 cell writes inside one `batch`, coalesced into a single invalidation pass, driving one `Effect`. |
+| `CellMap insert + read` | 1.4205 | 703,977 | 10 keyed `CellMap` inserts + one read on the keyed collection. |
+| `TextCrdt insert 100 chars` | 570.17 | 1,754 | Build a `TextCrdt` of 100 characters (Fugue/RGA ordering rebuilt per insert). |
+| `SeqCrdt insert 100 elements` | 138.81 | 7,204 | Build a move-aware `SeqCrdt` of 100 elements (fractional-index positions + LWW registers). |
+| `Position.compareTo ordering (300)` | 79.32 | 12,608 | Isolated `SeqCrdt.order()` sort over 300 fractional-index positions (`#lzdartuint8list`). Fixture built once; measures the `Position.compareTo` sort path, not the O(N²) insert scan. |
+| `contentHash realistic text` | 7.38 | 135,443 | FNV-1a-64 content hash of a ~300-char normalized block (`#lzdarthashint`). |
+| `reconcileDiff 100-entry list` | 25.81 | 38,741 | Keyed reconciliation of a 100-entry list with scrambled order (`#lzdartreconcileidx`). prior/target built once; measures the reconciliation only. |
 
 ### Notes
 
@@ -75,6 +78,30 @@ scope + node allocation, not just the isolated operation — this matches the
   They are the heaviest paths because visible order is recomputed as a pure
   function of the element set on each mutation, matching the spec's determinism
   requirement. They are essentially unchanged by the core work (variance only).
+- The three Phase-2 isolating benches (`Position.compareTo ordering`,
+  `contentHash`, `reconcileDiff`) build their fixture **once** outside the timed
+  body so the per-iteration measurement is the target operation, not its setup.
+  Before/after deltas (vs 0.21.0):
+  - `contentHash` 18.40 → 7.38 µs (**2.5×**) — the `BigInt`→`int` FNV-1a win
+    (`#lzdarthashint`). The hash loop itself is 10–50× faster; the full
+    function also pays `normalize` + UTF-8 build, so the end-to-end gain is
+    ~2.5×.
+  - `reconcileDiff 100-entry` 33.14 → 25.81 µs (22% at N=100); the win is
+    **asymptotic** (`#lzdartreconcileidx`) — per-element cost is flat after
+    (~290 ns) vs growing linearly before, so larger lists gain much more:
+
+    | N | 0.21.0 | 0.22.0 | speedup |
+    |---|-------:|-------:|--------:|
+    | 100 | 33.14 µs | 25.81 µs | 1.2× |
+    | 500 | 350.51 µs | 135.20 µs | 2.6× |
+    | 1000 | 1309.48 µs | 292.51 µs | 4.5× |
+    | 2000 | 4288.15 µs | 591.74 µs | 7.3× |
+
+  - `Position.compareTo ordering` is allocation-dominated (the `order()` sort
+    builds N `MapEntry`s + sorts), so the `Uint8List` frac + `prefer-inline`
+    changes (`#lzdartuint8list`, `#lzdartinlines`) improve the compareTo leaf
+    and memory compactness but leave the JIT end-to-end number within noise
+    (~1–6% across N=300/1000/3000). The win is structural / AOT-facing.
 - These are single-threaded micro-benchmarks. Dart has no shared-memory
   threads (isolates = separate heaps), so the concurrency surfaces are
   correctness-tested rather than benchmarked here.

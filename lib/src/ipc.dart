@@ -1659,6 +1659,7 @@ Uint8List _bytesFromWire(Object? value) {
   return _bytesOf(value.cast<int>());
 }
 
+@pragma('vm:prefer-inline')
 bool _listEquals<T>(List<T> a, List<T> b) {
   if (identical(a, b)) return true;
   if (a.length != b.length) return false;

@@ -19,6 +19,7 @@
 library;
 
 /// UTF-8 byte length of the character whose code point is [cp].
+@pragma('vm:prefer-inline')
 int _utf8Len(int cp) {
   if (cp < 0x80) return 1;
   if (cp < 0x800) return 2;

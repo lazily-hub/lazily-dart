@@ -25,6 +25,7 @@ class OpId implements Comparable<OpId> {
   final int peer;
 
   @override
+  @pragma('vm:prefer-inline')
   int compareTo(OpId other) {
     final c = counter.compareTo(other.counter);
     if (c != 0) return c;

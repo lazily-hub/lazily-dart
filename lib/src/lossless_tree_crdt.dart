@@ -23,6 +23,8 @@
 /// bytes, converted via [byteToCodePoint] / [codePointToUtf16].
 library;
 
+import 'dart:typed_data' show Uint8List;
+
 import 'text_crdt.dart' show OpId, TextCrdt, TextOp;
 import 'utf8_offsets.dart';
 import 'seq_crdt.dart' show keyBetween;
@@ -36,6 +38,7 @@ class TreeOpId implements Comparable<TreeOpId> {
   final int peer;
 
   @override
+  @pragma('vm:prefer-inline')
   int compareTo(TreeOpId other) {
     final c = counter.compareTo(other.counter);
     if (c != 0) return c;
@@ -170,20 +173,23 @@ final class NodeSeedLeaf extends NodeSeed {
 
 /// A fractional-index child position: orderable bytes tiebroken by minting peer.
 class SortKey implements Comparable<SortKey> {
-  const SortKey(this.frac, this.peer);
+  SortKey(this.frac, this.peer);
 
-  /// Bytes in `0..255`.
-  final List<int> frac;
+  /// Bytes in `0..255`. A compact [Uint8List] (`#lzdartuint8list`).
+  final Uint8List frac;
   final int peer;
 
   @override
+  @pragma('vm:prefer-inline')
   int compareTo(SortKey other) {
-    final n = frac.length < other.frac.length ? frac.length : other.frac.length;
+    final a = frac;
+    final b = other.frac;
+    final n = a.length < b.length ? a.length : b.length;
     for (var i = 0; i < n; i++) {
-      final c = frac[i].compareTo(other.frac[i]);
+      final c = a[i].compareTo(b[i]);
       if (c != 0) return c;
     }
-    final lenCmp = frac.length.compareTo(other.frac.length);
+    final lenCmp = a.length.compareTo(b.length);
     if (lenCmp != 0) return lenCmp;
     return peer.compareTo(other.peer);
   }
@@ -206,7 +212,7 @@ class SortKey implements Comparable<SortKey> {
   static SortKey fromWire(Object? v) {
     final m = v as Map<String, dynamic>;
     return SortKey(
-      List<int>.from(m['frac'] as List),
+      Uint8List.fromList(List<int>.from(m['frac'] as List)),
       m['peer'] as int,
     );
   }
@@ -566,7 +572,7 @@ class LosslessTreeCrdt {
         _buffered = [] {
     _nodes[TreeNodeId.root] = _NodeRecord(
       parent: null,
-      sort: const SortKey([], 0),
+      sort: SortKey(Uint8List(0), 0),
       sortStamp: const TreeOpId(0, 0),
       body: _ElementBody('root'),
       tomb: null,
@@ -735,8 +741,8 @@ class LosslessTreeCrdt {
   /// [after] (front when `null`).
   SortKey _keyAfter(TreeNodeId parent, TreeNodeId? after) {
     final order = _liveChildren(parent);
-    List<int>? loFrac;
-    List<int>? hiFrac;
+    Uint8List? loFrac;
+    Uint8List? hiFrac;
     if (after == null) {
       loFrac = null;
       hiFrac = order.isEmpty ? null : _nodes[order.first]!.sort.frac;

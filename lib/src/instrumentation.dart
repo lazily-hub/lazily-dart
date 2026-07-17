@@ -8,6 +8,7 @@ import 'core.dart';
 import 'collections.dart';
 import 'text_crdt.dart';
 import 'seq_crdt.dart';
+import 'stable_id.dart';
 
 /// A single benchmark result.
 class BenchmarkResult {
@@ -101,5 +102,42 @@ List<BenchmarkResult> runBenchmarkSuite({int iterations = 10000}) {
         seq.insertBack(i, i, i);
       }
     }, iterations: iterations ~/ 10),
+    benchmark('Position.compareTo ordering (300)', () {
+      // #lzdartuint8list — isolates Position.compareTo on the SeqCrdt sort path.
+      // The seq is built once (outside the timed body) so the measurement is the
+      // fractional-index ordering, not the O(n²) insert scan.
+      _seqForOrdering.order();
+    }, iterations: iterations ~/ 10),
+    benchmark('contentHash realistic text', () {
+      // #lzdarthashint — FNV-1a content hash over a ~300-char normalized block.
+      contentHash(
+          'the quick brown fox jumps over the lazy dog '
+          'while a pack of hounds gives chase through the glen; '
+          'reactive signals propagate invalidation downstream '
+          'and slots recompute only when their dependencies change.');
+    }, iterations: iterations ~/ 2),
+    benchmark('reconcileDiff 100-entry list', () {
+      // #lzdartreconcileidx — keyed reconciliation of a 100-entry list with a
+      // scrambled order (exercises the common-key index lookup). prior/target
+      // are built once outside the timed body so only the reconciliation runs.
+      reconcileDiff(_prior100, _target100);
+    }, iterations: iterations ~/ 2),
   ];
 }
+
+// Pre-built fixtures for the isolated benches above (constructed once at module
+// load so the per-iteration measurement excludes their setup cost).
+final _seqForOrdering = () {
+  final seq = SeqCrdt<int, int>(1);
+  for (var i = 0; i < 300; i++) {
+    seq.insertBack(i, i, i);
+  }
+  return seq;
+}();
+
+final _prior100 = [
+  for (var i = 0; i < 100; i++) MapEntry('k$i', i),
+];
+final _target100 = <MapEntry<String, int>>[
+  for (var i = 99; i >= 0; i--) MapEntry('k$i', i),
+];

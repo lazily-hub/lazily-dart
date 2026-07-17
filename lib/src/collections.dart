@@ -559,6 +559,13 @@ List<DiffOp<K, V>> reconcileDiff<K, V>(
       priorIdxSeq.add(priorIndex[e.key]!);
     }
   }
+  // Index each common key → its position in commonKeys once, so the move loop
+  // below is O(1) per common key instead of O(N) `commonKeys.indexOf(k)`
+  // (`#lzdartreconcileidx`; drops the move-minimization inner loop from O(N²)
+  // to O(N) on top of the O(N log N) LIS).
+  final commonIdxByKey = <K, int>{
+    for (var i = 0; i < commonKeys.length; i++) commonKeys[i]: i,
+  };
   final stableSet = <int>{}; // indices into commonKeys held fixed by the LIS
   for (final i in _longestIncreasingSubsequence(priorIdxSeq)) {
     stableSet.add(i);
@@ -581,7 +588,7 @@ List<DiffOp<K, V>> reconcileDiff<K, V>(
       insertsAndMoves.add(DiffOpInsert<K, V>(k, e.value, ti));
     } else {
       // Common key: move unless it is in the LIS (already in relative order).
-      final commonIdx = commonKeys.indexOf(k);
+      final commonIdx = commonIdxByKey[k]!;
       if (!stableSet.contains(commonIdx)) {
         insertsAndMoves.add(DiffOpMove<K, V>(k, ti));
       }

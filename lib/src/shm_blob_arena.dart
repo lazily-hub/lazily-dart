@@ -152,6 +152,7 @@ bool validateBlobRef(ShmBlobRef ref, {int? maxLen}) {
   return true;
 }
 
+@pragma('vm:prefer-inline')
 int _fnv1a(Uint8List bytes) {
   var hash = 0xcbf29ce484222325;
   const prime = 0x100000001b3;

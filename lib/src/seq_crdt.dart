@@ -10,6 +10,8 @@
 /// `lazily-spec` `conformance/collections/seqcrdt_convergence.json`.
 library;
 
+import 'dart:typed_data' show BytesBuilder, Uint8List;
+
 /// A hybrid logical clock timestamp: `(wallTime, logical, peer)` total order.
 class HlcStamp implements Comparable<HlcStamp> {
   const HlcStamp(this.wallTime, this.logical, this.peer);
@@ -115,17 +117,22 @@ class LwwRegister<V> {
 class Position implements Comparable<Position> {
   const Position(this.frac, this.peer);
 
-  final List<int> frac; // bytes 0..255
+  /// Bytes in `0..255`. A compact [Uint8List] (`#lzdartuint8list`) — faster
+  /// element indexing and tighter allocation than a growable `List<int>`.
+  final Uint8List frac;
   final int peer;
 
   @override
+  @pragma('vm:prefer-inline')
   int compareTo(Position other) {
-    final n = frac.length < other.frac.length ? frac.length : other.frac.length;
+    final a = frac;
+    final b = other.frac;
+    final n = a.length < b.length ? a.length : b.length;
     for (var i = 0; i < n; i++) {
-      final c = frac[i].compareTo(other.frac[i]);
+      final c = a[i].compareTo(b[i]);
       if (c != 0) return c;
     }
-    final lenCmp = frac.length.compareTo(other.frac.length);
+    final lenCmp = a.length.compareTo(b.length);
     if (lenCmp != 0) return lenCmp;
     return peer.compareTo(other.peer);
   }
@@ -136,29 +143,35 @@ class Position implements Comparable<Position> {
 
 /// Compute a fractional-index byte key strictly between [lo] (exclusive) and
 /// [hi] (exclusive). `null` for [lo] means -∞; `null` for [hi] means +∞.
-List<int> keyBetween(List<int>? lo, List<int>? hi) {
+///
+/// Returns a compact [Uint8List] (`#lzdartuint8list`), written through a
+/// [BytesBuilder] so each emit is an `addByte` into a pre-sized byte buffer
+/// instead of boxing into a growable `List<int>`.
+Uint8List keyBetween(Uint8List? lo, Uint8List? hi) {
+  final out = BytesBuilder();
   final cap = (lo?.length ?? 0) + (hi?.length ?? 0) + 2;
-  final result = <int>[];
   var i = 0;
   while (i <= cap) {
     final a = (lo != null && i < lo.length) ? lo[i] : 0;
     final b = hi == null ? 256 : (i < hi.length ? hi[i] : 0);
     if (a + 1 < b) {
-      result.add((a + b) ~/ 2);
-      return result;
+      out.addByte((a + b) ~/ 2);
+      return out.toBytes();
     }
-    result.add(a);
+    out.addByte(a);
     i++;
     if (a < b) {
       // dropped below hi; append midpoint to +inf
-      final tail = keyBetween(lo == null ? null : (i < lo.length ? lo.sublist(i) : <int>[]), null);
-      result.addAll(tail);
-      return result;
+      final tail = keyBetween(
+          lo == null ? null : (i < lo.length ? lo.sublist(i) : Uint8List(0)),
+          null);
+      out.add(tail);
+      return out.toBytes();
     }
     // a === b: shared prefix, continue
   }
-  result.add(128);
-  return result;
+  out.addByte(128);
+  return out.toBytes();
 }
 
 class _SeqEntry<V> {

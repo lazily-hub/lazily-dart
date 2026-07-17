@@ -12,6 +12,8 @@
 /// `conformance/collections/stableid_alignment.json`.
 library;
 
+import 'dart:typed_data' show BytesBuilder, Uint8List;
+
 /// The edit-similarity threshold below which a match is treated as an insert.
 const double kEditThreshold = 0.5;
 
@@ -48,7 +50,9 @@ class BlockKey {
         _isContent = true;
 
   final String kind;
-  final Object value; // String for anchored, BigInt for content
+  // String for anchored, signed 64-bit int (full unsigned FNV-1a-64 bit
+  // pattern) for content.
+  final Object value;
 
   final bool _isContent;
 
@@ -61,8 +65,7 @@ class BlockKey {
   /// Wire form: `a:<anchor>` or `c:` + 16-char zero-padded hex.
   String asString() {
     if (isAnchored) return '$kAnchorPrefix$value';
-    final hex = (value as BigInt).toRadixString(16).padLeft(16, '0');
-    return '$kContentPrefix$hex';
+    return '$kContentPrefix${_u64Hex(value as int)}';
   }
 
   @override
@@ -77,38 +80,66 @@ String normalize(String text) {
 
 /// FNV-1a 64-bit content hash of the UTF-8 of `normalize(text)`.
 ///
-/// Cross-language stable (NOT Dart's `hashCode`). Returns a [BigInt] so the
-/// full 64-bit range is preserved.
-BigInt contentHash(String text) {
-  const offset = 0xcbf29ce484222325;
+/// Cross-language stable on native Dart (NOT Dart's `hashCode`, and NOT
+/// web-stable — web `int` is a JS double and loses 64-bit precision; the arena
+/// checksum `_fnv1a` in `shm_blob_arena.dart` has the same constraint). Returns
+/// a signed 64-bit [int] whose bit pattern is the full unsigned 64-bit FNV-1a
+/// result; serialize via [_u64Hex] for the wire `c:` form.
+///
+/// Uses fixed-width `int` math instead of [BigInt] (the former `BigInt`-per-byte
+/// loop was ~10–50× slower; `#lzdarthashint`). Mirrors the int-math core of
+/// `_fnv1a` in `shm_blob_arena.dart`. The two now share the same FNV-1a-64
+/// core; unlike the arena checksum (which folds to the 63-bit non-negative
+/// range for the unsigned `ShmBlobRef` fields), this preserves the full 64-bit
+/// wire-stable range — reconciling the former latent output-range divergence
+/// by making the shared core and the distinct output fold explicit.
+int contentHash(String text) {
+  var hash = 0xcbf29ce484222325;
   const prime = 0x100000001b3;
-  final mask = BigInt.parse('FFFFFFFFFFFFFFFF', radix: 16);
-
-  var hash = BigInt.parse(offset.toRadixString(16), radix: 16);
   final bytes = _utf8Bytes(normalize(text));
-  for (final b in bytes) {
-    hash = (hash ^ BigInt.from(b)) & mask;
-    hash = (hash * BigInt.from(prime)) & mask;
+  for (var i = 0; i < bytes.length; i++) {
+    hash = (hash ^ bytes[i]) & 0xFFFFFFFFFFFFFFFF;
+    hash = (hash * prime) & 0xFFFFFFFFFFFFFFFF;
   }
   return hash;
 }
 
-List<int> _utf8Bytes(String s) {
-  // Convert string to UTF-8 byte list without dart:convert (keep deps minimal).
-  final out = <int>[];
-  for (final rune in s.codeUnits) {
-    if (rune < 0x80) {
-      out.add(rune);
-    } else if (rune < 0x800) {
-      out.add(0xC0 | (rune >> 6));
-      out.add(0x80 | (rune & 0x3F));
+/// Format a signed 64-bit [int] (full unsigned FNV-1a-64 bit pattern) as
+/// 16-char zero-padded lowercase hex. Splitting into two 32-bit halves keeps
+/// each half a non-negative int so [int.toRadixString] never emits a sign.
+String _u64Hex(int hash) {
+  final hi = (hash >>> 32) & 0xFFFFFFFF;
+  final lo = hash & 0xFFFFFFFF;
+  return '${hi.toRadixString(16).padLeft(8, '0')}'
+      '${lo.toRadixString(16).padLeft(8, '0')}';
+}
+
+/// Encode [s] as UTF-8 bytes without dart:convert (keep deps minimal).
+///
+/// Iterates Unicode scalars via [String.runes] (NOT `codeUnits`, which are
+/// UTF-16 halves — supplementary-plane characters like emoji would otherwise
+/// emit invalid 3-byte-per-surrogate sequences; `#lzdartutf8fix`). Builds a
+/// compact [Uint8List] via [BytesBuilder].
+Uint8List _utf8Bytes(String s) {
+  final out = BytesBuilder();
+  for (final cp in s.runes) {
+    if (cp < 0x80) {
+      out.addByte(cp);
+    } else if (cp < 0x800) {
+      out.addByte(0xC0 | (cp >> 6));
+      out.addByte(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+      out.addByte(0xE0 | (cp >> 12));
+      out.addByte(0x80 | ((cp >> 6) & 0x3F));
+      out.addByte(0x80 | (cp & 0x3F));
     } else {
-      out.add(0xE0 | (rune >> 12));
-      out.add(0x80 | ((rune >> 6) & 0x3F));
-      out.add(0x80 | (rune & 0x3F));
+      out.addByte(0xF0 | (cp >> 18));
+      out.addByte(0x80 | ((cp >> 12) & 0x3F));
+      out.addByte(0x80 | ((cp >> 6) & 0x3F));
+      out.addByte(0x80 | (cp & 0x3F));
     }
   }
-  return out;
+  return out.toBytes();
 }
 
 /// Compute the manufactured key for [block]: anchor wins, else content hash.
