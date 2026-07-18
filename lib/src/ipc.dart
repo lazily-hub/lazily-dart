@@ -521,6 +521,32 @@ class Snapshot {
         'roots': <int>[...roots],
       };
 
+  /// Streaming JSON encoder (`#lzdartstreamingjson`): writes the canonical
+  /// JSON for this [Snapshot] directly into [sink], avoiding the intermediate
+  /// `Map<String, Object>` and the `nodes`/`edges`/`roots` [List] allocations
+  /// that [toWire] would produce. Byte-identical to `jsonEncode(toWire())`.
+  void writeJson(StringSink sink) {
+    sink
+      ..write('{"epoch":')
+      ..write(epoch.toString())
+      ..write(',"nodes":[');
+    for (var i = 0; i < nodes.length; i++) {
+      if (i > 0) sink.write(',');
+      sink.write(jsonEncode(nodes[i].toWire()));
+    }
+    sink.write('],"edges":[');
+    for (var i = 0; i < edges.length; i++) {
+      if (i > 0) sink.write(',');
+      sink.write(jsonEncode(edges[i].toWire()));
+    }
+    sink.write('],"roots":[');
+    for (var i = 0; i < roots.length; i++) {
+      if (i > 0) sink.write(',');
+      sink.write(roots[i].toString());
+    }
+    sink.write(']}');
+  }
+
   static Snapshot fromWire(Object? value) {
     final obj = _asObject(value, 'Snapshot');
     return Snapshot(
@@ -906,6 +932,24 @@ class Delta {
         'ops': ops.map((op) => op.toWire()).toList(),
       };
 
+  /// Streaming JSON encoder (`#lzdartstreamingjson`): writes the canonical
+  /// JSON for this [Delta] directly into [sink], avoiding the intermediate
+  /// `Map<String, Object>` and the `ops` [List] allocation that [toWire]
+  /// would produce. Byte-identical to `jsonEncode(toWire())`.
+  void writeJson(StringSink sink) {
+    sink
+      ..write('{"base_epoch":')
+      ..write(baseEpoch.toString())
+      ..write(',"epoch":')
+      ..write(epoch.toString())
+      ..write(',"ops":[');
+    for (var i = 0; i < ops.length; i++) {
+      if (i > 0) sink.write(',');
+      sink.write(jsonEncode(ops[i].toWire()));
+    }
+    sink.write(']}');
+  }
+
   static Delta fromWire(Object? value) {
     final obj = _asObject(value, 'Delta');
     return Delta(
@@ -1033,6 +1077,29 @@ class CrdtOp {
         'state': state.toWire(),
       };
 
+  /// Streaming JSON encoder (`#lzdartstreamingjson`): writes the canonical
+  /// JSON for this [CrdtOp] directly into [sink], avoiding the intermediate
+  /// `Map<String, Object?>` that [toWire] would produce. Byte-identical to
+  /// `jsonEncode(toWire())` — including emitting `"key":null` when [key] is
+  /// absent (the op always carries the field, unlike [NodeSnapshot]).
+  void writeJson(StringSink sink) {
+    sink
+      ..write('{"node":')
+      ..write(node.toString())
+      ..write(',"key":');
+    if (key == null) {
+      sink.write('null');
+    } else {
+      sink.write(jsonEncode(key!.toWire()));
+    }
+    sink
+      ..write(',"stamp":')
+      ..write(jsonEncode(stamp.toWire()))
+      ..write(',"state":')
+      ..write(jsonEncode(state.toWire()))
+      ..write('}');
+  }
+
   static CrdtOp fromWire(Object? value) {
     final obj = _asObject(value, 'CrdtOp');
     final key = obj['key'];
@@ -1119,6 +1186,26 @@ class CrdtSync {
         'frontier': frontier.map((e) => e.toWire()).toList(),
         'ops': ops.map((op) => op.toWire()).toList(),
       };
+
+  /// Streaming JSON encoder (`#lzdartstreamingjson`): writes the canonical
+  /// JSON for this [CrdtSync] directly into [sink], avoiding the intermediate
+  /// `Map<String, Object>` and the `frontier`/`ops` [List] allocations that
+  /// [toWire] would produce. Each [CrdtOp] in [ops] is streamed recursively
+  /// via its own [CrdtOp.writeJson], so the per-op `Map<String, Object?>` is
+  /// eliminated too. Byte-identical to `jsonEncode(toWire())`.
+  void writeJson(StringSink sink) {
+    sink.write('{"frontier":[');
+    for (var i = 0; i < frontier.length; i++) {
+      if (i > 0) sink.write(',');
+      sink.write(jsonEncode(frontier[i].toWire()));
+    }
+    sink.write('],"ops":[');
+    for (var i = 0; i < ops.length; i++) {
+      if (i > 0) sink.write(',');
+      ops[i].writeJson(sink);
+    }
+    sink.write(']}');
+  }
 
   static CrdtSync fromWire(Object? value) {
     final obj = _asObject(value, 'CrdtSync');
@@ -1258,8 +1345,26 @@ sealed class IpcMessage {
   /// The externally-tagged wire shape.
   Object toWire();
 
+  /// Streaming JSON encoder (`#lzdartstreamingjson`): writes the canonical
+  /// JSON for this [IpcMessage] directly into [sink], avoiding the
+  /// intermediate `Map<String, Object>` that [toWire] would produce and (for
+  /// the `Snapshot` / `Delta` / `CrdtSync` variants) recursing into the
+  /// payload's own [writeJson] so the per-batch allocations are eliminated
+  /// too. Byte-identical to `jsonEncode(toWire())`.
+  void writeJson(StringSink sink);
+
   /// UTF-8 JSON bytes of [toWire].
   Uint8List encodeJson() => Uint8List.fromList(utf8.encode(jsonEncode(toWire())));
+
+  /// Streaming equivalent of [encodeJson] (`#lzdartstreamingjson`): builds the
+  /// JSON via [writeJson] into a [StringBuffer] instead of `jsonEncode(toWire())`,
+  /// so the intermediate `Map<String, Object>` (and the inner `List`/`Map`
+  /// allocations for the batch variants) is never materialized.
+  Uint8List encodeJsonStreaming() {
+    final buf = StringBuffer();
+    writeJson(buf);
+    return Uint8List.fromList(utf8.encode(buf.toString()));
+  }
 
   static IpcMessage ofSnapshot(Snapshot snapshot) =>
       IpcMessageSnapshot(snapshot);
@@ -1313,6 +1418,13 @@ final class IpcMessageSnapshot extends IpcMessage {
   Object toWire() => {'Snapshot': value.toWire()};
 
   @override
+  void writeJson(StringSink sink) {
+    sink.write('{"Snapshot":');
+    value.writeJson(sink);
+    sink.write('}');
+  }
+
+  @override
   bool operator ==(Object other) =>
       other is IpcMessageSnapshot && other.value == value;
 
@@ -1327,6 +1439,13 @@ final class IpcMessageDelta extends IpcMessage {
 
   @override
   Object toWire() => {'Delta': value.toWire()};
+
+  @override
+  void writeJson(StringSink sink) {
+    sink.write('{"Delta":');
+    value.writeJson(sink);
+    sink.write('}');
+  }
 
   @override
   bool operator ==(Object other) =>
@@ -1345,6 +1464,13 @@ final class IpcMessageCrdtSync extends IpcMessage {
   Object toWire() => {'CrdtSync': value.toWire()};
 
   @override
+  void writeJson(StringSink sink) {
+    sink.write('{"CrdtSync":');
+    value.writeJson(sink);
+    sink.write('}');
+  }
+
+  @override
   bool operator ==(Object other) =>
       other is IpcMessageCrdtSync && other.value == value;
 
@@ -1361,6 +1487,13 @@ final class IpcMessageResyncRequest extends IpcMessage {
   Object toWire() => {'ResyncRequest': value.toWire()};
 
   @override
+  void writeJson(StringSink sink) {
+    sink.write('{"ResyncRequest":');
+    sink.write(jsonEncode(value.toWire()));
+    sink.write('}');
+  }
+
+  @override
   bool operator ==(Object other) =>
       other is IpcMessageResyncRequest && other.value == value;
 
@@ -1375,6 +1508,13 @@ final class IpcMessageOutboxAck extends IpcMessage {
 
   @override
   Object toWire() => {'OutboxAck': value.toWire()};
+
+  @override
+  void writeJson(StringSink sink) {
+    sink.write('{"OutboxAck":');
+    sink.write(jsonEncode(value.toWire()));
+    sink.write('}');
+  }
 
   @override
   bool operator ==(Object other) =>

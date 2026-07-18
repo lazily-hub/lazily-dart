@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.23.0
+
+### Added — performance (`#lzdartstreamingjson`, Phase 4 streaming JSON)
+
+- **Streaming `writeJson(StringSink)` on the batched IPC types.** Added a
+  `void writeJson(StringSink sink)` method to `Snapshot`, `Delta`, `CrdtSync`,
+  `CrdtOp`, and the `IpcMessage` sealed family (`IpcMessageSnapshot`,
+  `IpcMessageDelta`, `IpcMessageCrdtSync`, `IpcMessageResyncRequest`,
+  `IpcMessageOutboxAck`). Each writes its canonical JSON tokens directly into
+  the sink, eliminating the intermediate `Map<String, Object>` (and, for the
+  batch variants, the `nodes`/`edges`/`ops`/`frontier` `List` allocations) that
+  `toWire()` materializes before `jsonEncode` walks the map. For large IPC
+  batches this is the largest single allocation source. Output is byte-identical
+  to `jsonEncode(toWire())`; `toWire()` is retained unchanged for compatibility.
+- **`IpcMessage.encodeJsonStreaming()`** — streaming equivalent of
+  `encodeJson()`. Builds the JSON via `writeJson` into a `StringBuffer` instead
+  of `jsonEncode(toWire())`, so neither the outer `Map<String, Object>` nor the
+  per-batch inner `List`/`Map` allocations are materialized. Returns the same
+  `Uint8List` shape as `encodeJson()`.
+- **Pragmatic scope:** inner small types (`WireStamp`, `NodeKey`, `ShmBlobRef`,
+  `NodeState` / `IpcValue` variants, `NodeSnapshot`, `EdgeSnapshot`, `DeltaOp`
+  variants, `StampFrontierEntry`, `ResyncRequest`, `OutboxAck`) still go through
+  `jsonEncode(inner.toWire())` at their use sites — they are not the dominant
+  allocation source. `CrdtSync.writeJson` recurses into `CrdtOp.writeJson` so
+  each op in a CRDT batch skips its own `Map<String, Object?>` allocation.
+- **Tests:** added `streaming JSON (#lzdartstreamingjson)` group in
+  `test/ipc_test.dart` pinning `encodeJsonStreaming()` to `encodeJson()` byte
+  for byte across all five `IpcMessage` variants, round-tripping the streamed
+  bytes back through `decodeJson`, and verifying empty-batch edge cases.
+
 ## 0.22.0
 
 ### Changed — performance (Phase 2 quick wins: `#lzdartinlines`,

@@ -380,6 +380,92 @@ void main() {
     });
   });
 
+  group('streaming JSON (#lzdartstreamingjson)', () {
+    final snapshot = IpcMessage.ofSnapshot(Snapshot(
+      epoch: 7,
+      nodes: [
+        NodeSnapshot.payload(1, 'i32', [1, 2, 3]),
+        NodeSnapshot.opaque(2, 'opaque-type'),
+        NodeSnapshot.sharedBlob(
+          3,
+          'text/plain',
+          ShmBlobRef(
+              offset: 0, len: 16, generation: 1, epoch: 7, checksum: 999),
+        ),
+        NodeSnapshot.payload(4, 'k', [9], key: NodeKey('scores/alice')),
+      ],
+      edges: [const EdgeSnapshot(2, 1), const EdgeSnapshot(3, 1)],
+      roots: [1, 2],
+    ));
+
+    final delta = IpcMessage.ofDelta(Delta.next(40, [
+      DeltaOp.cellSet(1, [10]),
+      DeltaOp.slotValue(2, [20]),
+      DeltaOp.invalidate(3),
+      DeltaOp.nodeAdd(4, 'u64', NodeState.payload([64]),
+          key: NodeKey('outer/k1')),
+      DeltaOp.nodeRemove(5),
+      DeltaOp.edgeAdd(2, 1),
+      DeltaOp.edgeRemove(3, 1),
+    ]));
+
+    final crdtSync = IpcMessage.ofCrdtSync(CrdtSync(
+      frontier: [
+        StampFrontierEntry(1, WireStamp(wallTime: 200, logical: 0, peer: 1)),
+        StampFrontierEntry(2, WireStamp(wallTime: 180, logical: 3, peer: 2)),
+      ],
+      ops: [
+        CrdtOp.newOp(
+            1, WireStamp(wallTime: 200, logical: 0, peer: 1), [10, 20]),
+        CrdtOp.keyed(2, NodeKey('scores/alice'),
+            WireStamp(wallTime: 180, logical: 3, peer: 2), [30]),
+      ],
+    ));
+
+    final resync = IpcMessage.ofResyncRequest(const ResyncRequest(fromEpoch: 9));
+    final ack = IpcMessage.ofOutboxAck(const OutboxAck(throughEpoch: 12));
+
+    final messages = {
+      'Snapshot': snapshot,
+      'Delta': delta,
+      'CrdtSync': crdtSync,
+      'ResyncRequest': resync,
+      'OutboxAck': ack,
+    };
+
+    for (final entry in messages.entries) {
+      test('${entry.key}.encodeJsonStreaming() matches encodeJson() byte-for-byte',
+          () {
+        final canonical = entry.value.encodeJson();
+        final streamed = entry.value.encodeJsonStreaming();
+        expect(streamed, canonical,
+            reason: '${entry.key} streaming bytes must match encodeJson');
+      });
+    }
+
+    test('encodeJsonStreaming round-trips through decodeJson', () {
+      for (final message in messages.values) {
+        final decoded = IpcMessage.decodeJson(message.encodeJsonStreaming());
+        expect(decoded, message);
+      }
+    });
+
+    test('writeJson produces a tag-prefixed JSON object', () {
+      final buf = StringBuffer();
+      crdtSync.writeJson(buf);
+      expect(jsonDecode(buf.toString()), crdtSync.toWire());
+    });
+
+    test('empty Snapshot/Delta/CrdtSync still match', () {
+      final emptySnap = IpcMessage.ofSnapshot(const Snapshot(epoch: 0));
+      final emptyDelta = IpcMessage.ofDelta(const Delta(baseEpoch: 0, epoch: 1));
+      final emptySync = IpcMessage.ofCrdtSync(const CrdtSync());
+      for (final m in [emptySnap, emptyDelta, emptySync]) {
+        expect(m.encodeJsonStreaming(), m.encodeJson());
+      }
+    });
+  });
+
   group('lazily-lean transition rules', () {
     // lean `nextDelta_epoch` / `nextDelta_sequential` / `apply_nextDelta`
     test('nextDelta is always sequential and applies to baseEpoch+1', () {
