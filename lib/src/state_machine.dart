@@ -2,7 +2,7 @@ import 'core.dart';
 
 /// A finite state machine backed by a reactive [Cell].
 ///
-/// The state lives in a [Cell], so any [Slot], [Signal], or subscriber that
+/// The state lives in a [Cell], so any [Slot], [Signal], or [Effect] that
 /// reads [state] is automatically invalidated when the machine transitions.
 ///
 /// The transition function is pure: `S? Function(S state, E event)`. Returning
@@ -54,14 +54,31 @@ class StateMachine<S, E> {
   /// Register a handler fired with `(old, new)` on a transition to a
   /// different state. Not called on registration. Returns a disposer; call it
   /// to stop observing.
+  ///
+  /// This is an [Effect], not a listener registration: the handler observes
+  /// [state] through a declared dependency edge, so it participates in
+  /// batching and the glitch-free cascade like every other reader. The
+  /// consequence is that a [Context.batch] reports only the *settled*
+  /// transition — `A -> B -> C` inside one batch calls the handler once with
+  /// `(A, C)`, not twice. That is intended: a batch asserts that its
+  /// intermediate states were never observable. If a consumer needs every
+  /// individual transition, publish them to a `Topic`, which is the stream
+  /// primitive for that job.
   void Function() onTransition(void Function(S oldState, S newState) handler) {
-    var prev = _cell.value;
-    return _cell.subscribe((value) {
-      if (value != prev) {
-        handler(prev, value);
+    late S prev;
+    var seeded = false;
+    final effect = Effect(ctx, (_) {
+      // Read unconditionally so the dependency edge is registered on the very
+      // first run, which is the run that only seeds `prev`.
+      final current = _cell.value;
+      if (seeded && current != prev) {
+        handler(prev, current);
       }
-      prev = value;
+      prev = current;
+      seeded = true;
+      return null;
     });
+    return effect.dispose;
   }
 
   @override

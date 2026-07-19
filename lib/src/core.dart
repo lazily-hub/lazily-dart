@@ -571,62 +571,25 @@ class Slot<T> extends _ReactiveNode {
   String toString() => name != null ? 'Slot(${name!})' : 'Slot';
 }
 
-/// One registered [Cell.subscribe] observer (`#lzdartobservercow`).
-///
-/// The disposer returned by [Cell.subscribe] captures this object rather than a
-/// bare index, which is what makes both removal O(1) *and* compaction safe:
-/// [Cell._compactSlots] rewrites [index] in place, so every outstanding
-/// disposer stays valid. A null [callback] marks a disposed (tombstoned) slot.
-class _ObserverSlot<T> {
-  _ObserverSlot(this.callback, this.index);
-
-  void Function(T value)? callback;
-  int index;
-}
-
 /// A mutable source value that invalidates dependents when it changes.
 ///
 /// Reading [value] inside a [Slot] / [Signal] computation registers a
 /// dependency. Writing [value] triggers a cascade only when the new value is
 /// not equal (`!=`) to the old one — the `PartialEq` guard.
 ///
-/// [subscribe] registers a persistent observer that is NOT cleared on
-/// invalidation (unlike internal dependency edges). This is the hook for
-/// Flutter `ValueNotifier` bridges, `setState` wrappers, and side effects.
+/// A [Cell] carries **no callback registry**. Observation in a reactive graph
+/// is a declared dependency edge, not a registered listener: use an [Effect]
+/// (eager push, batching-aware, glitch-free) for side effects such as Flutter
+/// `ValueNotifier` bridges and `setState` wrappers, and a `Topic` when a
+/// consumer genuinely needs a stream of every transition. A per-cell listener
+/// list would bypass the graph, ignore [Context.batch], and cost memory on
+/// every cell whether or not anything is listening.
 class Cell<T> extends _ReactiveNode {
   Cell(this.ctx, T initialValue) : _value = initialValue;
 
   /// The context this cell belongs to.
   final Context ctx;
   T _value;
-
-  // Observer storage (`#lzdartobservercow`). Slots are appended and tombstoned
-  // in place; a cached snapshot is rebuilt only when the live set actually
-  // changed since the last notification.
-  //
-  // This replaced a copy-on-write immutable list, which bought an
-  // allocation-free notify at the price of an O(W) copy on *every*
-  // subscribe/unsubscribe — O(W^2) to build or tear down W observers.
-  // Measured churn cost at W=16384 was 46855 ns/op, a 163.8x wide/narrow ratio;
-  // this shape reports 41.7 ns/op and 1.1x. Notify stays allocation-free in the
-  // steady state because [_snapshotDirty] is only set when the set changes, so
-  // a stable subscriber set reuses [_snapshot] forever.
-  //
-  // Reentrancy is preserved by the same argument copy-on-write used: a rebuild
-  // allocates a *fresh* list and [_notifyObservers] holds it in a local, so a
-  // subscribe during notification cannot extend the in-flight iteration. The
-  // empty cases share singleton `const []`.
-  //
-  // The snapshot holds the *slots*, not the bare callbacks, so an unsubscribe
-  // during notification takes effect immediately: the disposer tombstones the
-  // slot (`callback = null`) and [_notifyObservers] re-checks liveness before
-  // each call, skipping an entry the pass has not yet reached. Observers the
-  // loop already visited are unaffected — disposal is not retroactive
-  // (`#lzdartobservercow`, lazily-spec docs/reactive-graph.md).
-  List<_ObserverSlot<T>?> _slots = const [];
-  int _liveObservers = 0;
-  List<_ObserverSlot<T>?> _snapshot = const [];
-  bool _snapshotDirty = false;
 
   /// The current value. Reading inside a computation subscribes the reader.
   T get value {
@@ -638,7 +601,6 @@ class Cell<T> extends _ReactiveNode {
   set value(T newValue) {
     if (newValue != _value) {
       _value = newValue;
-      _notifyObservers();
       ctx._cellChanged(this);
     }
   }
@@ -653,56 +615,6 @@ class Cell<T> extends _ReactiveNode {
   /// Set the value (alias for `value =`).
   void set(T newValue) => value = newValue;
 
-  /// Register a persistent observer fired with the new value on each change.
-  /// Returns a disposer; call it to stop observing. Observers are not cleared
-  /// on invalidation.
-  void Function() subscribe(void Function(T value) observer) {
-    final slots = _slots.isEmpty ? (_slots = <_ObserverSlot<T>?>[]) : _slots;
-    final slot = _ObserverSlot<T>(observer, slots.length);
-    slots.add(slot);
-    _liveObservers++;
-    _snapshotDirty = true;
-    return () {
-      // The disposer holds its own slot, so removal is O(1) — no `indexOf`
-      // scan. Idempotent: a disposed slot has a null callback.
-      if (slot.callback == null) return;
-      slot.callback = null;
-      _slots[slot.index] = null;
-      _liveObservers--;
-      _snapshotDirty = true;
-      if (_liveObservers == 0) {
-        // Full teardown — the common churn shape. Drop the backing store so a
-        // repeatedly rebuilt observer set cannot accumulate tombstones.
-        _slots = const [];
-      } else if (_slots.length >= _compactThreshold &&
-          _liveObservers * 2 <= _slots.length) {
-        _compactSlots();
-      }
-    };
-  }
-
-  /// Tombstone density at which [_compactSlots] runs. Below this the scan is
-  /// cheaper than the compaction.
-  static const int _compactThreshold = 32;
-
-  /// Drop tombstones, rewriting each surviving slot's [_ObserverSlot.index].
-  ///
-  /// Outstanding disposers hold the slot *object*, not a bare integer, so
-  /// rewriting the index keeps every live disposer valid across compaction.
-  /// This is what bounds memory under interleaved subscribe/unsubscribe that
-  /// never reaches zero live observers.
-  void _compactSlots() {
-    final slots = _slots;
-    var write = 0;
-    for (var read = 0; read < slots.length; read++) {
-      final slot = slots[read];
-      if (slot == null) continue;
-      slot.index = write;
-      slots[write++] = slot;
-    }
-    slots.length = write;
-  }
-
   /// Force-invalidate this cell's dependents without changing the value.
   ///
   /// Used by collection layers when an entry is removed: the orphaned cell
@@ -712,35 +624,6 @@ class Cell<T> extends _ReactiveNode {
   void invalidate() {
     _invalidate();
     ctx._flushEffects();
-  }
-
-  void _notifyObservers() {
-    if (_liveObservers == 0) return;
-    if (_snapshotDirty) {
-      // Rebuild into a *fresh* list — never mutate the old one, which an
-      // enclosing notification may still be iterating (`#lzdartobservercow`).
-      final rebuilt = List<_ObserverSlot<T>?>.filled(_liveObservers, null);
-      var write = 0;
-      final slots = _slots;
-      for (var i = 0; i < slots.length; i++) {
-        final slot = slots[i];
-        if (slot?.callback != null) rebuilt[write++] = slot;
-      }
-      _snapshot = rebuilt;
-      _snapshotDirty = false;
-    }
-    // Held in a local so a reentrant subscribe (which only marks the snapshot
-    // dirty) leaves this iteration bounded by the pre-callback set. An
-    // unsubscribe, by contrast, must take effect within this pass, so each
-    // entry's liveness is re-read immediately before the call: a slot
-    // tombstoned by an earlier callback in this same pass is skipped.
-    // [_compactSlots] rewrites `_slots` but never this list, and it mutates
-    // only slot indices, so a concurrent compaction cannot perturb the pass.
-    final observers = _snapshot;
-    for (var i = 0; i < observers.length; i++) {
-      final callback = observers[i]?.callback;
-      if (callback != null) callback(_value);
-    }
   }
 
   @override
@@ -949,7 +832,8 @@ class Effect extends _ReactiveNode {
 ///   final width = Cell<int>(ctx, 10);
 ///   // area only cascades when width is even — odd widths give the same tag.
 ///   final area = Memo<String>(ctx, (_) => width.value.isEven ? 'even' : 'odd');
-///   final dispose = area.subscribe... // (use an Effect to observe)
+///   // Observe it with an Effect; `area` only cascades when the tag changes.
+///   final effect = Effect(ctx, (_) { print(area()); return null; });
 class Memo<T> extends Slot<T> {
   Memo(super.ctx, super.compute, {super.name});
 

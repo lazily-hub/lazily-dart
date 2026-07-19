@@ -42,177 +42,36 @@ void main() {
       expect(c.value, 20);
     });
 
-    test('does not notify when set to an equal value', () {
+    test('does not cascade when set to an equal value', () {
       final ctx = Context();
       final c = Cell<int>(ctx, 5);
       var fired = 0;
-      c.subscribe((v) => fired++);
+      Effect(ctx, (_) {
+        c.value;
+        fired++;
+        return null;
+      });
+      expect(fired, 1); // initial run
       c.value = 5; // equal — suppressed
-      expect(fired, 0);
-      c.value = 6; // changed
       expect(fired, 1);
+      c.value = 6; // changed
+      expect(fired, 2);
     });
 
-    test('subscribe observers persist across changes and can be disposed', () {
+    test('an effect observes changes and can be disposed', () {
       final ctx = Context();
       final c = Cell<int>(ctx, 0);
       final seen = <int>[];
-      final dispose = c.subscribe(seen.add);
+      final effect = Effect(ctx, (_) {
+        seen.add(c.value);
+        return null;
+      });
       c.value = 1;
       c.value = 2;
-      expect(seen, [1, 2]);
-      dispose();
+      expect(seen, [0, 1, 2]);
+      effect.dispose();
       c.value = 3;
-      expect(seen, [1, 2]);
-    });
-  });
-
-  // Observer storage is a tombstoned slot list with a lazily rebuilt snapshot
-  // (`#lzdartobservercow`), replacing a copy-on-write list. These pin the
-  // semantics that shape has to preserve.
-  group('Cell observer storage', () {
-    test('fires observers in subscription order', () {
-      final c = Cell<int>(Context(), 0);
-      final order = <String>[];
-      c.subscribe((_) => order.add('a'));
-      c.subscribe((_) => order.add('b'));
-      c.subscribe((_) => order.add('c'));
-      c.value = 1;
-      expect(order, ['a', 'b', 'c']);
-    });
-
-    test('supports the same closure subscribed more than once', () {
-      final c = Cell<int>(Context(), 0);
-      var fired = 0;
-      void observer(int v) => fired++;
-      final first = c.subscribe(observer);
-      c.subscribe(observer);
-      c.value = 1;
-      expect(fired, 2);
-      // Disposing one registration must leave the other live.
-      first();
-      c.value = 2;
-      expect(fired, 3);
-    });
-
-    test('disposer is idempotent and removes only its own registration', () {
-      final c = Cell<int>(Context(), 0);
-      var fired = 0;
-      final dispose = c.subscribe((_) => fired++);
-      c.subscribe((_) => fired++);
-      dispose();
-      dispose();
-      dispose();
-      c.value = 1;
-      expect(fired, 1);
-    });
-
-    test('middle disposal does not disturb neighbours', () {
-      final c = Cell<int>(Context(), 0);
-      final seen = <String>[];
-      c.subscribe((_) => seen.add('a'));
-      final disposeB = c.subscribe((_) => seen.add('b'));
-      c.subscribe((_) => seen.add('c'));
-      disposeB();
-      c.value = 1;
-      expect(seen, ['a', 'c']);
-    });
-
-    test('disposers stay valid across slot compaction', () {
-      // Compaction triggers once the slot list exceeds its threshold and at
-      // least half the slots are tombstoned; it rewrites every surviving
-      // slot's index. A disposer captured *before* compaction must still
-      // remove exactly its own observer afterwards.
-      final c = Cell<int>(Context(), 0);
-      final fired = <int>[];
-      final disposers = <void Function()>[];
-      for (var i = 0; i < 128; i++) {
-        final id = i;
-        disposers.add(c.subscribe((_) => fired.add(id)));
-      }
-      // Drop every odd registration, forcing compaction.
-      for (var i = 1; i < 128; i += 2) {
-        disposers[i]();
-      }
-      c.value = 1;
-      expect(fired, [for (var i = 0; i < 128; i += 2) i]);
-
-      // Now dispose a survivor whose slot index was rewritten by compaction.
-      fired.clear();
-      disposers[64]();
-      c.value = 2;
-      expect(fired, [for (var i = 0; i < 128; i += 2) if (i != 64) i]);
-    });
-
-    test('re-subscribing after full teardown works', () {
-      final c = Cell<int>(Context(), 0);
-      var fired = 0;
-      final dispose = c.subscribe((_) => fired++);
-      dispose();
-      c.value = 1;
-      expect(fired, 0);
-      c.subscribe((_) => fired++);
-      c.value = 2;
-      expect(fired, 1);
-    });
-
-    test('subscribe during notification does not fire in that pass', () {
-      // The in-flight notification iterates a stable snapshot; a reentrant
-      // subscribe only marks it dirty, so the new observer starts at the
-      // *next* publish.
-      final c = Cell<int>(Context(), 0);
-      final seen = <String>[];
-      late void Function() addLate;
-      addLate = () => c.subscribe((_) => seen.add('late'));
-      var added = false;
-      c.subscribe((_) {
-        seen.add('early');
-        if (!added) {
-          added = true;
-          addLate();
-        }
-      });
-      c.value = 1;
-      expect(seen, ['early']);
-      c.value = 2;
-      expect(seen, ['early', 'early', 'late']);
-    });
-
-    test('dispose during notification takes effect within the in-flight pass',
-        () {
-      // Migrated to the normative contract (`#lzdartobservercow`,
-      // lazily-spec docs/reactive-graph.md): an observer disposed from inside
-      // a callback MUST NOT be invoked by the notification in flight, even
-      // when the loop has not yet reached it. This previously asserted the
-      // opposite — a stable pre-notification snapshot invoked the disposed
-      // observer once more. Full replay:
-      // test/observer_conformance_test.dart.
-      final c = Cell<int>(Context(), 0);
-      final seen = <String>[];
-      late void Function() disposeSecond;
-      c.subscribe((_) {
-        seen.add('first');
-        disposeSecond();
-      });
-      disposeSecond = c.subscribe((_) => seen.add('second'));
-      c.value = 1;
-      expect(seen, ['first']);
-      seen.clear();
-      c.value = 2;
-      expect(seen, ['first']);
-    });
-
-    test('observer disposing itself mid-pass is safe', () {
-      final c = Cell<int>(Context(), 0);
-      var fired = 0;
-      late void Function() self;
-      self = c.subscribe((_) {
-        fired++;
-        self();
-      });
-      c.value = 1;
-      c.value = 2;
-      expect(fired, 1);
+      expect(seen, [0, 1, 2]);
     });
   });
 
@@ -380,6 +239,35 @@ void main() {
       m.send('bogus'); // rejected, no transition
       m.send('advance'); // Green -> Yellow
       expect(transitions, [('Red', 'Green'), ('Green', 'Yellow')]);
+    });
+
+    test('onTransition can be disposed', () {
+      final ctx = Context();
+      final m = trafficLight(ctx);
+      final transitions = <(String, String)>[];
+      final dispose =
+          m.onTransition((old, now) => transitions.add((old, now)));
+      m.send('advance'); // Red -> Green
+      dispose();
+      m.send('advance'); // Green -> Yellow, unobserved
+      expect(transitions, [('Red', 'Green')]);
+    });
+
+    test('onTransition reports only the settled value under a batch', () {
+      // `onTransition` is an effect, so it observes the graph through a
+      // dependency edge and therefore participates in batching. A batch
+      // asserts its intermediate states were never observable, so Red -> Green
+      // -> Yellow inside one batch is reported as the single transition
+      // (Red, Yellow) rather than two.
+      final ctx = Context();
+      final m = trafficLight(ctx);
+      final transitions = <(String, String)>[];
+      m.onTransition((old, now) => transitions.add((old, now)));
+      ctx.batch(() {
+        m.send('advance'); // Red -> Green
+        m.send('advance'); // Green -> Yellow
+      });
+      expect(transitions, [('Red', 'Yellow')]);
     });
 
     test('a slot that reads state invalidates on transition', () {

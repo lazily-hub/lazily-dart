@@ -27,18 +27,23 @@ void main() {
       slotFires++;
       return a.value;
     });
-    var observerFires = 0;
-    a.subscribe((_) => observerFires++);
+    // The eager-push side of the graph must be equally undisturbed.
+    var effectFires = 0;
+    Effect(ctx, (_) {
+      a.value;
+      effectFires++;
+      return null;
+    });
 
     expect(dependent(), 2); // materialize
     final slotFiresBefore = slotFires;
-    final observerFiresBefore = observerFires;
+    final effectFiresBefore = effectFires;
 
     a.value = 2; // equal value — must be a no-op
 
     expect(dependent(), 2); // pull again — should NOT recompute
     expect(slotFires, slotFiresBefore, reason: 'slot must not recompute on equal setCell');
-    expect(observerFires, observerFiresBefore, reason: 'observer must not fire on equal setCell');
+    expect(effectFires, effectFiresBefore, reason: 'effect must not rerun on equal setCell');
     expect(a.value, 2);
   });
 

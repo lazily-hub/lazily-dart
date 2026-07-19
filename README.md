@@ -41,15 +41,24 @@ a.value = 11;
 print(parity.value); // odd (already updated before the read)
 ```
 
-A [Cell] also supports persistent observers (the hook for Flutter
-`ValueNotifier` bridges and `setState` wrappers):
+Side effects — the hook for Flutter `ValueNotifier` bridges and `setState`
+wrappers — are declared as an `Effect`. A `Cell` has no listener registry: an
+effect observes through a real dependency edge, so it batches and stays
+glitch-free with the rest of the graph.
 
 ```dart
 final count = Cell<int>(ctx, 0);
-final dispose = count.subscribe((v) => print('now $v'));
+final effect = Effect(ctx, (_) {
+  print('now ${count.value}');
+  return null;
+}); // prints "now 0"
 count.value = 1; // prints "now 1"
-dispose();
+effect.dispose();
 ```
+
+When a consumer genuinely needs a stream of *every* transition rather than the
+settled value, publish to a `Topic` — that is the stream primitive, and it
+survives batching by design.
 
 ## Competing-consumer work queue
 

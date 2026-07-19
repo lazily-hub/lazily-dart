@@ -8,55 +8,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ## Unreleased
 
-### Performance — `Cell.subscribe`/unsubscribe now O(1) (`#lzdartobservercow`)
+### Removed — the `Cell` observer API (BREAKING)
 
-- **Replaced the copy-on-write observer list with tombstoned slots plus a
-  lazily rebuilt snapshot.** `Cell._observers` was an immutable list swapped
-  wholesale on every mutation: `subscribe` did `[..._observers, observer]` and
-  unsubscribe did `indexOf` + `List.of`, both O(W) — so building or tearing
-  down W observers cost O(W^2). The trade bought an allocation-free
-  `_notifyObservers`, which is the right priority for a stable subscriber set
-  but loses badly under the subscribe/unsubscribe churn this workstream targets
-  (disposal, teardown scopes, pub/sub connect and disconnect).
+- **`Cell.subscribe` and its disposer are gone.** Observation in a reactive
+  graph is a declared dependency edge, not a registered callback. A per-cell
+  listener registry bypasses the graph, ignores `Context.batch`, breaks
+  glitch-freedom, and costs memory on *every* cell whether or not anything is
+  listening — that per-reactive cost is the decisive objection. Four of the
+  eight bindings (`rs`, `cpp`, `js`, `kt`) never had this API; lazily will not
+  have it in any binding.
 
-  Observers now live in an append-only slot list. `subscribe` appends
-  (O(1) amortized); the returned disposer captures its own slot rather than a
-  bare index, so removal is an O(1) tombstone with no `indexOf` scan.
-  `_notifyObservers` rebuilds its snapshot only when the live set actually
-  changed since the last publish, so a stable subscriber set keeps the
-  allocation-free steady state the copy-on-write shape was chosen for.
-  Compaction (past 32 slots, at >=50% tombstones) rewrites each surviving
-  slot's index, which is safe precisely because disposers hold the slot object;
-  a full teardown drops the backing store outright. Reentrancy is preserved by
-  the original argument: a rebuild allocates a *fresh* list held in a local, so
-  subscribe or dispose during notification cannot perturb the in-flight pass.
+  Use `Effect` for side effects (Flutter `ValueNotifier` bridges, `setState`
+  wrappers, logging, I/O): it is the eager-push primitive, it batches, and it
+  disposes. Use `Topic` (`lib/src/queue.dart`) when a consumer genuinely needs
+  a stream of *every* transition rather than the settled value — `Topic` and
+  `Queue` subscription are unaffected. The dependency graph itself, including
+  slot/computed dependent tracking, is unchanged.
 
-  Measured with `benchmark/observer_cow_audit.dart`, three interleaved A/B
-  passes against the previous shape, one process per rung *and* per arm, load
-  average 2.8-3.2. Churn arm, ns per subscribe/unsubscribe op, total work held
-  fixed:
+  This reverts the observer storage work (`#lzdartobservercow`): the slot list,
+  the lazily rebuilt snapshot, the compaction pass, and
+  `benchmark/observer_cow_audit.dart` are deleted rather than fixed.
 
-  | W | copy-on-write | slots |
-  |---|---|---|
-  | 64 | 270.8 | 53.0 |
-  | 256 | 827.7 | 48.1 |
-  | 1024 | 3136.4 | 46.6 |
-  | 4096 | 12226.6 | 51.6 |
-  | 16384 | 47057.6 | 92.7 |
+- **`test/reactive_graph_conformance_test.dart` removed with the API.** The
+  runner only implemented the observer op vocabulary (`subscribe`,
+  `unsubscribe`, `set_cell`, …); every non-observer fixture in
+  `lazily-spec/conformance/reactive-graph` was already reported as
+  skipped-for-unimplemented-ops. With the observer fixtures gone it would load
+  fixtures, execute none, and report green — a vacuously passing suite is the
+  exact anti-pattern the `#lzspecconf` work eliminated. A runner for the
+  disposal/teardown fixtures is separate work with a separate vocabulary.
+  `test/conformance_fixture_drift_test.dart` and sibling-first fixture
+  resolution are unaffected.
 
-  Wide/narrow ratio against the W=2 control: **347.3x -> 0.8x** (repeat passes
-  314.8x -> 0.6x, 349.4x -> 0.7x). At W=16384 that is 507x less time per op.
-  The publish arm is unchanged at W>=64 (2.13 -> 2.10 ns/invocation at
-  W=16384); the only cost is ~6% at W=2, where the extra per-publish
-  dirty-check branch is amortized over just two invocations. Both arms carry
-  liveness assertions on observed invocation counts, and the quadratic was
-  confirmed detectable by running the same harness against the pre-change
-  worktree rather than inferring it from a flat column.
+### Changed — `StateMachine.onTransition` is an effect (BREAKING behaviour)
 
-  No behaviour changed: nine new equivalence tests covering ordering, duplicate
-  registration, idempotent disposal, compaction-surviving disposers, and
-  subscribe/dispose during notification pass identically against both the old
-  and new implementations.
+- **`onTransition` is now implemented with `Effect`**, mirroring `lazily-rs`
+  `StateMachine::on_transition`. It still fires only on a real state change,
+  is still not called on registration, and still returns a disposer.
+
+  Because an effect observes through a dependency edge, it participates in
+  batching: `A -> B -> C` inside a single `Context.batch` now reports one
+  transition `(A, C)` rather than two. This is intended — a batch asserts that
+  its intermediate states were never observable. A consumer that needs every
+  individual transition should publish them to a `Topic`.
 
 ### Audited — no defect found (`#lzspecedgeindex`, pending-effect scan)
 
@@ -76,16 +70,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
   (see the teardown-quiescent column below).
 
 ### Added — benchmarks
-
-- **`benchmark/observer_cow_audit.dart`** measures both sides of the
-  `Cell.subscribe` observer-storage trade (`#lzdartobservercow`): a churn arm
-  (repeated build/teardown of W observers) and a publish arm (stable set, many
-  notifications). Total work is held fixed per arm so only the wide/narrow ratio
-  is asserted, each rung *and arm* runs in its own process so a tracing GC
-  cannot smear heap state between them, both arms warm up before timing (without
-  which the wide rungs time JIT tier-up and report a spurious ~1.5x publish
-  regression), and both assert on observed invocation counts so an inert arm
-  fails loudly instead of reporting a flat column.
 
 - **`benchmark/effect_pending_audit.dart`** closes a blind spot:
   `benchmark/edge_index_load.dart` drives pull-based reads through computed
