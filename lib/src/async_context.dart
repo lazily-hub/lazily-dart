@@ -338,16 +338,39 @@ class AsyncContext {
       _batchQueue.add(dependency);
       return;
     }
-    final affected = _dependents.remove(dependency);
-    if (affected == null) return;
-    for (final dep in affected) {
-      // Effect check first: _AsyncEffectHandle extends AsyncSlotHandle<void>,
-      // so the slot branch would shadow it.
-      if (dep is _AsyncEffectHandle) {
-        dep._scheduleRerun();
-      } else if (dep is AsyncSlotHandle) {
-        dep._onInvalidate();
+    // Iterative invalidation frontier walk, mirroring `lazily-rs`
+    // `invalidate_frontier_async`: a slot that depends on a slot must itself be
+    // invalidated, so the walk covers the whole transitive dependent cone
+    // instead of stopping one level below the written cell.
+    //
+    // Termination: each visit *removes* the node's dependent set from
+    // `_dependents`, consuming those edges. Revisiting a node yields `null` and
+    // the branch dies, so every edge is traversed at most once — diamonds and
+    // dependency cycles terminate without an explicit visited set. Edges
+    // re-register on the next recompute via `_trackDep`.
+    final stack = <Object>[dependency];
+    // Effects are scheduled after the walk so that a rerun's freshly
+    // re-registered edges are not consumed by the still-running walk.
+    final effects = <_AsyncEffectHandle>[];
+    while (stack.isNotEmpty) {
+      final current = stack.removeLast();
+      final affected = _dependents.remove(current);
+      if (affected == null) continue;
+      for (final dep in affected) {
+        // Effect check first: _AsyncEffectHandle extends AsyncSlotHandle<void>,
+        // so the slot branch would shadow it. Effects are frontier leaves —
+        // nothing can depend on an effect — so the walk does not continue
+        // through one.
+        if (dep is _AsyncEffectHandle) {
+          effects.add(dep);
+        } else if (dep is AsyncSlotHandle) {
+          dep._onInvalidate();
+          stack.add(dep);
+        }
       }
+    }
+    for (final effect in effects) {
+      effect._scheduleRerun();
     }
   }
 
@@ -426,6 +449,15 @@ class _AsyncEffectHandle extends AsyncSlotHandle<void>
         }
       }
       if (_disposed) break;
+      // Detach prior dependencies before re-tracking, mirroring
+      // `_spawnCompute`. Invalidation consumes the `_ctx._dependents` edge
+      // sets, so without clearing `_dependencies` here `_trackDep` would treat
+      // each dependency as already registered and the effect would rerun
+      // exactly once, then go deaf to every later write.
+      for (final dep in _dependencies) {
+        _ctx._dependents[dep]?.remove(this);
+      }
+      _dependencies.clear();
       // Run the body inside a tracking context. Dependencies register through
       // _ctx._currentAsync so source invalidation schedules a rerun.
       final previous = _ctx._currentAsync;

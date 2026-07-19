@@ -170,6 +170,138 @@ void main() {
     });
   });
 
+  group('invalidation cascade', () {
+    test('a slot depending on a slot is invalidated (depth 2)', () async {
+      final ctx = AsyncContext();
+      final cell = ctx.cell(1);
+      final a = ctx.computedAsync((cc) async => cc.getCell(cell) * 10);
+      final b = ctx.computedAsync((cc) async => await cc.getAsync(a) + 1);
+      expect(await b.getAsync(), 11);
+      cell.set(2);
+      expect(b.state, isNot(AsyncSlotState.resolved),
+          reason: 'the cascade must mark the transitive dependent stale');
+      expect(await b.getAsync(), 21);
+      await ctx.disposeAsync();
+    });
+
+    test('the cascade reaches the full transitive frontier (depth 3)',
+        () async {
+      final ctx = AsyncContext();
+      final cell = ctx.cell(1);
+      final a = ctx.computedAsync((cc) async => cc.getCell(cell) * 10);
+      final b = ctx.computedAsync((cc) async => await cc.getAsync(a) + 1);
+      final c = ctx.computedAsync((cc) async => await cc.getAsync(b) + 100);
+      expect(await c.getAsync(), 111);
+      cell.set(2);
+      expect(c.state, isNot(AsyncSlotState.resolved));
+      expect(await c.getAsync(), 121);
+      await ctx.disposeAsync();
+    });
+
+    test('a diamond recomputes each node once per invalidation', () async {
+      final ctx = AsyncContext();
+      final cell = ctx.cell(1);
+      var leafCalls = 0;
+      final left = ctx.computedAsync((cc) async => cc.getCell(cell) * 2);
+      final right = ctx.computedAsync((cc) async => cc.getCell(cell) * 3);
+      final leaf = ctx.computedAsync((cc) async {
+        leafCalls += 1;
+        return await cc.getAsync(left) + await cc.getAsync(right);
+      });
+      expect(await leaf.getAsync(), 5);
+      expect(leafCalls, 1);
+      cell.set(2);
+      expect(await leaf.getAsync(), 10);
+      expect(leafCalls, 2, reason: 'one recompute for the whole cascade');
+      await ctx.disposeAsync();
+    });
+
+    test('a batched write cascades once at batch exit', () async {
+      final ctx = AsyncContext();
+      final x = ctx.cell(1);
+      final y = ctx.cell(2);
+      var deepCalls = 0;
+      final a = ctx.computedAsync((cc) async => cc.getCell(x) + cc.getCell(y));
+      final deep = ctx.computedAsync((cc) async {
+        deepCalls += 1;
+        return await cc.getAsync(a) * 10;
+      });
+      expect(await deep.getAsync(), 30);
+      final before = deepCalls;
+      ctx.batch(() {
+        x.set(10);
+        y.set(20);
+      });
+      expect(deep.state, isNot(AsyncSlotState.resolved),
+          reason: 'the cascade runs at batch exit, not inside the batch');
+      expect(await deep.getAsync(), 300);
+      expect(deepCalls, before + 1, reason: 'one rerun from the batch');
+      await ctx.disposeAsync();
+    });
+
+    test('a cascade reaching an effect schedules a rerun', () async {
+      final ctx = AsyncContext();
+      final cell = ctx.cell(1);
+      final a = ctx.computedAsync((cc) async => cc.getCell(cell) * 10);
+      final seen = <int>[];
+      final effect = ctx.effectAsync((cc) async {
+        seen.add(await cc.getAsync(a));
+        return null;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(seen, [10]);
+      cell.set(2);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(seen, [10, 20],
+          reason: 'the effect reruns through the transitive cascade');
+      await effect.disposeAsync();
+      await ctx.disposeAsync();
+    });
+
+    test('an effect reruns on every successive write, not just the first',
+        () async {
+      final ctx = AsyncContext();
+      final cell = ctx.cell(1);
+      final seen = <int>[];
+      final effect = ctx.effectAsync((cc) async {
+        seen.add(cc.getCell(cell));
+        return null;
+      });
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      cell.set(2);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      cell.set(3);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(seen, [1, 2, 3],
+          reason: 'invalidation consumes edges; the effect must re-register');
+      await effect.disposeAsync();
+      await ctx.disposeAsync();
+    });
+
+    test('a dependency cycle terminates the cascade', () async {
+      final ctx = AsyncContext();
+      final cell = ctx.cell(1);
+      late final AsyncSlotHandle<int> b;
+      final a = ctx.computedAsync((cc) async {
+        final v = cc.getCell(cell);
+        // Synchronous cached read inside the tracking window: registers the
+        // edge b -> a without awaiting, closing the cycle.
+        b.get();
+        return v * 10;
+      });
+      b = ctx.computedAsync((cc) async {
+        a.get();
+        return 7;
+      });
+      expect(await a.getAsync(), 10);
+      expect(await b.getAsync(), 7);
+      // Must not spin: edge consumption makes the walk naturally terminating.
+      cell.set(2);
+      expect(await a.getAsync(), 20);
+      await ctx.disposeAsync();
+    });
+  });
+
   group('disposal', () {
     test('further cell writes are no-ops after disposal', () async {
       final ctx = AsyncContext();
