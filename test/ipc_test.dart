@@ -5,15 +5,18 @@ import 'dart:io';
 import 'package:lazily/ipc.dart';
 import 'package:test/test.dart';
 
-/// Locate a conformance fixture: prefer the committed copy in
-/// `test/conformance/` (self-contained, matches lazily-kt), then fall back to
-/// the sibling `lazily-spec/conformance/` submodule for dev convenience (parity
-/// with lazily-js).
+/// Locate a conformance fixture: SIBLING-FIRST (`#lzspecconf`) — the canonical
+/// `../lazily-spec/conformance/` checkout wins whenever present, falling back to
+/// the committed mirror under `test/conformance/` only for a checkout without
+/// the sibling. The mirror keeps the suite self-contained (parity with
+/// lazily-kt) but is never an authority: preferring it meant CI cloned
+/// lazily-spec and then tested the local copy anyway.
+/// `conformance_fixture_drift_test.dart` fails on any mirror that has drifted.
 String _fixturePath(String name) {
-  final local = 'test/conformance/$name';
-  if (File(local).existsSync()) return local;
   final sibling = '../lazily-spec/conformance/$name';
   if (File(sibling).existsSync()) return sibling;
+  final local = 'test/conformance/$name';
+  if (File(local).existsSync()) return local;
   throw StateError('conformance fixture not found: $name');
 }
 

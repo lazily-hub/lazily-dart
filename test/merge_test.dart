@@ -10,14 +10,19 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
-String? _fixture(String name) {
+/// Sibling-first (`#lzspecconf`), and a hard failure when the fixture is in
+/// neither place. This previously returned null and the caller returned early
+/// as a "CI baseline" — a fixture-backed test that quietly becomes a no-op is
+/// indistinguishable from a passing one, which is the same class of blind spot
+/// as the local-first shadowing.
+String _fixture(String name) {
   for (final path in [
-    'test/conformance/collections/$name',
     '../lazily-spec/conformance/collections/$name',
+    'test/conformance/collections/$name',
   ]) {
     if (File(path).existsSync()) return File(path).readAsStringSync();
   }
-  return null;
+  throw StateError('fixture not found: $name');
 }
 
 void main() {
@@ -104,13 +109,8 @@ void main() {
   });
 
   test('mergecell_algebra.json fixture', () {
-    final raw = _fixture('mergecell_algebra.json');
-    if (raw == null) {
-      // lazily-spec sibling absent (CI baseline); the direct tests above still
-      // pin the algebra.
-      return;
-    }
-    final fixture = jsonDecode(raw) as Map<String, dynamic>;
+    final fixture =
+        jsonDecode(_fixture('mergecell_algebra.json')) as Map<String, dynamic>;
     final byName = {'KeepLatest': keepLatest<int>(), 'Sum': sum(), 'Max': max()};
     var seen = 0;
     for (final scenarioEl in fixture['scenarios'] as List) {

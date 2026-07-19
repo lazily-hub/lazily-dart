@@ -5,10 +5,18 @@ import 'dart:typed_data';
 import 'package:lazily/ipc.dart';
 import 'package:test/test.dart';
 
-Map<String, dynamic> _fixture() => jsonDecode(
-      File('test/conformance/reliable-sync/outbox_store_protocol.json')
-          .readAsStringSync(),
-    ) as Map<String, dynamic>;
+/// Sibling-first (`#lzspecconf`) — this read the local mirror unconditionally,
+/// so the canonical fixture was never consulted even when checked out.
+Map<String, dynamic> _fixture() {
+  const name = 'reliable-sync/outbox_store_protocol.json';
+  for (final path in ['../lazily-spec/conformance/$name', 'test/conformance/$name']) {
+    final file = File(path);
+    if (file.existsSync()) {
+      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+    }
+  }
+  throw StateError('fixture not found: $name');
+}
 
 Map<String, dynamic> _scenario(String name) =>
     (_fixture()['scenarios'] as List<dynamic>)

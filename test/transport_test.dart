@@ -206,9 +206,10 @@ void main() {
     });
 
     test('conformance delta_zero_copy_arrow.json round-trips', () {
+      // Sibling-first (`#lzspecconf`); the local mirror is the fallback only.
       final path = [
-        'test/conformance/delta_zero_copy_arrow.json',
         '../lazily-spec/conformance/delta_zero_copy_arrow.json',
+        'test/conformance/delta_zero_copy_arrow.json',
       ].firstWhere((p) => File(p).existsSync(),
           orElse: () => throw StateError('fixture not found'));
       final fixture =

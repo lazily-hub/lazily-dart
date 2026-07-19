@@ -16,11 +16,22 @@ import 'package:test/test.dart';
 final _localDir = Directory('test/conformance/collections');
 final _specDir = Directory('../lazily-spec/conformance/collections');
 
+// Fixture resolution is SIBLING-FIRST (`#lzspecconf`): the canonical
+// lazily-spec checkout wins whenever it is present, and the mirrored copy under
+// `test/conformance/` is a fallback for a checkout without the sibling — never
+// an authority. The reverse order silently shadowed the canonical fixture with
+// a stale mirror, so CI cloned lazily-spec and then tested the local copy and
+// still reported green. `conformance_fixture_drift_test.dart` byte-compares the
+// two whenever both exist, so a stale mirror fails loudly instead of hiding.
 String _fixturePath(String name) {
-  final local = _localDir.resolveSymbolicLinksSync() + '/$name';
-  if (File(local).existsSync()) return local;
-  final sibling = _specDir.resolveSymbolicLinksSync() + '/$name';
-  if (File(sibling).existsSync()) return sibling;
+  if (_specDir.existsSync()) {
+    final sibling = _specDir.resolveSymbolicLinksSync() + '/$name';
+    if (File(sibling).existsSync()) return sibling;
+  }
+  if (_localDir.existsSync()) {
+    final local = _localDir.resolveSymbolicLinksSync() + '/$name';
+    if (File(local).existsSync()) return local;
+  }
   throw StateError('collections fixture not found: $name');
 }
 
