@@ -614,11 +614,18 @@ class Cell<T> extends _ReactiveNode {
   //
   // Reentrancy is preserved by the same argument copy-on-write used: a rebuild
   // allocates a *fresh* list and [_notifyObservers] holds it in a local, so a
-  // subscribe or dispose during notification cannot mutate the in-flight
-  // iteration. The empty cases share singleton `const []`.
+  // subscribe during notification cannot extend the in-flight iteration. The
+  // empty cases share singleton `const []`.
+  //
+  // The snapshot holds the *slots*, not the bare callbacks, so an unsubscribe
+  // during notification takes effect immediately: the disposer tombstones the
+  // slot (`callback = null`) and [_notifyObservers] re-checks liveness before
+  // each call, skipping an entry the pass has not yet reached. Observers the
+  // loop already visited are unaffected — disposal is not retroactive
+  // (`#lzdartobservercow`, lazily-spec docs/reactive-graph.md).
   List<_ObserverSlot<T>?> _slots = const [];
   int _liveObservers = 0;
-  List<void Function(T value)> _snapshot = const [];
+  List<_ObserverSlot<T>?> _snapshot = const [];
   bool _snapshotDirty = false;
 
   /// The current value. Reading inside a computation subscribes the reader.
@@ -712,28 +719,29 @@ class Cell<T> extends _ReactiveNode {
     if (_snapshotDirty) {
       // Rebuild into a *fresh* list — never mutate the old one, which an
       // enclosing notification may still be iterating (`#lzdartobservercow`).
-      final rebuilt = List<void Function(T value)>.filled(
-        _liveObservers,
-        _noopObserver,
-      );
+      final rebuilt = List<_ObserverSlot<T>?>.filled(_liveObservers, null);
       var write = 0;
       final slots = _slots;
       for (var i = 0; i < slots.length; i++) {
-        final callback = slots[i]?.callback;
-        if (callback != null) rebuilt[write++] = callback;
+        final slot = slots[i];
+        if (slot?.callback != null) rebuilt[write++] = slot;
       }
       _snapshot = rebuilt;
       _snapshotDirty = false;
     }
-    // Held in a local so a reentrant subscribe/dispose (which only marks the
-    // snapshot dirty) leaves this iteration stable.
+    // Held in a local so a reentrant subscribe (which only marks the snapshot
+    // dirty) leaves this iteration bounded by the pre-callback set. An
+    // unsubscribe, by contrast, must take effect within this pass, so each
+    // entry's liveness is re-read immediately before the call: a slot
+    // tombstoned by an earlier callback in this same pass is skipped.
+    // [_compactSlots] rewrites `_slots` but never this list, and it mutates
+    // only slot indices, so a concurrent compaction cannot perturb the pass.
     final observers = _snapshot;
     for (var i = 0; i < observers.length; i++) {
-      observers[i](_value);
+      final callback = observers[i]?.callback;
+      if (callback != null) callback(_value);
     }
   }
-
-  static void _noopObserver(Object? value) {}
 
   @override
   void onInvalidate() {

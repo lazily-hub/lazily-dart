@@ -178,10 +178,15 @@ void main() {
       expect(seen, ['early', 'early', 'late']);
     });
 
-    test('dispose during notification still completes the in-flight pass', () {
-      // Copy-on-write guaranteed the in-flight snapshot stayed stable when an
-      // observer disposed a later one mid-pass. The snapshot rebuild preserves
-      // that: the disposal takes effect from the next publish.
+    test('dispose during notification takes effect within the in-flight pass',
+        () {
+      // Migrated to the normative contract (`#lzdartobservercow`,
+      // lazily-spec docs/reactive-graph.md): an observer disposed from inside
+      // a callback MUST NOT be invoked by the notification in flight, even
+      // when the loop has not yet reached it. This previously asserted the
+      // opposite — a stable pre-notification snapshot invoked the disposed
+      // observer once more. Full replay:
+      // test/observer_conformance_test.dart.
       final c = Cell<int>(Context(), 0);
       final seen = <String>[];
       late void Function() disposeSecond;
@@ -191,7 +196,7 @@ void main() {
       });
       disposeSecond = c.subscribe((_) => seen.add('second'));
       c.value = 1;
-      expect(seen, ['first', 'second']);
+      expect(seen, ['first']);
       seen.clear();
       c.value = 2;
       expect(seen, ['first']);
