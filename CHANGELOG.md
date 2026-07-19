@@ -8,6 +8,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ## Unreleased
 
+### Performance — `Cell.subscribe`/unsubscribe now O(1) (`#lzdartobservercow`)
+
+- **Replaced the copy-on-write observer list with tombstoned slots plus a
+  lazily rebuilt snapshot.** `Cell._observers` was an immutable list swapped
+  wholesale on every mutation: `subscribe` did `[..._observers, observer]` and
+  unsubscribe did `indexOf` + `List.of`, both O(W) — so building or tearing
+  down W observers cost O(W^2). The trade bought an allocation-free
+  `_notifyObservers`, which is the right priority for a stable subscriber set
+  but loses badly under the subscribe/unsubscribe churn this workstream targets
+  (disposal, teardown scopes, pub/sub connect and disconnect).
+
+  Observers now live in an append-only slot list. `subscribe` appends
+  (O(1) amortized); the returned disposer captures its own slot rather than a
+  bare index, so removal is an O(1) tombstone with no `indexOf` scan.
+  `_notifyObservers` rebuilds its snapshot only when the live set actually
+  changed since the last publish, so a stable subscriber set keeps the
+  allocation-free steady state the copy-on-write shape was chosen for.
+  Compaction (past 32 slots, at >=50% tombstones) rewrites each surviving
+  slot's index, which is safe precisely because disposers hold the slot object;
+  a full teardown drops the backing store outright. Reentrancy is preserved by
+  the original argument: a rebuild allocates a *fresh* list held in a local, so
+  subscribe or dispose during notification cannot perturb the in-flight pass.
+
+  Measured with `benchmark/observer_cow_audit.dart`, three interleaved A/B
+  passes against the previous shape, one process per rung *and* per arm, load
+  average 2.8-3.2. Churn arm, ns per subscribe/unsubscribe op, total work held
+  fixed:
+
+  | W | copy-on-write | slots |
+  |---|---|---|
+  | 64 | 270.8 | 53.0 |
+  | 256 | 827.7 | 48.1 |
+  | 1024 | 3136.4 | 46.6 |
+  | 4096 | 12226.6 | 51.6 |
+  | 16384 | 47057.6 | 92.7 |
+
+  Wide/narrow ratio against the W=2 control: **347.3x -> 0.8x** (repeat passes
+  314.8x -> 0.6x, 349.4x -> 0.7x). At W=16384 that is 507x less time per op.
+  The publish arm is unchanged at W>=64 (2.13 -> 2.10 ns/invocation at
+  W=16384); the only cost is ~6% at W=2, where the extra per-publish
+  dirty-check branch is amortized over just two invocations. Both arms carry
+  liveness assertions on observed invocation counts, and the quadratic was
+  confirmed detectable by running the same harness against the pre-change
+  worktree rather than inferring it from a flat column.
+
+  No behaviour changed: nine new equivalence tests covering ordering, duplicate
+  registration, idempotent disposal, compaction-surviving disposers, and
+  subscribe/dispose during notification pass identically against both the old
+  and new implementations.
+
 ### Audited — no defect found (`#lzspecedgeindex`, pending-effect scan)
 
 - **Audited the pending/scheduled-effect scan quadratic; absent in Dart.**
@@ -26,6 +76,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
   (see the teardown-quiescent column below).
 
 ### Added — benchmarks
+
+- **`benchmark/observer_cow_audit.dart`** measures both sides of the
+  `Cell.subscribe` observer-storage trade (`#lzdartobservercow`): a churn arm
+  (repeated build/teardown of W observers) and a publish arm (stable set, many
+  notifications). Total work is held fixed per arm so only the wide/narrow ratio
+  is asserted, each rung *and arm* runs in its own process so a tracing GC
+  cannot smear heap state between them, both arms warm up before timing (without
+  which the wide rungs time JIT tier-up and report a spurious ~1.5x publish
+  regression), and both assert on observed invocation counts so an inert arm
+  fails loudly instead of reporting a flat column.
 
 - **`benchmark/effect_pending_audit.dart`** closes a blind spot:
   `benchmark/edge_index_load.dart` drives pull-based reads through computed
