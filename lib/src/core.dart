@@ -19,6 +19,60 @@
 /// react to each other must share a [Context].
 library;
 
+import 'dart:collection';
+
+/// Degree at which a node's edge list promotes from linear-scan dedup to a
+/// hash index (`#lzspecedgeindex`).
+///
+/// **Measured for Dart, not copied.** The spec is explicit that this constant
+/// is not portable, and lazily-rs's value (40, or 170 before its hash change)
+/// does not transfer.
+///
+/// Two measurements set it. First, the *pure-strategy* crossover — scan-only
+/// versus indexed-from-the-start, on the exact pattern
+/// [_ReactiveNode._addDependent] uses, medians of 9 — lands at **~60 under AOT**
+/// (`dart compile exe`) and **~96 under the JIT** (`dart run`). The two
+/// execution modes disagree by 1.6x from the compilation strategy alone, so a
+/// threshold below ~96 regresses JIT'd code.
+///
+/// Second, and decisive: this implementation is a *hybrid*, not a pure
+/// strategy. A list that reaches degree T pays the full O(T^2) scan on the way
+/// up **and then** the O(T) index build — with, at exactly degree T, no
+/// subsequent indexed insert to amortise it against. Every threshold therefore
+/// has a localised regression at precisely its own width, which the
+/// pure-strategy crossover cannot predict. Sweeping the real implementation
+/// (`benchmark/edge_index_load.dart --narrow`, ns/registration against the
+/// unfixed tree) shows the penalty is always parked on T and shrinks as T
+/// rises:
+///
+/// | T | worst regression | at width | width 512 | width 1024 |
+/// |---|---|---|---|---|
+/// | 64 | 1.63x | 64 | 0.45x | 0.23x |
+/// | 96 | 1.47x | 97 | 0.47x | 0.23x |
+/// | **128** | **1.31x** | **128** | **0.48x** | **0.23x** |
+/// | 192 | 1.26x | 192 | 0.53x | 0.28x |
+/// | 256 | 1.27x | 256 | 0.70x | 0.29x |
+///
+/// 128 is the knee: it keeps essentially all of the mid-range win (0.48x at
+/// 512, 0.23x at 1024 — indistinguishable from T=64) while cutting the
+/// boundary penalty to 1.31x, and it sits above both pure-strategy crossovers
+/// so promotion never happens while scanning is still the faster strategy.
+/// Going higher buys ~0.05x off the boundary and costs real mid-range
+/// throughput. Degrees 8..97 and 192+ measure within noise of the unfixed
+/// tree, so the **common low-degree case — the regression the spec says this
+/// threshold exists to prevent — is untouched**.
+const int edgeIndexPromoteThreshold = 128;
+
+/// Degree at which an indexed edge list demotes back to linear-scan dedup.
+///
+/// Set to a quarter of [edgeIndexPromoteThreshold] as **hysteresis**. Edges are
+/// removed and re-registered on every recompute, so a dependent list sitting
+/// at the promote threshold oscillates by one; a single shared promote/demote
+/// boundary would rebuild the index on every recompute (~4x steady-state cost
+/// at exactly threshold+1, and invisible at every other width). A 4x gap means
+/// a list must shed three quarters of its degree before it demotes.
+const int edgeIndexDemoteThreshold = edgeIndexPromoteThreshold ~/ 4;
+
 /// A reactive scope: an identity-keyed value cache plus the computation stack.
 ///
 /// All [Slot]s, [Cell]s, and [Signal]s that should react to each other must be
@@ -226,9 +280,42 @@ class Context {
 /// tiny list beats the allocation + hash overhead of an empty `Set` per node
 /// (4M `Set` allocations at the 2M-cell scale benchmark become ~0 for never-
 /// connected nodes).
+///
+/// That scan is O(degree) per registration, so a *wide* node — one read by
+/// thousands of dependents — would build its edge set in O(n^2) and degrade
+/// every propagation with it. Once a list reaches
+/// [edgeIndexPromoteThreshold] it therefore promotes to a hash index
+/// ([_dependentIndex] / [_dependencyIndex]) and registration returns to
+/// amortized O(1), demoting again only at [edgeIndexDemoteThreshold]
+/// (`#lzspecedgeindex`). The edge *set* is identical either way — dedup
+/// strategy is not observable.
 abstract class _ReactiveNode {
   List<_ReactiveNode>? _dependents;
   List<_ReactiveNode>? _dependencies;
+
+  /// Hash index over [_dependents], mapping each dependent to its position in
+  /// the list. Allocated only once the list crosses
+  /// [edgeIndexPromoteThreshold]; `null` means "dedup by linear scan".
+  ///
+  /// Holding the position (rather than a bare membership [Set]) is what makes
+  /// [_removeDependent] O(1) too: it swap-removes and repairs the moved
+  /// entry's position, so tearing a wide fan-out down is O(n) overall instead
+  /// of O(n^2).
+  Map<_ReactiveNode, int>? _dependentIndex;
+
+  /// Membership index over [_dependencies]. Upstream edges are only ever
+  /// added or bulk-cleared — never removed individually — so a [Set] suffices.
+  Set<_ReactiveNode>? _dependencyIndex;
+
+  static Map<_ReactiveNode, int> _buildDependentIndex(
+    List<_ReactiveNode> deps,
+  ) {
+    final index = HashMap<_ReactiveNode, int>.identity();
+    for (var i = 0; i < deps.length; i++) {
+      index[deps[i]] = i;
+    }
+    return index;
+  }
 
   /// The context this node belongs to. Concrete subclasses provide this as a
   /// field; the base declares it so [_invalidate] / [_detachUpstream] can route
@@ -246,8 +333,19 @@ abstract class _ReactiveNode {
     final deps = _dependents;
     if (deps == null) {
       _dependents = [child];
-    } else if (!deps.contains(child)) {
+      return;
+    }
+    final index = _dependentIndex;
+    if (index != null) {
+      if (index.containsKey(child)) return;
+      index[child] = deps.length;
       deps.add(child);
+      return;
+    }
+    if (deps.contains(child)) return;
+    deps.add(child);
+    if (deps.length >= edgeIndexPromoteThreshold) {
+      _dependentIndex = _buildDependentIndex(deps);
     }
   }
 
@@ -258,14 +356,48 @@ abstract class _ReactiveNode {
     final deps = _dependencies;
     if (deps == null) {
       _dependencies = [dep];
-    } else if (!deps.contains(dep)) {
-      deps.add(dep);
+      return;
+    }
+    final index = _dependencyIndex;
+    if (index != null) {
+      if (index.add(dep)) deps.add(dep);
+      return;
+    }
+    if (deps.contains(dep)) return;
+    deps.add(dep);
+    if (deps.length >= edgeIndexPromoteThreshold) {
+      _dependencyIndex = HashSet<_ReactiveNode>.identity()..addAll(deps);
     }
   }
 
   /// Remove [child] from this node's downstream edge list (identity match).
+  ///
+  /// While indexed this is O(1) via swap-remove. Swap-remove reorders the
+  /// dependent list, which is unobservable: the cascade is a set-expansion
+  /// whose resulting graph state is order-independent (`disposeAll_order_
+  /// independent` in lazily-formal). The unindexed path keeps [List.remove]'s
+  /// order-preserving behaviour, so narrow graphs are bit-for-bit unchanged.
   void _removeDependent(_ReactiveNode child) {
-    _dependents?.remove(child);
+    final deps = _dependents;
+    if (deps == null) return;
+    final index = _dependentIndex;
+    if (index == null) {
+      deps.remove(child);
+      return;
+    }
+    final at = index.remove(child);
+    if (at == null) return;
+    final last = deps.length - 1;
+    if (at != last) {
+      final moved = deps[last];
+      deps[at] = moved;
+      index[moved] = at;
+    }
+    deps.removeLast();
+    // Hysteresis: demote only once the list has shrunk to a quarter of the
+    // promote threshold. A shared boundary would rebuild the index on every
+    // recompute for a list oscillating by one at the threshold.
+    if (deps.length <= edgeIndexDemoteThreshold) _dependentIndex = null;
   }
 
   /// Register the currently-computing slot (if any) as a dependent of this
@@ -290,6 +422,9 @@ abstract class _ReactiveNode {
       dep._removeDependent(this);
     }
     deps.clear();
+    // The list is the index's only referent — a cleared list must never keep a
+    // stale index, or the next computation's edges alias the previous run's.
+    _dependencyIndex = null;
   }
 
   /// Invalidate this node: run its [onInvalidate] hook and cascade the
@@ -309,6 +444,7 @@ abstract class _ReactiveNode {
       stack.add(dep);
     }
     deps.clear();
+    _dependentIndex = null;
   }
 }
 
@@ -745,6 +881,7 @@ class Memo<T> extends Slot<T> {
         stack.add(dependent);
       }
       deps.clear();
+      _dependentIndex = null;
     } finally {
       _guardActive = false;
     }

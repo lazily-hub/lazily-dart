@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## Unreleased
+
+### Fixed — performance (`#lzspecedgeindex`, dependency-edge index)
+
+- **Wide fan-out no longer registers edges in O(n^2).** `_addDependent` /
+  `_addDependency` deduped by an unconditional linear scan of the edge list, so
+  building a width-N fan-out cost ~N^2/2 comparisons and every propagation paid
+  it again. Once an edge list reaches `edgeIndexPromoteThreshold` (128) it now
+  promotes to a hash index and registration returns to amortized O(1),
+  demoting only at `edgeIndexDemoteThreshold` (32). The dedup strategy is not
+  observable — the edge *set* is identical either way, as the spec requires.
+- **Edge removal is O(1) while indexed.** The index stores each dependent's
+  position, so `_removeDependent` swap-removes instead of scanning; tearing
+  down a wide fan-out is O(n) overall rather than O(n^2). The unindexed path
+  keeps `List.remove`'s order-preserving behaviour.
+- **Hysteresis on demotion.** Demote is a quarter of promote, not a shared
+  boundary: edges are removed and re-registered on every recompute, so a list
+  sitting exactly at a single boundary would rebuild its index every recompute.
+- **A cleared list never keeps a stale index.** Both bulk-clear sites
+  (`_detachUpstream`, `_invalidateInto`, including `Memo`'s override) drop the
+  index with the list, so the next computation's edges cannot alias the
+  previous run's.
+- **Threshold measured for Dart, not copied from another binding.** The
+  pure-strategy scan/hash crossover is ~60 under AOT and ~96 under the JIT; the
+  hybrid's own regression sits on whichever threshold is chosen, and a sweep of
+  the real implementation puts the knee at 128. See the doc comment on
+  `edgeIndexPromoteThreshold` for the sweep table.
+- **Measured** (ns/registration vs. the unfixed tree, medians): degree 8..97
+  and 192+ within noise, degree 128 up 1.31x, degree 512 down to 0.48x, degree
+  1024 down to 0.23x. On the width ladder the wide-vs-narrow control ratio goes
+  from 208x at width 262144 (unfixed) to 1.0-1.4x flat out to width 10,000,000.
+
+### Added
+
+- `benchmark/edge_index_load.dart` — manual, on-demand width-ladder load test
+  (one process per rung, fan-out-2 control arm at equal node count,
+  climb/project/refuse memory policy) plus a `--narrow` low-degree regression
+  guard. Not run in CI.
+- `test/edge_index_test.dart` — behavioural coverage across the promote and
+  demote thresholds: fan-out and fan-in correctness, duplicate-read dedup on
+  the indexed path, and a shrinking wide node not retaining stale entries.
+
 ## 0.23.0
 
 ### Added — performance (`#lzdartstreamingjson`, Phase 4 streaming JSON)
