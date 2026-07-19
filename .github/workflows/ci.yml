@@ -49,6 +49,10 @@ jobs:
       - name: Assert canonical lazily-spec fixtures are present (#lzspecconf)
         run: |
           test -d ../lazily-spec/conformance || { echo "::error::../lazily-spec/conformance missing — the conformance tests would skip and report green"; exit 1; }
+          # reactive-graph has NO bundled mirror under test/conformance/, so the
+          # sibling is the only source: absent means the runner skips outright
+          # and the async cascade fixture (c91a32a) goes unexecuted.
+          test -d ../lazily-spec/conformance/reactive-graph || { echo "::error::../lazily-spec/conformance/reactive-graph missing — reactive_graph_conformance_test would skip and report green"; exit 1; }
 
       # Sibling lazily-formal Lean model so `dart test`'s formal_check_test builds
       # the proofs for real (instead of SKIP-ing). LAZILY_FORMAL_PATH points
