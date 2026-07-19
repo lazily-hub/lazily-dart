@@ -98,6 +98,22 @@ class Context {
   final Set<Effect> _scheduledEffects = Set.identity();
   bool _flushingEffects = false;
 
+  /// Audit-only escape hatch (`#lzspecedgeindex`). When compiled with
+  /// `-Dlazily.naive_pending_scan=true` the flush and dispose paths perform the
+  /// linear `_pendingEffects` scan that `lazily-rs`/`lazily-cpp` (`run_effect`)
+  /// and `lazily-kt` (`disposeEffect`) carried before their O(1) fixes. The
+  /// scan result is discarded, so behaviour is identical either way — the flag
+  /// exists purely so a benchmark can prove the harness is able to *detect* a
+  /// per-publish/per-teardown scan of the pending collection. It is a
+  /// compile-time constant, so the naive branch is tree-shaken out of normal
+  /// builds at zero cost.
+  static const bool naivePendingScan =
+      bool.fromEnvironment('lazily.naive_pending_scan');
+
+  /// Sink that keeps the audit scan above from being optimised away. Only
+  /// written when [naivePendingScan] is set.
+  int _naiveScanSink = 0;
+
   /// Reusable DFS stack for invalidation cascades (see [_cascadeFrom]).
   /// Allocated once per [Context]; cleared at the end of each top-level cascade.
   final List<_ReactiveNode> _invalidateStack = [];
@@ -255,6 +271,11 @@ class Context {
       while (_pendingEffectsHead < _pendingEffects.length) {
         final effect = _pendingEffects[_pendingEffectsHead];
         _pendingEffectsHead++;
+        if (naivePendingScan) {
+          // Naive form under audit: scan the pending collection for an entry
+          // that the head pointer has already consumed. Result discarded.
+          _naiveScanSink += _pendingEffects.indexOf(effect);
+        }
         _scheduledEffects.remove(effect);
         effect._rerun();
       }
@@ -788,6 +809,11 @@ class Effect extends _ReactiveNode {
     // and corrupt the FIFO head pointer. A queued-but-disposed effect is a
     // no-op when popped (`_rerun` guards on `_active`), and `_detachUpstream`
     // below ensures its `onInvalidate` never fires again.
+    if (Context.naivePendingScan) {
+      // Naive form under audit, mirroring lazily-kt `disposeEffect`'s
+      // `ArrayDeque.indexOf`. Result discarded.
+      ctx._naiveScanSink += ctx._pendingEffects.indexOf(this);
+    }
     ctx._scheduledEffects.remove(this);
     _detachUpstream();
     final c = _cleanup;

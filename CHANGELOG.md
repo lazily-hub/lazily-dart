@@ -8,6 +8,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ## Unreleased
 
+### Audited — no defect found (`#lzspecedgeindex`, pending-effect scan)
+
+- **Audited the pending/scheduled-effect scan quadratic; absent in Dart.**
+  `lazily-rs` and `lazily-cpp` (`run_effect`) and `lazily-kt` (`disposeEffect`)
+  each scanned the pending effect collection for an id that could not be there,
+  costing O(W^2) per publish or per teardown. Dart is immune by construction on
+  both paths: `Context._scheduledEffects` is a `Set.identity()`, so flush and
+  dispose both deregister via an O(1) hash lookup, and `Effect.dispose` already
+  declines to remove from `_pendingEffects` by value (it would corrupt the FIFO
+  head pointer). No fix was required and no behaviour changed.
+- **The `lazily-kt` "empty collection still scans" trap does not apply.** In
+  Kotlin an emptied `ArrayDeque` still scanned its never-shrinking backing array
+  because `indexOf`'s wraparound branch triggers when `head >= tail`. Dart's
+  growable `List.clear()` sets `length = 0` and `indexOf` bounds on `length`, so
+  scanning a drained pending list is genuinely free — measured, not assumed
+  (see the teardown-quiescent column below).
+
+### Added — benchmarks
+
+- **`benchmark/effect_pending_audit.dart`** closes a blind spot:
+  `benchmark/edge_index_load.dart` drives pull-based reads through computed
+  slots and never constructs an `Effect`, so no rung of it touches the pending
+  collection. The new harness holds total work fixed (65,536 effect bodies per
+  rung) and varies only fan-out width, runs one process per rung so a tracing
+  GC cannot smear rungs together, and carries a fan-out-2 control arm at equal
+  node count so results are read as wide/control *ratios* rather than absolute
+  growth.
+- **`Context.naivePendingScan`**, a compile-time flag
+  (`-Dlazily.naive_pending_scan=true`), restores the naive scan on both paths so
+  the audit can prove a *detection margin*. The scan result is discarded, so
+  behaviour is identical, and the constant tree-shakes out of normal builds. A
+  flat column is only evidence when the same harness reports a steep one for the
+  naive build. Measured over widths 64 -> 65,536, three interleaved passes:
+
+  | arm | fixed | forced-naive | margin |
+  | --- | --- | --- | --- |
+  | publish (wide/control) | 0.4-0.6x | 12.6-31.4x | ~30x |
+  | publish (absolute) | 1.4-1.6x | 39.2-50.2x | ~30x |
+  | teardown, pending saturated | 2.2-3.4x | 168-294x | ~90x |
+  | teardown, pending drained | 1.6-2.1x | 2.0-2.5x | n/a (nothing to scan) |
+
+  A batch does not saturate the pending list — `_cellChanged` only records the
+  cell while `_batchDepth > 0` and defers the cascade to `_flushBatch` — so the
+  saturated arm disposes its cohort from inside the first effect's body, which
+  runs with the rest of the cohort still queued behind it.
+
 ### Fixed — performance (`#lzspecedgeindex`, dependency-edge index)
 
 - **Wide fan-out no longer registers edges in O(n^2).** `_addDependent` /
