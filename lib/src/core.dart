@@ -128,6 +128,24 @@ class Context {
   final Set<Effect> _scheduledEffects = Set.identity();
   bool _flushingEffects = false;
 
+  /// Eager [Signal] pulls queued for the current flush (`#lzsignaleager`
+  /// clause 3).
+  ///
+  /// The puller is *scheduled*, exactly like an [Effect], rather than run
+  /// inline from `_SignalSlot.onInvalidate`. That is the whole of clause 3:
+  /// N writes inside a [batch] must produce ONE re-materialization, and
+  /// invalidation is earlier than the flush — `_flushBatch` cascades once per
+  /// written cell, so an inline pull recomputed once per invalidated source.
+  /// Both forms end at the same value, which is why the defect is a cost
+  /// multiplier rather than a wrong answer and shipped unnoticed here until
+  /// `signal_materializes_once_per_batch.json` counted the computes.
+  ///
+  /// Dedup is by identity, so a signal reached from several written cells in
+  /// one batch is pulled once.
+  final List<Signal> _pendingSignals = [];
+  int _pendingSignalsHead = 0;
+  final Set<Signal> _scheduledSignals = Set.identity();
+
   /// Audit-only escape hatch (`#lzspecedgeindex`). When compiled with
   /// `-Dlazily.naive_pending_scan=true` the flush and dispose paths perform the
   /// linear `_pendingEffects` scan that `lazily-rs`/`lazily-cpp` (`run_effect`)
@@ -167,7 +185,7 @@ class Context {
   ///   contract is "errors on the next recompute", and that recompute is driven
   ///   by a real write.
   /// - [Memo._invalidateInto] skips its equality recompute and propagates
-  ///   unconditionally, and `_SignalSlot.onInvalidate` skips its eager re-pull,
+  ///   unconditionally, and [_scheduleSignalPull] drops the queued eager pull,
   ///   for the same reason: both would recompute *through* the disposed node.
   int _disposalDepth = 0;
 
@@ -288,8 +306,9 @@ class Context {
   /// Replaces the former recursive cascade which allocated a `.toList()`
   /// snapshot per node (mirrors `mark_frontier_locked` in lazily-rs). The stack
   /// is owned by the [Context] and reused across cascades; reentrant cascades
-  /// (e.g. an eager [Signal] recompute fired from within `_SignalSlot.onInvalidate`)
   /// fall back to a fresh local stack so the outer iteration is not corrupted.
+  /// Eager [Signal] pulls no longer reenter here — they are scheduled onto
+  /// [_pendingSignals] and cascade from the flush, outside this walk.
   void _cascadeFrom(_ReactiveNode root) {
     final nested = _invalidateNesting > 0;
     final List<_ReactiveNode> stack =
@@ -331,6 +350,17 @@ class Context {
     if (_disposalDepth > 0) return;
     if (_scheduledEffects.add(effect)) {
       _pendingEffects.add(effect);
+    }
+  }
+
+  /// Queue [signal]'s eager re-materialization for the current flush. See
+  /// [_pendingSignals].
+  void _scheduleSignalPull(Signal signal) {
+    // A disposal cascade is mark-only: pulling here would recompute *through*
+    // the node being torn down. See [_disposalDepth].
+    if (_disposalDepth > 0) return;
+    if (_scheduledSignals.add(signal)) {
+      _pendingSignals.add(signal);
     }
   }
 
@@ -433,21 +463,39 @@ class Context {
     _flushingEffects = true;
     try {
       // FIFO with a head pointer instead of O(n) `removeAt(0)` (mirrors
-      // lazily-rs `VecDeque::pop_front`). `_rerun` may append more effects; the
-      // loop re-reads `length` each iteration so they are processed in order.
-      while (_pendingEffectsHead < _pendingEffects.length) {
-        final effect = _pendingEffects[_pendingEffectsHead];
-        _pendingEffectsHead++;
-        if (naivePendingScan) {
-          // Naive form under audit: scan the pending collection for an entry
-          // that the head pointer has already consumed. Result discarded.
-          _naiveScanSink += _pendingEffects.indexOf(effect);
+      // lazily-rs `VecDeque::pop_front`). A drained entry may append more of
+      // either kind; the loop re-reads `length` each pass so they are
+      // processed in order.
+      while (true) {
+        // Signal pulls drain ahead of effects: an effect body that reads a
+        // signal must observe the re-materialized value, not the pre-write
+        // one. A pull may cascade and schedule further pulls or effects, so
+        // this re-checks rather than draining the queue once.
+        if (_pendingSignalsHead < _pendingSignals.length) {
+          final signal = _pendingSignals[_pendingSignalsHead];
+          _pendingSignalsHead++;
+          _scheduledSignals.remove(signal);
+          signal._eagerRecompute();
+          continue;
         }
-        _scheduledEffects.remove(effect);
-        effect._rerun();
+        if (_pendingEffectsHead < _pendingEffects.length) {
+          final effect = _pendingEffects[_pendingEffectsHead];
+          _pendingEffectsHead++;
+          if (naivePendingScan) {
+            // Naive form under audit: scan the pending collection for an entry
+            // that the head pointer has already consumed. Result discarded.
+            _naiveScanSink += _pendingEffects.indexOf(effect);
+          }
+          _scheduledEffects.remove(effect);
+          effect._rerun();
+          continue;
+        }
+        break;
       }
       _pendingEffects.clear();
       _pendingEffectsHead = 0;
+      _pendingSignals.clear();
+      _pendingSignalsHead = 0;
     } finally {
       _flushingEffects = false;
     }
@@ -984,11 +1032,12 @@ class _SignalSlot<T> extends Slot<T> {
     // eagerly recompute the owning signal (which re-establishes upstream
     // edges and cascades downstream only if the value changed).
     _uncache(ctx);
-    // A disposal cascade is mark-only: re-pulling here would recompute
-    // *through* the node currently being torn down. See
-    // [Context._disposalDepth].
-    if (ctx._disposalDepth > 0) return;
-    signal?._eagerRecompute();
+    // Scheduled, never inline (`#lzsignaleager` clause 3): invalidation is
+    // earlier than the flush, so pulling here would re-materialize once per
+    // invalidated source instead of once per batch. [Context._scheduleSignalPull]
+    // also drops the pull during a disposal cascade, which is mark-only.
+    final owner = signal;
+    if (owner != null) ctx._scheduleSignalPull(owner);
   }
 }
 

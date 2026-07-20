@@ -8,6 +8,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ## Unreleased
 
+### Fixed
+
+- **`Signal` re-materialized once per invalidated source inside a `batch`
+  instead of once at batch exit (`#lzsignaleager` clause 3).** `_SignalSlot`
+  re-pulled its owning `Signal` inline from `onInvalidate`, and `_flushBatch`
+  cascades once per written cell — so a two-cell batch ran the signal's compute
+  twice and a three-write batch over two cells ran it twice again. The value
+  was correct either way, which is why it went unnoticed: this is a cost
+  multiplier proportional to the number of distinct sources written per batch,
+  not a wrong answer. The eager pull is now *scheduled* onto
+  `Context._pendingSignals` and drained at the same flush point as effects,
+  dedup'd by identity, so N writes produce exactly one re-materialization.
+  Pulls drain ahead of effects, so an effect body still observes the
+  materialized value. Clauses 1, 2, and 4 are unchanged.
+
+### Testing
+
+- The reactive-graph conformance runner replays the corpus's three signal
+  fixtures — `signal_materializes_without_a_read`,
+  `signal_materializes_once_per_batch`, and `dispose_signal_reverts_to_lazy` —
+  against both `Context` and `AsyncContext`. Adds the `signal`,
+  `dispose_signal`, and `batch` ops and the `computes_of` observable, the
+  cumulative per-node compute count that is the only thing distinguishing an
+  eager signal from the lazy memo it is built on. `signal_materializes_once_per_batch`
+  is what caught the batch defect above; the other two were already green.
+
 ## 0.24.0
 
 ### Added

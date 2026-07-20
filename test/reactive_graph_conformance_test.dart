@@ -26,8 +26,8 @@ import 'package:lazily/lazily.dart';
 ///
 /// The whole corpus: `cell`, `computed`, `effect`, `read`, `set_cell`,
 /// `dispose`, `begin_scope`, `end_scope`, `disarm`, `fanout`, `dispose_fanout`,
-/// `churn`, and `dispose_stale_handle`; both the `steps` and the `scenarios`
-/// shapes. Runnability is still derived from each fixture's own op stream
+/// `churn`, `dispose_stale_handle`, and the signal trio `signal` /
+/// `dispose_signal` / `batch`; both the `steps` and the `scenarios` shapes. Runnability is still derived from each fixture's own op stream
 /// rather than from a fixture allow-list, so an op added upstream skips *by
 /// name* instead of failing obscurely or — worse — being silently dropped.
 ///
@@ -66,14 +66,18 @@ const expectedFixtures = {
   'dispose_detaches_edges_both_directions.json',
   'read_after_dispose_is_an_error.json',
   'recycled_id_inherits_nothing.json',
+  'dispose_signal_reverts_to_lazy.json',
   'scope_teardown_equals_fold_of_disposals.json',
   'scoping_bounds_teardown_not_visibility.json',
+  'signal_materializes_once_per_batch.json',
+  'signal_materializes_without_a_read.json',
   'teardown_runs_members_in_reverse_creation_order.json',
   'transitive_invalidation_reaches_depth.json',
 };
 
 /// Ops this package can model. Anything else in a fixture skips it, by name.
 const supportedOps = {
+  'batch',
   'begin_scope',
   'cell',
   'churn',
@@ -81,12 +85,14 @@ const supportedOps = {
   'disarm',
   'dispose',
   'dispose_fanout',
+  'dispose_signal',
   'dispose_stale_handle',
   'effect',
   'end_scope',
   'fanout',
   'read',
   'set_cell',
+  'signal',
 };
 
 /// Assertion keys understood by [_replay]. `note` is prose. An unrecognised key
@@ -94,6 +100,7 @@ const supportedOps = {
 /// expectations and dart would keep reporting green against the loose ones.
 const knownExpectKeys = {
   'cleanup_order',
+  'computes_of',
   'dependencies_of',
   'dependents_of',
   'error',
@@ -145,6 +152,29 @@ abstract class _Model {
 
   void defineEffect(String id, List<String> reads, String? scope);
 
+  /// An eager signal: `sum(reads) + offset`, materialized at creation and
+  /// re-materialized after every invalidating write without a read.
+  void defineSignal(String id, List<String> reads, num offset, String? scope);
+
+  /// Dispose the eager puller ONLY (`#lzsignaleager` clause 4). Not a teardown
+  /// of the node: the value stays readable and reverts to lazy.
+  Future<void> disposeSignal(String id);
+
+  /// Every write inside ONE batch. Clause 3 is a claim about how many computes
+  /// N writes produce, so the batch boundary is the whole point of the op.
+  Future<void> runBatch(List<(String, num)> writes);
+
+  /// Cumulative compute invocations per node id, counted from the start of the
+  /// scenario and including the one at creation — the `computes_of` observable.
+  ///
+  /// This is the only thing that distinguishes an eager signal from the lazy
+  /// memo it is built on: the two return identical values for every read
+  /// sequence, and differ only in *when* compute ran. So it is counted by
+  /// wrapping the compute the runner itself synthesizes, at the one place the
+  /// invocation actually happens — never derived from the binding's own
+  /// bookkeeping, which is the thing under test.
+  Map<String, int> get computes;
+
   /// Throws [DisposedNodeError] when the node — or a node it reads through —
   /// has been disposed. That throw is the corpus's `read_after_dispose`.
   Future<num> read(String id);
@@ -192,6 +222,8 @@ class _SyncModel implements _Model {
   final List<String> runLog = [];
   @override
   final List<String> cleanupLog = [];
+  @override
+  final Map<String, int> computes = {};
 
   @override
   String get name => 'Context';
@@ -203,18 +235,46 @@ class _SyncModel implements _Model {
     nodes[id] = cell;
   }
 
+  /// The one place a synthesized compute body lives, so `computes_of` counts
+  /// exactly the invocations it claims to and `computed`/`signal` cannot drift.
+  num Function(Context) _body(String id, List<String> reads, num offset) =>
+      (_) {
+        computes[id] = (computes[id] ?? 0) + 1;
+        var sum = offset;
+        for (final r in reads) {
+          sum += _readNode(r);
+        }
+        return sum;
+      };
+
   @override
   void defineComputed(
       String id, List<String> reads, num offset, String? scope) {
-    final slot = Slot<num>(ctx, (_) {
-      var sum = offset;
-      for (final r in reads) {
-        sum += _readNode(r);
-      }
-      return sum;
-    }, name: id);
+    final slot = Slot<num>(ctx, _body(id, reads, offset), name: id);
     if (scope != null) scopes[scope]!.adopt(slot);
     nodes[id] = slot;
+  }
+
+  @override
+  void defineSignal(String id, List<String> reads, num offset, String? scope) {
+    // The package's own [Signal] — the surface the clauses are about. Not a
+    // composition assembled by the runner, which would test the runner.
+    final signal = Signal<num>(ctx, _body(id, reads, offset));
+    if (scope != null) scopes[scope]!.adopt(signal);
+    nodes[id] = signal;
+  }
+
+  @override
+  Future<void> disposeSignal(String id) async =>
+      (nodes[id] as Signal<num>).dispose();
+
+  @override
+  Future<void> runBatch(List<(String, num)> writes) async {
+    ctx.batch(() {
+      for (final (id, value) in writes) {
+        (nodes[id] as Cell<num>).value = value;
+      }
+    });
   }
 
   @override
@@ -240,6 +300,7 @@ class _SyncModel implements _Model {
   num _readNode(String id) {
     final node = nodes[id];
     if (node is Cell<num>) return node.value;
+    if (node is Signal<num>) return node.value;
     if (node is Slot<num>) return node();
     throw StateError('unknown or unreadable node $id');
   }
@@ -304,10 +365,17 @@ class _AsyncModel implements _Model {
   final Map<String, AsyncGraphNode> nodes = {};
   final Map<String, AsyncTeardownScope> scopes = {};
 
+  /// Eager pullers, by signal id. Kept apart from [nodes] because
+  /// `dispose_signal` disposes the puller while `read` must still reach the
+  /// backing slot — clause 4 is exactly that separation.
+  final Map<String, AsyncEffectHandle> pullers = {};
+
   @override
   final List<String> runLog = [];
   @override
   final List<String> cleanupLog = [];
+  @override
+  final Map<String, int> computes = {};
 
   @override
   String get name => 'AsyncContext';
@@ -319,18 +387,56 @@ class _AsyncModel implements _Model {
     nodes[id] = cell;
   }
 
+  /// The one place a synthesized compute body lives, so `computes_of` counts
+  /// exactly the invocations it claims to and `computed`/`signal` cannot drift.
+  Future<num> Function(AsyncComputeContext) _body(
+          String id, List<String> reads, num offset) =>
+      (cc) async {
+        computes[id] = (computes[id] ?? 0) + 1;
+        var sum = offset;
+        for (final r in reads) {
+          sum += await _readNode(cc, r);
+        }
+        return sum;
+      };
+
   @override
   void defineComputed(
       String id, List<String> reads, num offset, String? scope) {
-    final slot = ctx.computedAsync<num>((cc) async {
-      var sum = offset;
-      for (final r in reads) {
-        sum += await _readNode(cc, r);
-      }
-      return sum;
-    });
+    final slot = ctx.computedAsync<num>(_body(id, reads, offset));
     if (scope != null) scopes[scope]!.adopt(slot);
     nodes[id] = slot;
+  }
+
+  /// [AsyncContext] has no `Signal` primitive, so the signal is the
+  /// construction the spec calls recommended-not-required: a memo slot plus a
+  /// puller effect, five lines over the public API. Clauses 1-4 are
+  /// observations about behaviour, not about which nodes exist, so this is a
+  /// conforming construction and what it exercises is real — whether the async
+  /// batch boundary coalesces the puller's reruns.
+  @override
+  void defineSignal(String id, List<String> reads, num offset, String? scope) {
+    final slot = ctx.computedAsync<num>(_body(id, reads, offset));
+    if (scope != null) scopes[scope]!.adopt(slot);
+    nodes[id] = slot;
+    final puller = ctx.effectAsync((cc) async {
+      await cc.getAsync(slot);
+      return null;
+    });
+    if (scope != null) scopes[scope]!.adopt(puller);
+    pullers[id] = puller;
+  }
+
+  @override
+  Future<void> disposeSignal(String id) => pullers[id]!.disposeAsync();
+
+  @override
+  Future<void> runBatch(List<(String, num)> writes) async {
+    ctx.batch(() {
+      for (final (id, value) in writes) {
+        ctx.setCell(nodes[id] as AsyncCellHandle<num>, value);
+      }
+    });
   }
 
   @override
@@ -549,6 +655,22 @@ Future<_Report> _replay(
         final (value, err) = await readId(op['id'] as String);
         opValue = value;
         opError = err;
+      case 'signal':
+        model.defineSignal(
+          op['id'] as String,
+          (op['reads'] as List).cast<String>(),
+          (op['offset'] as num?) ?? 0,
+          scope,
+        );
+      case 'dispose_signal':
+        await model.disposeSignal(op['id'] as String);
+      case 'batch':
+        // One op carrying its writes, not a begin/end pair, so the engine
+        // needs no nesting state.
+        await model.runBatch([
+          for (final w in (op['writes'] as List).cast<Map<String, dynamic>>())
+            (w['id'] as String, w['value'] as num),
+        ]);
       case 'set_cell':
         await model.setCell(op['id'] as String, op['value'] as num);
       case 'dispose':
@@ -620,6 +742,18 @@ Future<_Report> _replay(
           for (final id in m.keys.toList()..sort()) {
             check('dependencies_of.$id', model.dependenciesOf(id), m[id]);
           }
+        case 'computes_of':
+          // Sorts before `read`/`readable`/`value`, and that is load-bearing
+          // here in the same way it already is for `dependents_of`: a lazy
+          // read recomputes, so evaluating a read first would bump the very
+          // count this key asserts. `dispose_signal_reverts_to_lazy` step 3
+          // asserts `readable` and `computes_of` in the same step precisely to
+          // catch a puller that survived disposal, and it only discriminates
+          // if the count is taken before the read.
+          final m = (want as Map).cast<String, dynamic>();
+          for (final id in m.keys.toList()..sort()) {
+            check('computes_of.$id', model.computes[id] ?? 0, m[id]);
+          }
         case 'error':
           if (want == null) {
             check('error', opError, false);
@@ -630,7 +764,16 @@ Future<_Report> _replay(
           }
         case 'value':
           if (expect_['error'] == null) {
-            check('value', opError ? 'read_after_dispose' : opValue, want);
+            if (type == 'read') {
+              check('value', opError ? 'read_after_dispose' : opValue, want);
+            } else {
+              // `value` on a non-read op asserts the value of the node the op
+              // names, observed after the op ran. The signal fixtures use it
+              // on the creation step. It sorts after `computes_of`, so the
+              // read this performs cannot inflate the count that step asserts.
+              final (v, err) = await readId(op['id'] as String);
+              check('value', err ? 'read_after_dispose' : v, want);
+            }
           }
         case 'read':
           final m = (want as Map).cast<String, dynamic>();
