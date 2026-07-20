@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ## Unreleased
 
+## 0.24.0
+
 ### Added
 
 - **Disposal, teardown scopes, and degree introspection (`#lzspecedgeindex`).**
