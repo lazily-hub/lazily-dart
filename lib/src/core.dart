@@ -73,6 +73,36 @@ const int edgeIndexPromoteThreshold = 128;
 /// a list must shed three quarters of its degree before it demotes.
 const int edgeIndexDemoteThreshold = edgeIndexPromoteThreshold ~/ 4;
 
+/// A node in a [Context]'s reactive graph (`#lzspecedgeindex`).
+///
+/// Sealed: [Slot] (and its subclasses [Memo] / `_SignalSlot`), [Cell],
+/// [Signal], and [Effect] are the only implementations, and the type cannot be
+/// implemented downstream. It exists so [Context.dependentCount],
+/// [Context.dependencyCount], [Context.disposeNode], and [TeardownScope] can
+/// accept any node kind *without* exposing the node's edge lists or its cache
+/// slot — the mirror of `lazily-rs`'s sealed `GraphNode` trait, which exposes a
+/// node id and nothing else.
+///
+/// The introspection surface is deliberately **counts, not lists**: a caller
+/// can assert on graph shape without a path to the internals and without any
+/// storage strategy (linear scan, promoted hash index) becoming part of the
+/// contract.
+sealed class GraphNode {}
+
+/// Thrown when a disposed node is read (`read_after_dispose`).
+///
+/// Disposal is not a value: a binding that answers a read on a torn-down node
+/// with its last-computed value, a zero, or `null` makes "torn down"
+/// indistinguishable from "legitimately this value", and a use-after-dispose
+/// bug then surfaces as a wrong number far from its cause.
+class DisposedNodeError extends StateError {
+  DisposedNodeError(this.node)
+      : super('read after dispose: $node has been disposed');
+
+  /// The node that was read.
+  final Object node;
+}
+
 /// A reactive scope: an identity-keyed value cache plus the computation stack.
 ///
 /// All [Slot]s, [Cell]s, and [Signal]s that should react to each other must be
@@ -118,6 +148,28 @@ class Context {
   /// Allocated once per [Context]; cleared at the end of each top-level cascade.
   final List<_ReactiveNode> _invalidateStack = [];
   int _invalidateNesting = 0;
+
+  /// Depth of the disposal-driven invalidation cascade (`#lzspecedgeindex`).
+  ///
+  /// Non-zero while [_invalidateDisposedDependents] is walking the cone left
+  /// behind by a teardown. The walk exists because detaching edges is not
+  /// enough: a dependent that still holds a cached value computed *through* the
+  /// disposed node would serve it forever, so the surviving cone must be
+  /// marked dirty and error on its next recompute (`lazily-rs` 5db90d2;
+  /// `lazily-js` had the identical bug in 4d20670).
+  ///
+  /// It is a depth counter rather than a flag so the eager members of the
+  /// family can consult it. While it is set the cascade is **mark-only**:
+  ///
+  /// - [_scheduleEffect] drops the effect. Disposal is not a publish; running
+  ///   an effect here re-enters a compute that reads the node being torn down,
+  ///   turning `dispose` into a throw and breaking teardown idempotence. The
+  ///   contract is "errors on the next recompute", and that recompute is driven
+  ///   by a real write.
+  /// - [Memo._invalidateInto] skips its equality recompute and propagates
+  ///   unconditionally, and `_SignalSlot.onInvalidate` skips its eager re-pull,
+  ///   for the same reason: both would recompute *through* the disposed node.
+  int _disposalDepth = 0;
 
   /// The number of cached slot values.
   int get size => _cachedCount;
@@ -255,9 +307,124 @@ class Context {
     }
   }
 
+  /// Mark the cone left behind by a disposal dirty, without scheduling
+  /// anything (`#lzspecedgeindex`).
+  ///
+  /// Reuses [_cascadeFrom] — the same iterative DFS every publish walks —
+  /// rather than a second traversal, so there is exactly one definition of
+  /// "transitively reached" in this library and the two cannot drift.
+  void _invalidateDisposedDependents(List<_ReactiveNode> roots) {
+    if (roots.isEmpty) return;
+    _disposalDepth++;
+    try {
+      for (final root in roots) {
+        if (root._disposed) continue;
+        _cascadeFrom(root);
+      }
+    } finally {
+      _disposalDepth--;
+    }
+  }
+
   void _scheduleEffect(Effect effect) {
+    // Disposal is not a publish — see [_disposalDepth].
+    if (_disposalDepth > 0) return;
     if (_scheduledEffects.add(effect)) {
       _pendingEffects.add(effect);
+    }
+  }
+
+  // -- Disposal and degree introspection (`#lzspecedgeindex`) ---------------
+
+  /// How many nodes currently depend on [node] — the size of its reverse edge
+  /// set.
+  ///
+  /// This is the observable the disposal contract is written against: a
+  /// subscribe/unsubscribe cycle that disposes what it creates must leave this
+  /// at its starting value, no matter how many cycles run. A binding that leaks
+  /// reports total-ever-created here instead of live-subscriber count.
+  ///
+  /// Returns 0 for a disposed node and for [Effect]s, which are pure sinks.
+  int dependentCount(GraphNode node) {
+    final n = node as _ReactiveNode;
+    if (n._disposed) return 0;
+    return n._dependents?.length ?? 0;
+  }
+
+  /// How many nodes [node] currently depends on — the size of its forward edge
+  /// set.
+  ///
+  /// Counterpart to [dependentCount]. Disposal must detach both directions, and
+  /// a binding that detaches only one leaves a dangling half-edge visible here.
+  ///
+  /// Returns 0 for a disposed node and for [Cell]s, which are pure sources.
+  int dependencyCount(GraphNode node) {
+    final n = node as _ReactiveNode;
+    if (n._disposed) return 0;
+    return n._dependencies?.length ?? 0;
+  }
+
+  /// Whether [node] has been torn down. A disposed node reads as a
+  /// [DisposedNodeError].
+  bool isNodeDisposed(GraphNode node) => (node as _ReactiveNode)._disposed;
+
+  /// Tear down [node], dispatching on its own kind.
+  ///
+  /// Detaches both edge directions, marks the surviving dependent cone dirty
+  /// (see [_invalidateDisposedDependents]), and makes the node read as a
+  /// [DisposedNodeError]. Idempotent: disposing an already-disposed node is a
+  /// no-op, so teardown paths compose.
+  ///
+  /// Without this a node is permanent. Dart handles are ordinary object
+  /// references and the graph holds a *strong* reverse edge to every dependent,
+  /// so a long-lived source retains every node that ever read it: dropping the
+  /// last user-held reference reclaims nothing, and a source's dependent list
+  /// keeps lengthening under subscribe/unsubscribe churn even though the live
+  /// subscriber count is constant. The cost is paid twice — memory, and
+  /// propagation, since every publish walks the whole list.
+  ///
+  /// Callers must ensure nothing still reads [node] in a live computation:
+  /// a dependent that does errors on its next recompute.
+  void disposeNode(GraphNode node) => (node as _ReactiveNode)._disposeNode();
+
+  /// Tear down a derived slot. See [disposeNode].
+  void disposeSlot(Slot<Object?> slot) => slot._disposeNode();
+
+  /// Tear down a source cell. See [disposeNode].
+  void disposeCell(Cell<Object?> cell) => cell._disposeNode();
+
+  /// Tear down an effect. See [disposeNode]; equivalent to [Effect.dispose].
+  void disposeEffect(Effect effect) => effect._disposeNode();
+
+  /// Open a teardown scope: nodes created through it are disposed when it ends.
+  ///
+  /// Grouping bounds *teardown*, not visibility — a scoped node reads
+  /// parent-owned and sibling-scope-owned nodes freely, and scoping never
+  /// restricts what an edge may point at.
+  ///
+  /// Same caveat as [disposeNode]: ending a scope tears down its nodes even if
+  /// something outside the scope still reads them, and that reader then errors
+  /// on its next recompute. Prefer [withScope] when the scope's lifetime is
+  /// lexical.
+  TeardownScope scope() => TeardownScope._(this);
+
+  /// Run [body] with a teardown scope that is ended when [body] returns, even
+  /// on a throw.
+  ///
+  /// This is the closest Dart gets to `lazily-rs`'s scope-ends-on-drop: Dart has
+  /// no destructor, so a scope's end has to be an explicit statement, and the
+  /// only way to make it unmissable is to own the bracket here.
+  ///
+  ///     final live = ctx.withScope((conn) {
+  ///       final a = conn.slot<int>((_) => topic.value + 1);
+  ///       return a();
+  ///     }); // `a` is disposed here
+  R withScope<R>(R Function(TeardownScope scope) body) {
+    final scope = this.scope();
+    try {
+      return body(scope);
+    } finally {
+      scope.end();
     }
   }
 
@@ -310,9 +477,13 @@ class Context {
 /// amortized O(1), demoting again only at [edgeIndexDemoteThreshold]
 /// (`#lzspecedgeindex`). The edge *set* is identical either way — dedup
 /// strategy is not observable.
-abstract class _ReactiveNode {
+abstract class _ReactiveNode implements GraphNode {
   List<_ReactiveNode>? _dependents;
   List<_ReactiveNode>? _dependencies;
+
+  /// Whether this node has been torn down (`#lzspecedgeindex`). A disposed node
+  /// has no edges in either direction and reads as a [DisposedNodeError].
+  bool _disposed = false;
 
   /// Hash index over [_dependents], mapping each dependent to its position in
   /// the list. Allocated only once the list crosses
@@ -419,6 +590,61 @@ abstract class _ReactiveNode {
     // promote threshold. A shared boundary would rebuild the index on every
     // recompute for a list oscillating by one at the threshold.
     if (deps.length <= edgeIndexDemoteThreshold) _dependentIndex = null;
+  }
+
+  /// Remove [dep] from this node's upstream edge list (identity match).
+  ///
+  /// Only disposal needs this. Every other path clears the whole upstream list
+  /// at once ([_detachUpstream]), which is why [_dependencyIndex] is a bare
+  /// membership [Set] and this is an O(degree) scan rather than the O(1)
+  /// swap-remove [_removeDependent] gets — a node is disposed once, but its
+  /// dependents are re-registered on every recompute.
+  void _removeDependency(_ReactiveNode dep) {
+    final deps = _dependencies;
+    if (deps == null) return;
+    deps.remove(dep);
+    _dependencyIndex?.remove(dep);
+  }
+
+  /// Hook run after this node has been detached from the graph. Slots evict
+  /// their cache here; effects run their pending cleanup.
+  void onDispose() {}
+
+  /// Tear this node out of the graph (`#lzspecedgeindex`).
+  ///
+  /// The order is load-bearing:
+  ///
+  /// 1. Mark disposed first, so the mark-only cascade in step 4 skips this node
+  ///    and so a re-entrant disposal (an [onDispose] cleanup that disposes its
+  ///    own scope) is a no-op rather than a second teardown.
+  /// 2. Detach *upstream* — remove this node from each dependency's dependent
+  ///    list. Skipping this is the upstream leak the disposal contract exists
+  ///    for: the source's dependent list grows without bound under churn.
+  /// 3. Detach *downstream* — remove this node from each dependent's dependency
+  ///    list, so no surviving node holds a dangling half-edge.
+  /// 4. Mark the surviving dependent cone dirty. This is the step that is easy
+  ///    to omit and that leaves a live reader frozen on a value it computed
+  ///    *through* this node; see [Context._disposalDepth].
+  void _disposeNode() {
+    if (_disposed) return;
+    _disposed = true;
+
+    final dependents = _dependents;
+    _dependents = null;
+    _dependentIndex = null;
+
+    _detachUpstream();
+    _dependencies = null;
+    _dependencyIndex = null;
+
+    if (dependents != null && dependents.isNotEmpty) {
+      for (final dependent in dependents) {
+        dependent._removeDependency(this);
+      }
+      ctx._invalidateDisposedDependents(dependents);
+    }
+
+    onDispose();
   }
 
   /// Register the currently-computing slot (if any) as a dependent of this
@@ -532,7 +758,14 @@ class Slot<T> extends _ReactiveNode {
   }
 
   /// Read (and cache if needed) the value. The object is callable: `slot()`.
+  ///
+  /// Throws [DisposedNodeError] if this slot has been disposed. The check comes
+  /// *before* [_track] deliberately: a reader that hits a disposed node must not
+  /// leave an edge pointing at it, so the throw happens before any edge is
+  /// registered and the reader's next recompute starts from a clean upstream
+  /// set.
   T call() {
+    if (_disposed) throw DisposedNodeError(this);
     _track(ctx);
     final gen = ctx._generation;
     if (_cacheGen == gen) {
@@ -568,6 +801,15 @@ class Slot<T> extends _ReactiveNode {
   void onInvalidate() => _uncache(ctx);
 
   @override
+  void onDispose() => _uncache(ctx);
+
+  /// Tear this slot out of the graph. See [Context.disposeNode].
+  void dispose() => _disposeNode();
+
+  /// Whether this slot has been disposed.
+  bool get isDisposed => _disposed;
+
+  @override
   String toString() => name != null ? 'Slot(${name!})' : 'Slot';
 }
 
@@ -592,13 +834,21 @@ class Cell<T> extends _ReactiveNode {
   T _value;
 
   /// The current value. Reading inside a computation subscribes the reader.
+  ///
+  /// Throws [DisposedNodeError] if this cell has been disposed —
+  /// `disposeCell` and `disposeSlot` share one read-after-dispose contract.
   T get value {
+    if (_disposed) throw DisposedNodeError(this);
     _track(ctx);
     return _value;
   }
 
   /// Set a new value. If `newValue != _value`, dependents are invalidated.
+  ///
+  /// Throws [DisposedNodeError] on a disposed cell: a write that silently
+  /// vanishes is the same failure mode as a read that silently returns stale.
   set value(T newValue) {
+    if (_disposed) throw DisposedNodeError(this);
     if (newValue != _value) {
       _value = newValue;
       ctx._cellChanged(this);
@@ -630,6 +880,17 @@ class Cell<T> extends _ReactiveNode {
   void onInvalidate() {
     // Cells hold their value directly; nothing to evict.
   }
+
+  /// Tear this cell out of the graph. See [Context.disposeNode].
+  ///
+  /// Cells are pure sources with no dependencies, so only downstream edges are
+  /// detached — but the surviving dependent cone is still marked dirty, or a
+  /// dependent that cached a value read through this cell would serve it
+  /// forever instead of erroring.
+  void dispose() => _disposeNode();
+
+  /// Whether this cell has been disposed.
+  bool get isDisposed => _disposed;
 
   @override
   String toString() => 'Cell($_value)';
@@ -723,6 +984,10 @@ class _SignalSlot<T> extends Slot<T> {
     // eagerly recompute the owning signal (which re-establishes upstream
     // edges and cascades downstream only if the value changed).
     _uncache(ctx);
+    // A disposal cascade is mark-only: re-pulling here would recompute
+    // *through* the node currently being torn down. See
+    // [Context._disposalDepth].
+    if (ctx._disposalDepth > 0) return;
     signal?._eagerRecompute();
   }
 }
@@ -762,35 +1027,40 @@ class Effect extends _ReactiveNode {
   final Context ctx;
   final EffectRun _run;
   void Function()? _cleanup;
-  bool _active = true;
   bool _running = false;
 
-  /// Remove the eager observer. Invokes the last cleanup, then unsubscribes
-  /// from all dependencies. Idempotent.
-  void dispose() {
-    if (!_active) return;
-    _active = false;
+  /// Remove the eager observer. Unsubscribes from all dependencies, then
+  /// invokes the last cleanup. Idempotent.
+  ///
+  /// Routes through the shared [_disposeNode] so an effect tears down by
+  /// exactly the same rules as a slot or a cell — the point of
+  /// `disposeScope_eq_disposeAll` is that a scope names a set and a moment and
+  /// introduces no disposal semantics of its own, which only holds if the three
+  /// kinds share one teardown.
+  void dispose() => _disposeNode();
+
+  @override
+  void onDispose() {
     // Do NOT remove from `_pendingEffects` by value — that would shift entries
     // and corrupt the FIFO head pointer. A queued-but-disposed effect is a
-    // no-op when popped (`_rerun` guards on `_active`), and `_detachUpstream`
-    // below ensures its `onInvalidate` never fires again.
+    // no-op when popped (`_rerun` guards on `_disposed`), and the upstream
+    // detach in `_disposeNode` ensures its `onInvalidate` never fires again.
     if (Context.naivePendingScan) {
       // Naive form under audit, mirroring lazily-kt `disposeEffect`'s
       // `ArrayDeque.indexOf`. Result discarded.
       ctx._naiveScanSink += ctx._pendingEffects.indexOf(this);
     }
     ctx._scheduledEffects.remove(this);
-    _detachUpstream();
     final c = _cleanup;
     _cleanup = null;
     if (c != null) c();
   }
 
   /// Whether the effect is still active (not disposed).
-  bool get isActive => _active;
+  bool get isActive => !_disposed;
 
   void _rerun() {
-    if (!_active || _running) return;
+    if (_disposed || _running) return;
     _running = true;
     try {
       _detachUpstream();
@@ -814,7 +1084,7 @@ class Effect extends _ReactiveNode {
   }
 
   @override
-  String toString() => 'Effect(${_active ? 'active' : 'disposed'})';
+  String toString() => 'Effect(${_disposed ? 'disposed' : 'active'})';
 }
 
 /// A lazy, cached, dependency-tracking computation with an equality guard.
@@ -842,6 +1112,18 @@ class Memo<T> extends Slot<T> {
   @override
   void _invalidateInto(List<_ReactiveNode> stack) {
     if (_guardActive) return;
+    if (ctx._disposalDepth > 0) {
+      // A disposal cascade is mark-only, so the equality guard is skipped and
+      // the cascade propagates unconditionally. Recomputing here to *check*
+      // equality would read through the node being torn down and throw out of
+      // `dispose`. Propagating unconditionally is the conservative direction:
+      // dependents are marked dirty and recompute (and error, if they still
+      // name the disposed node) on their next read. See
+      // [Context._disposalDepth].
+      super._invalidateInto(stack);
+      _uncache(ctx);
+      return;
+    }
     _guardActive = true;
     try {
       _detachUpstream();
@@ -884,4 +1166,121 @@ class Memo<T> extends Slot<T> {
     // Memo manages its own cache lifecycle inside [_invalidate]; the
     // default eviction is intentionally bypassed.
   }
+}
+
+/// A teardown scope over a [Context]: nodes created through it are disposed
+/// when it ends (`#lzspecedgeindex`).
+///
+/// ## Why this is not "scope-ends-on-drop"
+///
+/// `lazily-rs` ends a scope in `Drop`, so the scope's lifetime is the block's
+/// and there is nothing to forget. Dart has no destructor and no deterministic
+/// finalization — `Finalizer` is explicitly best-effort and may never run — so
+/// that shape does not transfer, and a scope whose teardown depends on the GC
+/// would be strictly worse than no scope at all: the leak it exists to prevent
+/// would come back non-deterministically.
+///
+/// The end therefore has to be a statement, and this class offers it in the two
+/// shapes real callers need:
+///
+/// - [Context.withScope] brackets the scope around a callback and ends it in a
+///   `finally`. This is the direct analogue of the Rust block scope and the
+///   idiom Dart already uses wherever a lifetime is lexical, and it is what to
+///   reach for by default.
+/// - [end] ends the scope explicitly, for the case `withScope` cannot express:
+///   a scope whose lifetime is a *connection*, a *subscription*, or a
+///   *route* — opened in one callback and ended in another, across an
+///   asynchronous gap. That is the primary use of scopes, so it cannot be
+///   callback-only.
+///
+/// Both are idempotent, so the two compose: a scope ended early inside
+/// `withScope` is not ended twice.
+///
+/// ## What it stores
+///
+/// Just the node references, in creation order. Teardown walks them in
+/// **reverse** creation order — dependents before what they read — so the scope
+/// never transiently dangles inside itself while tearing down. Graph state is
+/// order-independent (`disposeAll_order_independent` in lazily-formal), but
+/// effect *cleanups* are side effects, and their order is observable; ending a
+/// scope is proved observationally equal to disposing each member
+/// (`disposeScope_eq_disposeAll`).
+class TeardownScope {
+  TeardownScope._(this.ctx);
+
+  /// The context this scope belongs to.
+  final Context ctx;
+
+  final List<GraphNode> _owned = [];
+  bool _ended = false;
+
+  /// How many nodes this scope currently owns.
+  int get length => _owned.length;
+
+  /// Whether this scope owns nothing — either because nothing was created
+  /// through it, because it was [disarm]ed, or because it has [end]ed.
+  bool get isEmpty => _owned.isEmpty;
+
+  /// Whether this scope owns at least one node.
+  bool get isNotEmpty => _owned.isNotEmpty;
+
+  /// Whether [end] has already run.
+  bool get isEnded => _ended;
+
+  /// Take ownership of an existing [node], so this scope disposes it at
+  /// end-of-life.
+  ///
+  /// The factories below are the ordinary path; this exists for nodes built by
+  /// a helper that does not know about scopes. A node adopted twice by the same
+  /// scope is disposed once (disposal is idempotent), and adopting into an
+  /// already-ended scope is a no-op rather than an immediate disposal — the
+  /// scope's moment has passed.
+  T adopt<T extends GraphNode>(T node) {
+    if (!_ended) _owned.add(node);
+    return node;
+  }
+
+  /// Create a source [Cell] owned by this scope.
+  Cell<T> cell<T>(T initialValue) => adopt(Cell<T>(ctx, initialValue));
+
+  /// Create a lazily-computed [Slot] owned by this scope.
+  Slot<T> slot<T>(T Function(Context ctx) compute, {String? name}) =>
+      adopt(Slot<T>(ctx, compute, name: name));
+
+  /// Create a [Memo] owned by this scope.
+  Memo<T> memo<T>(T Function(Context ctx) compute, {String? name}) =>
+      adopt(Memo<T>(ctx, compute, name: name));
+
+  /// Register an [Effect] owned by this scope.
+  Effect effect(EffectRun run) => adopt(Effect(ctx, run));
+
+  /// Cancel this scope's teardown: ending it afterwards disposes nothing, and
+  /// its nodes revert to plain context ownership — the state every unscoped
+  /// node is already in.
+  ///
+  /// The nodes themselves are untouched: they keep their values, keep their
+  /// edges in both directions, keep propagating, and remain individually
+  /// disposable. The only thing that changes is whether this scope fires at
+  /// end-of-life, which is what the name says — the same sense as defusing a
+  /// guard.
+  void disarm() => _owned.clear();
+
+  /// Dispose every node this scope owns, in reverse creation order.
+  ///
+  /// Idempotent, and safe over members whose own dependencies were already
+  /// disposed: teardown flows from the scope's owned set, not from
+  /// reachability.
+  void end() {
+    if (_ended) return;
+    _ended = true;
+    // Reverse creation order: dependents before what they read.
+    for (var i = _owned.length - 1; i >= 0; i--) {
+      ctx.disposeNode(_owned[i]);
+    }
+    _owned.clear();
+  }
+
+  @override
+  String toString() =>
+      'TeardownScope(${_ended ? 'ended' : '${_owned.length} owned'})';
 }

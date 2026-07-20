@@ -8,6 +8,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ## Unreleased
 
+### Added
+
+- **Disposal, teardown scopes, and degree introspection (`#lzspecedgeindex`).**
+  Ported from `lazily-rs`, the only binding that had shipped these APIs, and
+  landed on **both** graphs dart ships.
+  - `Context.disposeNode` / `disposeSlot` / `disposeCell` / `disposeEffect`,
+    plus `Slot.dispose()` and `Cell.dispose()`. Idempotent. Detaches both edge
+    directions and marks the surviving dependent cone dirty; reading a disposed
+    node throws the new `DisposedNodeError`. Without disposal a node is
+    permanent — dart handles are ordinary references and the graph holds a
+    *strong* reverse edge to every dependent, so a source's dependent list grows
+    without bound under subscribe/unsubscribe churn.
+  - `Context.scope()` -> `TeardownScope` with `end()`, `disarm()`, `adopt()`,
+    `length`, and the node factories, plus `Context.withScope(body)`. Dart has
+    no destructor, so `lazily-rs`'s scope-ends-on-drop does not transfer:
+    `withScope` is the lexical form and `end()` covers the scope whose lifetime
+    is a connection or subscription spanning an async gap. Teardown is reverse
+    creation order.
+  - `Context.dependentCount` / `dependencyCount` / `isNodeDisposed` over a new
+    sealed `GraphNode` — counts, never edge lists, so graph shape is assertable
+    without a path to the internals and no storage strategy is pinned by the
+    contract.
+  - The same surface on `AsyncContext`: `disposeNode`, `dependentCount`,
+    `dependencyCount`, `isNodeDisposed`, `isEffectActive`, `scope()` ->
+    `AsyncTeardownScope`, `withScope`, and a sealed `AsyncGraphNode`.
+
+### Fixed
+
+- **`AsyncContext` effect disposal leaked its upstream edges.**
+  `disposeAsync` removed the effect from the context's effect set but left it in
+  `_dependents[dep]` for every dependency it had read, so a
+  subscribe/unsubscribe cycle grew each source's dependent set without bound
+  even though the live subscriber count was constant — the leak
+  `churn_returns_to_baseline` pins.
+
+### Testing
+
+- `reactive_graph_conformance_test.dart` now replays **all 9** reactive-graph
+  fixtures against **both** `Context` and `AsyncContext` (was 1 of 9 against
+  each). Adds every remaining op (`effect`, `dispose`, `begin_scope`,
+  `end_scope`, `disarm`, `fanout`, `dispose_fanout`, `churn`,
+  `dispose_stale_handle`), every remaining assertion kind, the `scenarios`
+  fixture shape, and the `observationally_equal` relation. A divergence ledger
+  asserts in both directions: 220 ops and 290 assertions, zero divergences.
+- Adds direct tests for the two disposal semantics the shared corpus does not
+  discriminate — that effects reached by the disposal walk are not scheduled,
+  and that scope teardown runs in reverse creation order. Both were established
+  by mutation: each mutant left the whole 9-fixture corpus green.
+
 ### Removed — the `Cell` observer API (BREAKING)
 
 - **`Cell.subscribe` and its disposer are gone.** Observation in a reactive
