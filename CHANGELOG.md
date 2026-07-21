@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ## Unreleased
 
+### Changed
+
+- **The Cell kernel: `SourceCell` / `FormulaCell` over the `Cell` genus
+  (`#lzcellkernel`).** One genus, `Cell<T, K>`, over two value kinds — a node's
+  value comes either from *outside* it (`SourceCell`, the writable `set`/`merge`
+  kind; the concrete class keeps the name `Cell`) or from *upstream* of it
+  (`FormulaCell`, computed via a formula) — with `Effect` the value-less sink.
+  New surface: `source(ctx, v)`, `formula(ctx, f)` (lazy and guarded by
+  default), and `formula(ctx, f).drive()` (eager). `Slot` is retained as the
+  storage/computation position and the unguarded lazy computed value.
+- **The eager construction is now `formula(ctx, f).drive()`, retiring the
+  standalone `Signal` node.** Drivenness is graph state — a `_driven` bit plus a
+  `_drivenBy` side table holding the puller `Effect`, cleared on `undrive` /
+  disposal (`reactive-graph.md` §9.3.3). `.drive()` is idempotent and returns
+  the same handle. The puller is now an *ordinary scheduled `Effect`* over a
+  plain backing `Slot` rather than a bespoke `_SignalSlot` + `_pendingSignals`
+  lane: because the only way to make a formula eager is to attach that scheduled
+  effect, the `#lzsignaleager` per-write puller is structurally unrepresentable.
+  Clause-3 coalescing (once per batch) is inherited from the effect scheduler;
+  the `signal_*` conformance fixtures stay green. Dart has no compile-time
+  read/write split (design §4) — the kind is convention, never a runtime gate.
+  `Signal(ctx, f)` / `Signal<T>` are retained as thin back-compat aliases for a
+  driven `FormulaCell`.
+
 ### Fixed
 
 - **`Signal` re-materialized once per invalidated source inside a `batch`
@@ -21,7 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
   `Context._pendingSignals` and drained at the same flush point as effects,
   dedup'd by identity, so N writes produce exactly one re-materialization.
   Pulls drain ahead of effects, so an effect body still observes the
-  materialized value. Clauses 1, 2, and 4 are unchanged.
+  materialized value. Clauses 1, 2, and 4 are unchanged. *(Superseded within
+  Unreleased by the Cell-kernel migration above: the puller is now an ordinary
+  scheduled `Effect`, so the `_SignalSlot` and `_pendingSignals` lane are gone
+  and clause-3 coalescing comes from the effect scheduler. The fixtures below
+  still pin the behaviour.)*
 
 ### Testing
 
@@ -32,7 +60,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
   `dispose_signal`, and `batch` ops and the `computes_of` observable, the
   cumulative per-node compute count that is the only thing distinguishing an
   eager signal from the lazy memo it is built on. `signal_materializes_once_per_batch`
-  is what caught the batch defect above; the other two were already green.
+  is what caught the batch defect above; the other two were already green. The
+  runner now dual-accepts the Cell-kernel `drive` / `undrive` ops alongside
+  `signal` / `dispose_signal`, and `defineSignal` builds `formula(...).drive()`
+  (`#lzcellkernel`); no fixtures were added or renamed.
 
 ## 0.24.0
 

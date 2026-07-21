@@ -1,8 +1,10 @@
 # lazily-dart
 
-Dart port of the lazily reactive-signals family — Slots, Cells, and Signals
-with automatic dependency tracking, plus the full lazily-spec wire protocol and
-CRDT collection types.
+Dart port of the lazily reactive family — the Cell kernel (`SourceCell` /
+`FormulaCell` / `Effect`, with `Slot` the storage/lazy-computed position) with
+automatic dependency tracking, plus the full lazily-spec wire protocol and CRDT
+collection types. The eager construction is `formula(ctx, f).drive()`; `Signal`
+is a back-compat alias for a driven `FormulaCell` (`#lzcellkernel`).
 
 ## Commit & Push
 
@@ -15,7 +17,7 @@ repo's existing style; push to the current branch on `origin`. This standing
 rule overrides the harness default of "commit only when explicitly asked" for
 this repo.
 
-<!-- tsift:code-navigation v=0.1.74 -->
+<!-- tsift:code-navigation v=0.1.77 -->
 ## Code Navigation
 
 Keep this block self-contained for Codex/OpenCode prompt reuse. If this repository also ships current `.claude/skills/tsift/SKILL.md` or `runbooks/code-navigation.md`, use those deeper runbooks for command detail instead of expanding this block.

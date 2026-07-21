@@ -1,22 +1,35 @@
 # lazily (Dart)
 
-Lazy reactive primitives for Dart — **Slots, Cells, and Signals** with automatic
-dependency tracking and cache invalidation. Pure Dart: Flutter, web, and native.
+Lazy reactive primitives for Dart — the **Cell kernel** (`SourceCell`,
+`FormulaCell`, `Effect`) with automatic dependency tracking and cache
+invalidation. Pure Dart: Flutter, web, and native.
 
 A port of the lazily reactive family ([`lazily-rs`][rs], [`lazily-py`][py],
 [`lazily-js`][js], [`lazily-zig`][zig]).
 
-## The reactive family
+## The Cell kernel
 
-- **Slot** — a lazily-computed cached value that automatically tracks its
-  dependencies and recomputes only when read after an upstream change.
-- **Cell** — a mutable source value that invalidates dependent Slots/Signals
-  when it changes.
-- **Signal** — an *eager* derived value that recomputes the instant a dependency
-  changes, with no intermediate unset value.
+One genus, `Cell<T, K>`, over two value kinds — a node's value comes either from
+*outside* it or from *upstream* of it (`#lzcellkernel`):
 
-Values are **lazy by default**. When you need eager push-style semantics, reach
-for `Signal`.
+- **`SourceCell`** (the concrete class `Cell`) — a value written from *outside*
+  (`set` / `merge`); the writable kind. Construct with `source(ctx, v)` or
+  `Cell<T>(ctx, v)`. A `MergeCell` is a `SourceCell` whose write folds under a
+  policy (`Cell ≡ MergeCell(KeepLatest)`).
+- **`FormulaCell`** — a value computed from *upstream*, via a formula. Construct
+  with `formula(ctx, f)`; **lazy and guarded by default**. Make it *eager* with
+  `formula(ctx, f).drive()` — the driven form re-materializes immediately on
+  every upstream change.
+- **`Effect`** — a value-less sink, outside the hierarchy; nothing can depend on
+  it.
+
+`Slot` is retained as the storage/computation position and the unguarded lazy
+computed value. Dart has **no compile-time read/write split**: the kind is
+convention — a `SourceCell` has `set` / `merge`, a `FormulaCell` does not.
+
+Values are **lazy by default**. When you need eager push-style semantics, drive a
+`FormulaCell`. `Signal(ctx, f)` is retained as a back-compat alias for
+`formula(ctx, f).drive()`.
 
 ## Usage
 
@@ -34,8 +47,12 @@ print(sum()); // 5
 a.value = 10;
 print(sum()); // 13
 
-// Eager: recomputes immediately when a dependency changes.
-final parity = Signal<String>(ctx, (_) => a.value.isEven ? 'even' : 'odd');
+// A guarded, lazy derived value.
+final label = formula(ctx, (_) => 'sum=${sum()}');
+print(label.value); // sum=13
+
+// Eager: driving re-materializes immediately when a dependency changes.
+final parity = formula(ctx, (_) => a.value.isEven ? 'even' : 'odd').drive();
 print(parity.value); // even
 a.value = 11;
 print(parity.value); // odd (already updated before the read)
@@ -209,7 +226,7 @@ notes and platform carve-outs lives in
 <!-- coverage-table:start -->
 | Feature | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: |
-| Reactive graph — core `Cell` / `Slot` / `Effect` (+ derived `Signal` = `Slot.eager`) / memo / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Reactive graph — kernel `Cell<T, K>` (`SourceCell` / `FormulaCell` / `Effect`) + driven `FormulaCell` (`formula().drive()`) / guarded formulas / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Keyed-map materialization (`SlotMap`) — mint-on-access derived slots: transparency + deferral (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Thread-safe keyed map (`ThreadSafeSlotMap`) — `Send + Sync` + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Async keyed map (`AsyncSlotMap`) — eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -224,7 +241,7 @@ notes and platform carve-outs lives in
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Broadcast topic (`TopicCell`) — independent cursors + durable replay + safe GC (`#lztopiccell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Competing-consumer work queue (`WorkQueueCell`) — exclusive leases + ack/nack + redelivery + DLQ (`#lzworkqueue`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Merge algebra + `MergeCell` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ MergeCell<KeepLatest>`, `Reactive`/`Source` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Merge algebra + `SourceCell<T, M>` — associative `MergePolicy` (`KeepLatest`/`Sum`/`Max`/`SetUnion`/`RawFifo`), `Cell ≡ SourceCell<KeepLatest>`, read-genus/write-`Source<M>` split (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | RelayCell — conflating relay + `BackpressurePolicy` + `SpillStore` + `Transport` + Inbox/Outbox + Rate/Window/Expiry/Priority/keyed policies (`#relaycell`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Free-text character CRDT (`TextCrdt`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `TextCrdt` delta sync (`version_vector` / `delta_since` / `apply_delta`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -302,7 +319,7 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 
 | Layer | Where |
 |-------|-------|
-| Reactive core (`Cell` / `Slot` / `Signal` / `Effect` / `Memo` / `batch`) | `package:lazily/lazily.dart` |
+| Reactive core — Cell kernel (`SourceCell`/`Cell` / `FormulaCell`+`formula`/`.drive()` / `Effect` / `Slot` / `Memo` / `batch`; `Signal` back-compat alias) | `package:lazily/lazily.dart` |
 | Keyed cell collections (`ReactiveMap` / `CellMap` / `SlotMap` / `CellTree` / reconciliation) | `package:lazily/lazily.dart` |
 | Flat state machine + Harel state charts | `package:lazily/lazily.dart` |
 | TextCrdt (char CRDT) + delta sync | `package:lazily/lazily.dart` |

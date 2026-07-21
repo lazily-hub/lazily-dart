@@ -85,14 +85,20 @@ const supportedOps = {
   'disarm',
   'dispose',
   'dispose_fanout',
+  // `dispose_signal` / `signal` are the pre-kernel spellings; `undrive` /
+  // `drive` are the Cell-kernel spellings dual-accepted alongside them
+  // (`#lzcellkernel`): a driven `FormulaCell` is the former `Signal`, and
+  // `.drive()` / `.undrive()` are `signal` / `dispose_signal`.
   'dispose_signal',
   'dispose_stale_handle',
+  'drive',
   'effect',
   'end_scope',
   'fanout',
   'read',
   'set_cell',
   'signal',
+  'undrive',
 };
 
 /// Assertion keys understood by [_replay]. `note` is prose. An unrecognised key
@@ -257,16 +263,18 @@ class _SyncModel implements _Model {
 
   @override
   void defineSignal(String id, List<String> reads, num offset, String? scope) {
-    // The package's own [Signal] — the surface the clauses are about. Not a
-    // composition assembled by the runner, which would test the runner.
-    final signal = Signal<num>(ctx, _body(id, reads, offset));
+    // The package's own eager construction: a driven [FormulaCell]. The Cell
+    // kernel retires the standalone `Signal`, so the eager surface the clauses
+    // are about is `formula(...).drive()` — not a composition assembled by the
+    // runner, which would test the runner.
+    final signal = formula(ctx, _body(id, reads, offset)).drive();
     if (scope != null) scopes[scope]!.adopt(signal);
     nodes[id] = signal;
   }
 
   @override
   Future<void> disposeSignal(String id) async =>
-      (nodes[id] as Signal<num>).dispose();
+      (nodes[id] as FormulaCell<num>).undrive();
 
   @override
   Future<void> runBatch(List<(String, num)> writes) async {
@@ -300,7 +308,7 @@ class _SyncModel implements _Model {
   num _readNode(String id) {
     final node = nodes[id];
     if (node is Cell<num>) return node.value;
-    if (node is Signal<num>) return node.value;
+    if (node is FormulaCell<num>) return node.value;
     if (node is Slot<num>) return node();
     throw StateError('unknown or unreadable node $id');
   }
@@ -655,7 +663,11 @@ Future<_Report> _replay(
         final (value, err) = await readId(op['id'] as String);
         opValue = value;
         opError = err;
+      // `signal` and its Cell-kernel spelling `drive` both build a driven
+      // `FormulaCell` (`#lzcellkernel`); `dispose_signal` and `undrive` both
+      // stop eager recomputation and revert to lazy.
       case 'signal':
+      case 'drive':
         model.defineSignal(
           op['id'] as String,
           (op['reads'] as List).cast<String>(),
@@ -663,6 +675,7 @@ Future<_Report> _replay(
           scope,
         );
       case 'dispose_signal':
+      case 'undrive':
         await model.disposeSignal(op['id'] as String);
       case 'batch':
         // One op carrying its writes, not a begin/end pair, so the engine
