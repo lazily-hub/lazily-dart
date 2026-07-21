@@ -60,11 +60,12 @@ List<BenchmarkResult> runBenchmarkSuite({int iterations = 10000}) {
       a.value = 10;
       sum();
     }, iterations: iterations),
-    benchmark('Memo equality guard (cache hit)', () {
+    benchmark('Computed equality guard (cache hit)', () {
       final ctx = Context();
       final src = Cell<int>(ctx, 4);
-      final parity = Memo<String>(ctx, (_) => src.value.isEven ? 'even' : 'odd');
-      src.value = 6; // still even — memo suppresses
+      final parity =
+          computed<String>(ctx, (_) => src.value.isEven ? 'even' : 'odd');
+      src.value = 6; // still even — the guard suppresses
       parity();
     }, iterations: iterations),
     benchmark('batch coalesce (10 cells)', () {

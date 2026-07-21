@@ -64,11 +64,12 @@ void main() {
     });
   });
 
-  group('Memo', () {
+  group('Computed (guarded)', () {
     test('suppresses downstream when recomputed value is equal', () {
       final ctx = Context();
       final width = Cell<int>(ctx, 4);
-      final parity = Memo<String>(ctx, (_) => width.value.isEven ? 'even' : 'odd');
+      final parity =
+          computed<String>(ctx, (_) => width.value.isEven ? 'even' : 'odd');
       var effectRuns = 0;
       Effect(ctx, (_) {
         parity();
@@ -76,10 +77,11 @@ void main() {
         return null;
       });
       expect(effectRuns, 1);
-      // 4 -> 6: still even — memo suppresses cascade, effect does NOT rerun.
+      // 4 -> 6: still even — the guard suppresses the cascade, effect does NOT
+      // rerun.
       width.value = 6;
       expect(effectRuns, 1);
-      // 6 -> 7: odd — memo value changed, effect reruns.
+      // 6 -> 7: odd — computed value changed, effect reruns.
       width.value = 7;
       expect(effectRuns, 2);
     });
@@ -88,7 +90,7 @@ void main() {
       final ctx = Context();
       final a = Cell<int>(ctx, 2);
       final b = Cell<int>(ctx, 3);
-      final sum = Memo<int>(ctx, (_) => a.value + b.value);
+      final sum = computed<int>(ctx, (_) => a.value + b.value);
       expect(sum(), 5);
       a.value = 10;
       expect(sum(), 13);
@@ -97,8 +99,8 @@ void main() {
     test('cascades normally when value changes', () {
       final ctx = Context();
       final src = Cell<int>(ctx, 1);
-      final doubled = Memo<int>(ctx, (_) => src.value * 2);
-      final quadrupled = Memo<int>(ctx, (_) => doubled() * 2);
+      final doubled = computed<int>(ctx, (_) => src.value * 2);
+      final quadrupled = computed<int>(ctx, (_) => doubled() * 2);
       expect(quadrupled(), 4);
       src.value = 5;
       expect(quadrupled(), 20);

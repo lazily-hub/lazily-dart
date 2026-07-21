@@ -1,9 +1,9 @@
 /// Memoized semantic tree — a reactive, incrementally-memoized fold tree.
 ///
-/// One [Memo] slot per node folds `(node value, [child derived values])`.
+/// One guarded [Computed] per node folds `(node value, [child derived values])`.
 /// Editing one node recomputes only its **ancestor chain**; a sibling subtree's
 /// derived slot stays cached. A node edit that does not change the folded value
-/// does not re-run a downstream consumer (the [Memo] equality guard).
+/// does not re-run a downstream consumer (the [Computed] equality guard).
 ///
 /// Composes over a reactive [Context]. Mirrors `lazily-js/src/sem-tree.js`.
 /// Conforms to `lazily-spec` `conformance/collections/semtree_incremental.json`.
@@ -38,10 +38,10 @@ class _SemNode {
   _SemNode(this.id);
   final String id;
 
-  late Cell<Object?> valueCell;
-  late Cell<List<String>> childKeysCell;
-  final Map<String, Memo<Object?>> childSlots = {};
-  Memo<Object?>? slot;
+  late Source<Object?> valueCell;
+  late Source<List<String>> childKeysCell;
+  final Map<String, Computed<Object?>> childSlots = {};
+  Computed<Object?>? slot;
 }
 
 /// A memoized semantic tree.
@@ -71,7 +71,7 @@ class SemTree<V, D> {
 
   _SemNode _build(TreeNodeSpec spec) {
     final node = _SemNode(spec.id);
-    node.valueCell = Cell<Object?>(_ctx, spec.value);
+    node.valueCell = Source<Object?>(_ctx, spec.value);
     _nodes[spec.id] = node;
 
     final childOrder = <String>[];
@@ -87,10 +87,10 @@ class SemTree<V, D> {
       }
     }
 
-    node.childKeysCell = Cell<List<String>>(_ctx, childOrder);
+    node.childKeysCell = Source<List<String>>(_ctx, childOrder);
 
-    // Register the memo AFTER childKeysCell is set, so the memo observes it.
-    node.slot = Memo<Object?>(_ctx, (_) {
+    // Register the computed AFTER childKeysCell is set, so it observes it.
+    node.slot = Computed<Object?>(_ctx, (_) {
       final v = node.valueCell.value as V;
       final keys = node.childKeysCell.value;
       final ds = <D>[];
@@ -144,8 +144,8 @@ class SemTree<V, D> {
   }
 
   /// The root slot handle.
-  Memo<Object?> rootHandle() => _nodes[_rootId]!.slot!;
+  Computed<Object?> rootHandle() => _nodes[_rootId]!.slot!;
 
   /// The slot handle for node [id], or null if absent.
-  Memo<Object?>? nodeHandle(String id) => _nodes[id]?.slot;
+  Computed<Object?>? nodeHandle(String id) => _nodes[id]?.slot;
 }

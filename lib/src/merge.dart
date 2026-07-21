@@ -1,13 +1,18 @@
-// Phase 1 of the RelayCell backpressure plan (#relaycell) — the merge algebra
-// and the Reactive/Source read/write split.
+// Phase 1 of the RelayCell backpressure plan (#relaycell) — the merge algebra.
 //
 // See lazily-spec/docs/reactive-graph.md § "MergeCell and the merge algebra" and
 // relaycell-backpressure-analysis.md §4.0/§4.3. A merge policy is an associative
 // fold ⊕: T×T→T; the properties it satisfies (associativity always; commutativity
 // = reordering tax; idempotency = durability tax) select which overflow behaviour
-// is sound. MergeCell generalizes a plain Cell — Cell ≡ MergeCell(KeepLatest) —
-// a source whose write is a merge. Backed by an ordinary cell, so it inherits the
-// Phase-0 != store-guard + store-without-cascade.
+// is sound. MergeCell generalizes a plain [Source] — Source ≡ MergeCell(KeepLatest)
+// — a source whose write is a merge. Backed by an ordinary [Source], so it
+// inherits the Phase-0 != store-guard + store-without-cascade.
+//
+// Cell-kernel v2 (`#lzcellkernel`): the read/write split is now embodied by the
+// concrete handles — [Source] (get/set/merge) and `Computed` (get) — so the
+// former `Reactive<T>` / `Source<T>` *interfaces* are gone (`Reactive` is an
+// adjective, not a type). [MergeCell] is a standalone policy wrapper over a
+// [Source].
 
 import 'core.dart';
 
@@ -66,39 +71,26 @@ MergePolicy<List<E>> rawFifo<E>() => MergePolicy(
       conflates: false,
     );
 
-/// The read supertype: `get` (analysis §4.0). Every reader satisfies it.
-abstract interface class Reactive<T> {
-  T get();
-}
-
-/// A writable [Reactive] — adds `set` (replace) and `merge` (fold under policy).
-abstract interface class Source<T> implements Reactive<T> {
-  void set(T value);
-  void merge(T op);
-}
-
 /// A cell whose write is a *merge* under [policy] rather than a replace.
 ///
-/// `Cell ≡ MergeCell(KeepLatest)`. `merge` routes through the cell's `!=`-guarded
-/// setter, so an idempotent policy's no-op merge fires no cascade (free dedup)
-/// and store-without-cascade still applies.
-class MergeCell<T> implements Source<T> {
-  MergeCell(Context ctx, T initial, this.policy) : cell = Cell<T>(ctx, initial);
+/// `Source ≡ MergeCell(KeepLatest)`. `merge` routes through the cell's
+/// `!=`-guarded setter, so an idempotent policy's no-op merge fires no cascade
+/// (free dedup) and store-without-cascade still applies. It is a standalone
+/// policy wrapper over a [Source] (no shared interface — v2 `#lzcellkernel`).
+class MergeCell<T> {
+  MergeCell(Context ctx, T initial, this.policy) : cell = Source<T>(ctx, initial);
 
-  /// The underlying reactive cell (for wiring derived readers).
-  final Cell<T> cell;
+  /// The underlying reactive source cell (for wiring derived readers).
+  final Source<T> cell;
   final MergePolicy<T> policy;
 
   /// Read the current converged value (tracks a dependency in a computation).
-  @override
   T get() => cell.get();
 
   /// Replace the value outright (the keep-latest write), bypassing the policy.
-  @override
   void set(T value) => cell.set(value);
 
   /// Fold `op` into the current value under the policy. Reads untracked via peek.
-  @override
   void merge(T op) => cell.set(policy.merge(cell.peek, op));
 }
 

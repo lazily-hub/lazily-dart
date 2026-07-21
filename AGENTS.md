@@ -1,10 +1,14 @@
 # lazily-dart
 
-Dart port of the lazily reactive family — the Cell kernel (`SourceCell` /
-`FormulaCell` / `Effect`, with `Slot` the storage/lazy-computed position) with
-automatic dependency tracking, plus the full lazily-spec wire protocol and CRDT
-collection types. The eager construction is `formula(ctx, f).drive()`; `Signal`
-is a back-compat alias for a driven `FormulaCell` (`#lzcellkernel`).
+Dart port of the lazily reactive family — the Cell kernel v2: two concrete cell
+handles `Source` (get/set/merge) and `Computed` (get/`.eager()`/`.lazy()`/
+`isEager`, guarded always) plus the `Effect` sink, with `Slot` the lower-level
+unguarded storage/lazy-computed position. `Cell` is a retained compatibility
+spelling of `Source`. Automatic dependency tracking, plus the full lazily-spec
+wire protocol and CRDT collection types. The eager construction is
+`computed(ctx, f).eager()`; `Signal` is a back-compat alias for an eager
+`Computed`. There is no `Cell<T,K>` genus and no separate `memo` kind — the
+equality guard folded into `Computed` (`#lzcellkernel`).
 
 ## Commit & Push
 

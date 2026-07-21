@@ -246,7 +246,7 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
       return;
     }
     if (_eq != null && _state != AsyncSlotState.empty && _value is T && _eq(_value as T, value)) {
-      // Memo equality suppression: keep the cached value, do not cascade.
+      // Computed equality suppression: keep the cached value, do not cascade.
       _state = AsyncSlotState.resolved;
       _inFlight?.complete(_value as T);
       _inFlight = null;

@@ -10,14 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ### Changed
 
-- **The Cell kernel: `SourceCell` / `FormulaCell` over the `Cell` genus
-  (`#lzcellkernel`).** One genus, `Cell<T, K>`, over two value kinds — a node's
-  value comes either from *outside* it (`SourceCell`, the writable `set`/`merge`
-  kind; the concrete class keeps the name `Cell`) or from *upstream* of it
-  (`FormulaCell`, computed via a formula) — with `Effect` the value-less sink.
-  New surface: `source(ctx, v)`, `formula(ctx, f)` (lazy and guarded by
-  default), and `formula(ctx, f).drive()` (eager). `Slot` is retained as the
-  storage/computation position and the unguarded lazy computed value.
+- **Cell kernel v2 — `Source` / `Computed` / `Effect`, guarded `computed`,
+  `memo` removed (`#lzcellkernel`).** Supersedes the v1 `SourceCell` /
+  `FormulaCell` scheme below (which was committed but never published), resolving
+  the handle-vs-node overload. **`Cell` is now the value-node *concept*, not a
+  type** — there is no `Cell<T, K>` genus. The two concrete cell *handles* are
+  `Source<T>` (`get` / `set` / `merge`; was `SourceCell`/`Cell`) and
+  `Computed<T>` (`get`, `.eager()`, `.lazy()`, `isEager`; was `FormulaCell`).
+  `Cell` is retained as a compatibility spelling of `Source`. Constructors:
+  `formula(ctx, f)` → **`computed(ctx, f)`**; `.drive()`/`.undrive()` →
+  **`.eager()`/`.lazy()`**; `isDriven` → **`isEager`** (internal `_driven` /
+  `_drivenBy` → `_eager` / `_eagerBy`).
+- **`computed` is guarded, always; the `Memo` type is removed.** An equal
+  recompute (`==`) suppresses the downstream cascade (TC39 `Signal.Computed`);
+  there is no unguarded mode and no separate `memo` kind — its equality guard
+  folded into `Computed`, backed by a private guarded slot. A *freshly
+  constructed* lazy `Computed` carries the inline push-guard; a `Computed`
+  reverted from eager via `.lazy()` is an unguarded lazy pull (clause 4:
+  `dispose_signal_reverts_to_lazy` requires an invalidating write to NOT
+  re-materialize). `Slot` is retained as the lower-level **unguarded** callable
+  computed — the primitive for non-`==` values. The former `Memo` call sites
+  (`SemTree`, the instrumentation benchmark, the core tests) now use `Computed`.
+- **The eager construction is now `computed(ctx, f).eager()`.** The puller stays
+  an ordinary *scheduled* `Effect` over a **plain** backing `Slot` (the backing's
+  inline guard is switched off while eager), so N writes inside one `batch`
+  coalesce into ONE re-materialization at the flush (clause 3) — the guarded
+  backing is never allowed to recompute inline per-source. `Signal(ctx, f)` is
+  retained as a back-compat alias for an eager `Computed`.
+- **(v1, superseded above) The Cell kernel: `SourceCell` / `FormulaCell` over the
+  `Cell` genus (`#lzcellkernel`).** One genus, `Cell<T, K>`, over two value
+  kinds — a node's value comes either from *outside* it (`SourceCell`, the
+  writable `set`/`merge` kind; the concrete class keeps the name `Cell`) or from
+  *upstream* of it (`FormulaCell`, computed via a formula) — with `Effect` the
+  value-less sink. New surface: `source(ctx, v)`, `formula(ctx, f)` (lazy and
+  guarded by default), and `formula(ctx, f).drive()` (eager). `Slot` is retained
+  as the storage/computation position and the unguarded lazy computed value.
 - **The eager construction is now `formula(ctx, f).drive()`, retiring the
   standalone `Signal` node.** Drivenness is graph state — a `_driven` bit plus a
   `_drivenBy` side table holding the puller `Effect`, cleared on `undrive` /
@@ -62,7 +89,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
   eager signal from the lazy memo it is built on. `signal_materializes_once_per_batch`
   is what caught the batch defect above; the other two were already green. The
   runner now dual-accepts the Cell-kernel `drive` / `undrive` ops alongside
-  `signal` / `dispose_signal`, and `defineSignal` builds `formula(...).drive()`
+  `signal` / `dispose_signal`; under v2 `defineSignal` builds
+  `computed(...).eager()` and `disposeSignal` calls `.lazy()`
   (`#lzcellkernel`); no fixtures were added or renamed.
 
 ## 0.24.0

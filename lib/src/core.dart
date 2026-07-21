@@ -1,43 +1,48 @@
-/// The Cell kernel for Dart: one genus, [Cell], over two value kinds
-/// (`#lzcellkernel`).
+/// The Cell kernel for Dart — v2 (`#lzcellkernel`).
 ///
 /// A pure-Dart port of the lazily reactive family (`lazily-py`, `lazily-js`,
 /// `lazily-zig`), mirroring `lazily-rs`. See
 /// `lazily-spec/docs/reactive-graph.md` and
 /// `tasks/software/lazily-cell-kernel-design.md` §1/§4/§9.3.
 ///
-/// A node's value comes either from *outside* it or from *upstream* of it, and
-/// that is the whole partition:
+/// **Cell** is the value-bearing *node concept* — a reactive that holds a
+/// readable value. It is not a type here: there is no `Cell<T, K>` genus. The
+/// two concrete *cell* kinds are the handles a caller holds:
 ///
-/// - [SourceCell] (the concrete class [Cell]) — a value written from outside
-///   (`set` / `merge`); the writable kind. A [MergeCell] is a `SourceCell`
-///   whose write folds under a non-`KeepLatest` policy
-///   (`Cell ≡ MergeCell(KeepLatest)`).
-/// - [FormulaCell] — a value computed from *upstream*, via a formula. Lazy and
-///   guarded by default; made *eager* by [FormulaCell.drive].
-/// - [Effect] — a value-less sink, outside the hierarchy; nothing can depend on
-///   it.
+/// - [Source] — a value written from *outside* the graph (`get` / `set` /
+///   `merge`); the writable kind. A [MergeCell] is a [Source] whose write folds
+///   under a non-`KeepLatest` policy (`Source ≡ MergeCell(KeepLatest)`). The
+///   name [Cell] is retained as a compatibility spelling of [Source].
+/// - [Computed] — a value computed from *upstream* (`get`, `.eager()`,
+///   `.lazy()`, `isEager`). **Guarded, always**: an equal recompute (`==`)
+///   suppresses the downstream cascade, exactly as TC39 `Signal.Computed`. Lazy
+///   by default; made *eager* by [Computed.eager].
+///
+/// [Effect] is the value-less sink outside the cell hierarchy — nothing can
+/// depend on it — and is the eager-push primitive for side effects.
 ///
 /// Dart has no compile-time read/write split (design §4): the kind is
-/// *convention*, never a runtime gate. A `SourceCell` exposes `set` / `merge`; a
-/// `FormulaCell` does not. There is no runtime rejection of a "write to a
-/// formula" — a `FormulaCell` simply has no such method.
+/// *convention*, never a runtime gate. A [Source] exposes `set` / `merge`; a
+/// [Computed] simply has no such method (method-presence, no runtime rejection).
 ///
-/// [Slot] is retained as the storage/computation position that holds a node
-/// (spec §5.0) and as the unguarded lazy computed value; the *reactive-value*
-/// sense of the old name moves to [FormulaCell].
+/// [Slot] is retained as the lower-level storage/computation position (spec
+/// §5.0) and the **unguarded** callable lazy computed — the primitive to reach
+/// for when a value is not `==`-comparable or the guard is unwanted. The
+/// *guarded* derived value is [Computed]; there is no separate `memo` kind (its
+/// equality guard folded into [Computed]).
 ///
-/// **The eager construction is `formula(ctx, f).drive()`** — it retires the
-/// former standalone `Signal`. Drivenness is graph state (a `_driven` bit plus
-/// a [_drivenBy] side table holding the puller [Effect]), not a distinct node
-/// kind. Because the only way to make a formula eager is to attach a *scheduled*
-/// Effect, the `#lzsignaleager` per-write puller — recomputing inline during the
-/// invalidation wave — is structurally unrepresentable here. `Signal` /
-/// `signal` are retained as thin back-compat aliases for a driven [FormulaCell].
+/// **The eager construction is `computed(ctx, f).eager()`** — it retires the
+/// former standalone `Signal`. Eagerness is graph state (an `_eager` bit plus
+/// the [_eagerBy] side table holding the puller [Effect]), not a distinct node
+/// kind. Because the only way to make a computed eager is to attach a
+/// *scheduled* Effect, the `#lzsignaleager` per-write puller — recomputing
+/// inline during the invalidation wave — is structurally unrepresentable here.
+/// `Signal` / `signal` are retained as thin back-compat aliases for an eager
+/// [Computed].
 ///
 /// Values are **lazy by default**: dependents are marked dirty on invalidation
 /// but only recompute when accessed. When you need eager push-style semantics,
-/// drive a [FormulaCell].
+/// call [Computed.eager].
 ///
 /// A [Context] is the shared scope: it holds an identity-keyed cache and the
 /// computation stack used for automatic dependency tracking. All reactives that
@@ -100,8 +105,8 @@ const int edgeIndexDemoteThreshold = edgeIndexPromoteThreshold ~/ 4;
 
 /// A node in a [Context]'s reactive graph (`#lzspecedgeindex`).
 ///
-/// Sealed: [Slot] (and its subclass [Memo]), [Cell] (a.k.a. [SourceCell]),
-/// [FormulaCell] (and its back-compat subclass [Signal]), and [Effect] are the
+/// Sealed: [Slot] (and its guarded backing), [Source] (a.k.a. [Cell]),
+/// [Computed] (and its back-compat subclass [Signal]), and [Effect] are the
 /// only implementations, and the type cannot be
 /// implemented downstream. It exists so [Context.dependentCount],
 /// [Context.dependencyCount], [Context.disposeNode], and [TeardownScope] can
@@ -131,7 +136,7 @@ class DisposedNodeError extends StateError {
 
 /// A reactive scope: an identity-keyed value cache plus the computation stack.
 ///
-/// All [Slot]s, [Cell]s, and [FormulaCell]s that should react to each other
+/// All [Slot]s, [Source]s, and [Computed]s that should react to each other
 /// must be created with (and thus share) the same [Context]. The cache keys on
 /// object identity, so each reactive instance is cached independently.
 class Context {
@@ -147,24 +152,24 @@ class Context {
   final List<_ReactiveNode> _stack = [];
 
   int _batchDepth = 0;
-  Set<Cell>? _batchedCells;
+  Set<Source>? _batchedCells;
   Set<Slot>? _batchedSlots;
   final List<Effect> _pendingEffects = [];
   int _pendingEffectsHead = 0;
   final Set<Effect> _scheduledEffects = Set.identity();
   bool _flushingEffects = false;
 
-  /// The eager re-materialization of a driven [FormulaCell] is an ordinary
+  /// The eager re-materialization of an eager [Computed] is an ordinary
   /// [Effect] (the puller), so `#lzsignaleager` clause 3 is inherited from the
   /// effect scheduler rather than special-cased here. The puller is *scheduled*,
   /// never run inline from an invalidation hook: N writes inside a [batch] mark
-  /// the formula's plain backing [Slot] dirty (no recompute) and coalesce into
-  /// ONE scheduled puller rerun at the flush, which recomputes the formula once.
+  /// the computed's plain backing [Slot] dirty (no recompute) and coalesce into
+  /// ONE scheduled puller rerun at the flush, which recomputes the computed once.
   /// An inline pull would recompute once per invalidated source — the same value
   /// at a multiple of the work, which is why the defect shipped unnoticed
   /// elsewhere until `signal_materializes_once_per_batch.json` counted the
-  /// computes. Because the only way to make a formula eager is to attach that
-  /// scheduled Effect ([FormulaCell.drive]), the per-write puller is structurally
+  /// computes. Because the only way to make a computed eager is to attach that
+  /// scheduled Effect ([Computed.eager]), the per-write puller is structurally
   /// unrepresentable.
 
   /// Audit-only escape hatch (`#lzspecedgeindex`). When compiled with
@@ -205,9 +210,9 @@ class Context {
   ///   turning `dispose` into a throw and breaking teardown idempotence. The
   ///   contract is "errors on the next recompute", and that recompute is driven
   ///   by a real write.
-  /// - [Memo._invalidateInto] skips its equality recompute and propagates
+  /// - A guarded [Slot] backing skips its equality recompute and propagates
   ///   unconditionally, for the same reason: it would recompute *through* the
-  ///   disposed node. A driven [FormulaCell]'s puller is a scheduled [Effect],
+  ///   disposed node. An eager [Computed]'s puller is a scheduled [Effect],
   ///   so it is dropped by the [_scheduleEffect] guard above with every other
   ///   effect.
   int _disposalDepth = 0;
@@ -215,11 +220,13 @@ class Context {
   /// The number of cached slot values.
   int get size => _cachedCount;
 
-  /// Whether [node] currently has a cached value. Only [Slot]s (and subclasses
-  /// like [Memo]) cache values; cells hold their value directly
-  /// and effects never cache.
-  bool contains(_ReactiveNode node) =>
-      node is Slot && node._isCachedInGeneration(this);
+  /// Whether [node] currently has a cached value. Only [Slot]s cache values
+  /// directly; a [Computed] delegates to its guarded backing slot; sources hold
+  /// their value directly and effects never cache.
+  bool contains(_ReactiveNode node) {
+    if (node is Computed) return node._backing._isCachedInGeneration(this);
+    return node is Slot && node._isCachedInGeneration(this);
+  }
 
   /// The cached value for [node] (untyped), or `null` if absent.
   Object? read(_ReactiveNode node) {
@@ -268,9 +275,9 @@ class Context {
     }
   }
 
-  /// Called by [Cell] when its value changes. Routes through the batch queue
+  /// Called by [Source] when its value changes. Routes through the batch queue
   /// when a batch is active, otherwise cascades immediately + flushes effects.
-  void _cellChanged(Cell cell) {
+  void _cellChanged(Source cell) {
     if (_batchDepth > 0) {
       _batchedCells!.add(cell);
     } else {
@@ -288,7 +295,7 @@ class Context {
     }
     // Drop the references and iterate the locals directly — no `.toList()`
     // snapshot needed. `_batchDepth` is already 0 here, and a cascade never
-    // writes a [Cell], so these sets are not re-populated mid-flush.
+    // writes a [Source], so these sets are not re-populated mid-flush.
     _batchedCells = null;
     _batchedSlots = null;
     if (cells != null) {
@@ -330,7 +337,7 @@ class Context {
   /// snapshot per node (mirrors `mark_frontier_locked` in lazily-rs). The stack
   /// is owned by the [Context] and reused across cascades; reentrant cascades
   /// fall back to a fresh local stack so the outer iteration is not corrupted.
-  /// A driven [FormulaCell]'s eager re-materialization does not reenter here —
+  /// An eager [Computed]'s re-materialization does not reenter here —
   /// its puller is a scheduled [Effect] that recomputes from the flush, outside
   /// this walk.
   void _cascadeFrom(_ReactiveNode root) {
@@ -434,7 +441,7 @@ class Context {
   void disposeSlot(Slot<Object?> slot) => slot._disposeNode();
 
   /// Tear down a source cell. See [disposeNode].
-  void disposeCell(Cell<Object?> cell) => cell._disposeNode();
+  void disposeCell(Source<Object?> cell) => cell._disposeNode();
 
   /// Tear down an effect. See [disposeNode]; equivalent to [Effect.dispose].
   void disposeEffect(Effect effect) => effect._disposeNode();
@@ -477,11 +484,11 @@ class Context {
     try {
       // FIFO with a head pointer instead of O(n) `removeAt(0)` (mirrors
       // lazily-rs `VecDeque::pop_front`). A drained effect may schedule more
-      // effects — including a driven [FormulaCell]'s puller, and the consumers
+      // effects — including an eager [Computed]'s puller, and the consumers
       // that puller's change-cascade schedules — so the loop re-reads `length`
       // each pass. A puller is enqueued (and thus reruns) before any consumer
-      // its re-materialization schedules, so a consumer that reads a driven
-      // formula observes the fresh value, not the pre-write one.
+      // its re-materialization schedules, so a consumer that reads an eager
+      // computed observes the fresh value, not the pre-write one.
       while (_pendingEffectsHead < _pendingEffects.length) {
         final effect = _pendingEffects[_pendingEffectsHead];
         _pendingEffectsHead++;
@@ -728,8 +735,8 @@ abstract class _ReactiveNode implements GraphNode {
 
   /// Expand this node's invalidation into [stack]: fire [onInvalidate], then
   /// push this node's current dependents onto [stack] (clearing the local list,
-  /// which serves as the visited mark). Overridden by [Memo] to gate the
-  /// cascade behind its equality guard.
+  /// which serves as the visited mark). Overridden by the guarded [Slot]
+  /// backing to gate the cascade behind its equality guard.
   void _invalidateInto(List<_ReactiveNode> stack) {
     onInvalidate();
     final deps = _dependents;
@@ -745,7 +752,7 @@ abstract class _ReactiveNode implements GraphNode {
 /// A lazy, cached, dependency-tracking computation.
 ///
 /// Reading [call] returns the cached value if present; otherwise it computes
-/// the value (tracking every [Cell], [FormulaCell], or [Slot] read during
+/// the value (tracking every [Source], [Computed], or [Slot] read during
 /// computation as a dependency), caches it, and returns it. When any
 /// dependency changes, the cached value is invalidated and the next read
 /// recomputes.
@@ -753,7 +760,7 @@ abstract class _ReactiveNode implements GraphNode {
 /// Example::
 ///
 ///     final ctx = Context();
-///     final a = Cell<int>(ctx, 2);
+///     final a = Source<int>(ctx, 2);
 ///     final doubled = Slot<int>(ctx, (_) => a.value * 2);
 ///     doubled(); // 4
 ///     a.value = 10;
@@ -860,21 +867,29 @@ class Slot<T> extends _ReactiveNode {
   String toString() => name != null ? 'Slot(${name!})' : 'Slot';
 }
 
-/// A mutable source value that invalidates dependents when it changes.
+/// The **source cell** of the Cell kernel — a value written from *outside* the
+/// graph (`#lzcellkernel`).
 ///
-/// Reading [value] inside a [Slot] / [FormulaCell] computation registers a
-/// dependency. Writing [value] triggers a cascade only when the new value is
-/// not equal (`!=`) to the old one — the `PartialEq` guard.
+/// [Source] is the writable *cell* handle: `get` / `set` / `merge`. A write
+/// triggers a cascade only when the new value is not equal (`!=`) to the old one
+/// — the `PartialEq` store-guard (all cells guarded, always). `merge` folds the
+/// incoming operand under a merge policy; the default is keep-latest
+/// (`Source ≡ MergeCell(KeepLatest)`), so a bare `merge` is a `set`. For a
+/// non-`KeepLatest` fold, use `mergeCell(ctx, v, policy)` from
+/// `package:lazily/src/merge.dart`.
 ///
-/// A [Cell] carries **no callback registry**. Observation in a reactive graph
+/// Reading [value] inside a [Slot] / [Computed] computation registers a
+/// dependency.
+///
+/// A [Source] carries **no callback registry**. Observation in a reactive graph
 /// is a declared dependency edge, not a registered listener: use an [Effect]
 /// (eager push, batching-aware, glitch-free) for side effects such as Flutter
 /// `ValueNotifier` bridges and `setState` wrappers, and a `Topic` when a
 /// consumer genuinely needs a stream of every transition. A per-cell listener
 /// list would bypass the graph, ignore [Context.batch], and cost memory on
 /// every cell whether or not anything is listening.
-class Cell<T> extends _ReactiveNode {
-  Cell(this.ctx, T initialValue) : _value = initialValue;
+class Source<T> extends _ReactiveNode {
+  Source(this.ctx, T initialValue) : _value = initialValue;
 
   /// The context this cell belongs to.
   final Context ctx;
@@ -912,6 +927,12 @@ class Cell<T> extends _ReactiveNode {
   /// Set the value (alias for `value =`).
   void set(T newValue) => value = newValue;
 
+  /// Fold [op] into the current value under keep-latest (a plain replace),
+  /// routing through the `!=`-guarded setter. This is the [Source] side of the
+  /// v2 `get` / `set` / `merge` surface; a [MergeCell] overrides the fold with a
+  /// non-`KeepLatest` policy.
+  void merge(T op) => value = op;
+
   /// Force-invalidate this cell's dependents without changing the value.
   ///
   /// Used by collection layers when an entry is removed: the orphaned cell
@@ -940,120 +961,133 @@ class Cell<T> extends _ReactiveNode {
   bool get isDisposed => _disposed;
 
   @override
-  String toString() => 'Cell($_value)';
+  String toString() => 'Source($_value)';
 }
 
-/// The **source cell** of the Cell kernel — the canonical name for [Cell]
-/// (`#lzcellkernel`).
+/// Retained compatibility spelling of [Source] (`#lzcellkernel` v2).
 ///
-/// A `SourceCell` holds a value that comes from *outside* the graph (`set` /
-/// `merge`); it is the writable kind of the [Cell] genus. The concrete class
-/// keeps the name [Cell] for subtype and identity stability across the family,
-/// with `SourceCell` the vocabulary the spec speaks. A [MergeCell] is a
-/// `SourceCell` whose write folds under a non-`KeepLatest` policy
-/// (`Cell ≡ MergeCell(KeepLatest)`).
-typedef SourceCell<T> = Cell<T>;
+/// **Cell** is the value-node *concept* in v2 — a reactive that holds a readable
+/// value — not a genus type: there is no `Cell<T, K>`. This alias keeps the
+/// pervasive `Cell<T>` call sites and the `Source ≡ MergeCell(KeepLatest)`
+/// identity readable; the concrete handle is [Source].
+typedef Cell<T> = Source<T>;
 
-/// Create a [SourceCell] (a keep-latest [Cell]) over [ctx].
+/// Create a [Source] (a keep-latest cell) over [ctx].
 ///
 /// The Cell-kernel constructor for a written-from-outside value; the spelling of
 /// the reference's `ctx.source(v)`. For a non-`KeepLatest` fold, use
 /// `mergeCell(ctx, v, policy)` from `package:lazily/src/merge.dart`.
-SourceCell<T> source<T>(Context ctx, T initialValue) => Cell<T>(ctx, initialValue);
+Source<T> source<T>(Context ctx, T initialValue) => Source<T>(ctx, initialValue);
 
-/// The `driven_by` side table (`reactive-graph.md` §9.3.3): the `_driven` bit on
-/// a [FormulaCell] answers "am I driven?" for free (making [FormulaCell.drive]
-/// idempotent with no lookup); this table holds "which effect drives me" for
-/// exactly the rare driven formulas, and nothing for the lazy ones. Owner-keyed
-/// by the [FormulaCell] instance by *identity*.
+/// The `eager_by` side table (`reactive-graph.md` §9.3.3): the `_eager` bit on
+/// a [Computed] answers "am I eager?" for free (making [Computed.eager]
+/// idempotent with no lookup); this table holds "which effect pulls me" for
+/// exactly the rare eager computeds, and nothing for the lazy ones. Owner-keyed
+/// by the [Computed] instance by *identity*.
 ///
 /// Dart object identity is stable for the object's lifetime and a disposed
-/// formula is never recycled onto a live one (unlike Rust's `SlotId`), so the
+/// computed is never recycled onto a live one (unlike Rust's `SlotId`), so the
 /// generation-tag hazard of §9.3.5 does not arise. The strong reference to the
-/// puller is released on [FormulaCell.undrive] / [FormulaCell.dispose] so a
-/// torn-down formula (and its puller) becomes collectable.
-final Map<FormulaCell<Object?>, Effect> _drivenBy =
-    HashMap<FormulaCell<Object?>, Effect>.identity();
+/// puller is released on [Computed.lazy] / [Computed.dispose] so a
+/// torn-down computed (and its puller) becomes collectable.
+final Map<Computed<Object?>, Effect> _eagerBy =
+    HashMap<Computed<Object?>, Effect>.identity();
 
-/// A **formula cell** — a value computed from *upstream*, via a formula.
+/// A **computed cell** — a value computed from *upstream* (`#lzcellkernel` v2).
 ///
-/// The derived kind of the [Cell] genus (`#lzcellkernel`). Construct with
-/// [formula]; it is **lazy and guarded by default** — an upstream change marks
-/// the value stale and it recomputes on the next read, and while *driven* an
-/// equal recompute suppresses the downstream cascade (the memo / `!=` guard).
+/// The derived *cell* handle. Construct with [computed]; it is **guarded,
+/// always** — an equal recompute (`==`) suppresses the downstream cascade,
+/// matching TC39 `Signal.Computed`. There is no unguarded mode and no separate
+/// `memo` kind: the equality guard folded into [Computed]. (For a value that is
+/// not `==`-comparable, reach for the lower-level unguarded [Slot].)
 ///
-/// Calling [drive] makes it **eager**: the value is materialized now and
-/// re-materialized immediately whenever a tracked dependency changes. The eager
-/// construction is `formula(ctx, f).drive()`, which retires the former
-/// standalone `Signal`. Drivenness is graph state — a [_driven] bit plus the
-/// [_drivenBy] side table holding the puller [Effect] — not a distinct node
-/// kind. The puller is an ordinary [Effect] over a plain backing [Slot], so it
-/// is *scheduled*: N writes inside one [Context.batch] re-materialize the
-/// formula ONCE at the flush, not once per write (`reactive-graph.md` clause 3).
-/// Because the only way to make a formula eager is to attach that scheduled
-/// Effect, the `#lzsignaleager` per-write puller is structurally unrepresentable.
+/// Lazy by default: an upstream change marks the value stale, the guarded
+/// backing recomputes on the next read, and an equal result stops the cascade.
+///
+/// Calling [eager] makes it **eager**: the value is materialized now and
+/// re-materialized whenever a tracked dependency changes. The eager construction
+/// is `computed(ctx, f).eager()`, which retires the former standalone `Signal`.
+/// Eagerness is graph state — an [_eager] bit plus the [_eagerBy] side table
+/// holding the puller [Effect] — not a distinct node kind. The puller is an
+/// ordinary [Effect] over a **plain** backing [Slot] (the backing's inline guard
+/// is switched off while eager), so it is *scheduled*: N writes inside one
+/// [Context.batch] re-materialize the computed ONCE at the flush, not once per
+/// write (`reactive-graph.md` clause 3). Because the only way to make a computed
+/// eager is to attach that scheduled Effect, the `#lzsignaleager` per-write
+/// puller is structurally unrepresentable.
 ///
 /// Reading [value] inside another computation registers a dependency, so
-/// downstream reactives invalidate when this formula's value changes. Like every
-/// reactive in this library, a [FormulaCell] exposes **no observer API** — see
-/// [Cell] for the rationale.
-class FormulaCell<T> extends _ReactiveNode {
-  /// Creates a **lazy** formula bound to [ctx]. Call [drive] for the eager form.
-  FormulaCell(this.ctx, T Function(Context ctx) compute)
-      : _backing = Slot<T>(ctx, compute);
+/// downstream reactives invalidate when this computed's value changes. Like every
+/// reactive in this library, a [Computed] exposes **no observer API** — see
+/// [Source] for the rationale.
+class Computed<T> extends _ReactiveNode {
+  /// Creates a **lazy** computed bound to [ctx]. Call [eager] for the eager form.
+  Computed(this.ctx, T Function(Context ctx) compute)
+      : _backing = _GuardedSlot<T>(ctx, compute);
 
   @override
   final Context ctx;
 
-  /// The plain backing [Slot] — the storage/computation position (spec §5.0).
-  /// Deliberately a [Slot] and not a [Memo]: a `Memo` recomputes *inline* during
-  /// each invalidation, so under a multi-write batch a driven formula would
-  /// recompute once per written source. The equality guard lives on the puller
-  /// ([_pull]) instead, applied to the single coalesced re-materialization.
-  final Slot<T> _backing;
+  /// The backing [_GuardedSlot] — the storage/computation position (spec §5.0).
+  /// **Guarded while lazy**: it recomputes inline on invalidation and suppresses
+  /// an equal (`==`) cascade, which is where a lazy computed's guard lives.
+  /// **Un-guarded while eager**: its inline guard is switched off (via
+  /// `_guardEnabled`) so, under a multi-write batch, an eager computed does not
+  /// recompute once per written source; the equality guard then lives on the
+  /// puller ([_pull]), applied to the single coalesced re-materialization.
+  final _GuardedSlot<T> _backing;
 
-  /// The materialized value, valid whenever [_driven]. `_hasValue` distinguishes
-  /// the first materialization (at [drive]) from a later guarded recompute.
+  /// The materialized value, valid whenever [_eager]. `_hasValue` distinguishes
+  /// the first materialization (at [eager]) from a later guarded recompute.
   late T _value;
   bool _hasValue = false;
-  bool _driven = false;
+  bool _eager = false;
 
   /// The current value; reading inside a computation subscribes the reader.
   ///
-  /// Driven: returns the materialized value. Lazy: recomputes through the
+  /// Eager: returns the materialized value. Lazy: recomputes through the guarded
   /// backing slot on read (which also tracks the reader as a dependency of the
-  /// backing slot, so an upstream change still invalidates the reader).
+  /// backing slot, so an upstream change still invalidates the reader — and an
+  /// equal recompute is suppressed by the backing's guard).
   T get value {
     _track(ctx);
-    if (!_driven) return _backing();
+    if (!_eager) return _backing();
     return _value;
   }
 
   /// Read the value (alias for [value]).
   T get() => value;
 
-  /// The current value without registering a dependency.
-  T get peek => _driven ? _value : (_backing.peek ?? _backing());
+  /// Read the value (callable alias for [value]) — the lower-level `slot()`
+  /// spelling, for call sites that fold a computed like a [Slot].
+  T call() => value;
 
-  /// Make this formula **eager**, and return **this same** formula.
+  /// The current value without registering a dependency.
+  T get peek => _eager ? _value : (_backing.peek ?? _backing());
+
+  /// Make this computed **eager**, and return **this same** computed.
   ///
-  /// Idempotent — a second [drive] is a no-op, so `f.drive().drive()` never
-  /// attaches two pullers (which would double the eager compute). Attaches a
-  /// *scheduled* puller [Effect] over the backing [Slot] and records it in the
-  /// [_drivenBy] side table, materializing the value once now (clause 1) and
-  /// establishing the dependency edges. Because the puller is an [Effect] it is
-  /// scheduled, not inline: N writes inside one [Context.batch] coalesce into
-  /// ONE re-materialization at the flush (clause 3).
+  /// Idempotent — a second [eager] is a no-op, so `c.eager().eager()` never
+  /// attaches two pullers (which would double the eager compute). Switches the
+  /// backing slot's inline guard off (so the puller, not the backing, is the
+  /// point of coalescing), attaches a *scheduled* puller [Effect] over the
+  /// backing [Slot], and records it in the [_eagerBy] side table — materializing
+  /// the value once now (clause 1) and establishing the dependency edges.
+  /// Because the puller is an [Effect] it is scheduled, not inline: N writes
+  /// inside one [Context.batch] coalesce into ONE re-materialization at the
+  /// flush (clause 3).
   ///
-  /// Returns the same handle with graph state mutated — `g = f.drive()` gives
-  /// `identical(g, f)`, both driven; it is not builder-style `with(...)`.
-  FormulaCell<T> drive() {
-    if (_driven) return this;
-    _driven = true;
+  /// Returns the same handle with graph state mutated — `g = c.eager()` gives
+  /// `identical(g, c)`, both eager; it is not builder-style `with(...)`.
+  Computed<T> eager() {
+    if (_eager) return this;
+    _eager = true;
+    // Hand coalescing to the scheduled puller, not the backing's inline guard.
+    _backing._guardEnabled = false;
     // The Effect constructor runs the body once now, materializing the value
     // without a read (clause 1) and wiring the puller -> backing edge.
     final puller = Effect(ctx, _pull);
-    _drivenBy[this] = puller;
+    _eagerBy[this] = puller;
     return this;
   }
 
@@ -1066,44 +1100,52 @@ class FormulaCell<T> extends _ReactiveNode {
       _value = newValue;
     } else if (newValue != _value) {
       _value = newValue;
-      // Cascade to *this formula's* dependents. Scheduled effects (consumers)
+      // Cascade to *this computed's* dependents. Scheduled effects (consumers)
       // are enqueued after this puller, so they observe the fresh value.
       _invalidate();
     }
     return null;
   }
 
-  /// Reverse of [drive]: stop eager recomputation and dispose the puller.
+  /// Reverse of [eager]: stop eager recomputation and dispose the puller.
   ///
-  /// The value stays readable and reverts to lazy (recomputed on the next read
-  /// of the backing slot). No-op if not driven. Clears the [_driven] bit and the
-  /// [_drivenBy] entry (`reactive-graph.md` clause 4) so no puller is stranded.
-  void undrive() {
-    if (!_driven) return;
-    _driven = false;
-    final puller = _drivenBy.remove(this);
+  /// The value stays readable and reverts to **lazy recompute-on-read**. No-op
+  /// if not eager. Clears the [_eager] bit and the [_eagerBy] entry
+  /// (`reactive-graph.md` clause 4) so no puller is stranded.
+  ///
+  /// The backing's inline guard is deliberately **left off** here: clause 4
+  /// (`dispose_signal_reverts_to_lazy`) requires that an invalidating write to a
+  /// reverted computed does NOT re-materialize — only a subsequent read
+  /// recomputes. Re-enabling the inline guard would recompute on the write to
+  /// check equality, which the fixture pins as a violation. A reverted computed
+  /// is therefore an ordinary unguarded lazy pull (the v1 `undrive` behaviour);
+  /// only a *freshly constructed* lazy computed carries the inline push-guard.
+  void lazy() {
+    if (!_eager) return;
+    _eager = false;
+    final puller = _eagerBy.remove(this);
     puller?.dispose();
   }
 
   /// Tear down the eager puller (if any); the value reverts to lazy.
   ///
-  /// Disposing a driven formula tears down its puller (`reactive-graph.md`
+  /// Disposing an eager computed tears down its puller (`reactive-graph.md`
   /// clause 4); the backing slot is untouched, so the value stays readable and
   /// correct and simply stops re-materializing on write. This is the former
   /// `Signal.dispose` / the corpus `dispose_signal` semantics — a puller
-  /// teardown, not a full node teardown. To tear the formula out of the graph
+  /// teardown, not a full node teardown. To tear the computed out of the graph
   /// entirely, use [Context.disposeNode].
-  void dispose() => undrive();
+  void dispose() => lazy();
 
-  /// Whether this formula is currently driven (has an active puller).
-  bool get isDriven => _driven;
+  /// Whether this computed is currently eager (has an active puller).
+  bool get isEager => _eager;
 
-  /// Deprecated alias for [isDriven] (the former `Signal.isActive`).
-  bool get isActive => _driven;
+  /// Deprecated alias for [isEager] (the former `Signal.isActive`).
+  bool get isActive => _eager;
 
   @override
   void onInvalidate() {
-    // The formula holds its materialized value directly; nothing to evict. The
+    // The computed holds its materialized value directly; nothing to evict. The
     // eager re-materialization is driven by the puller Effect, not this hook.
   }
 
@@ -1111,37 +1153,37 @@ class FormulaCell<T> extends _ReactiveNode {
   void onDispose() {
     // A full node teardown (via [Context.disposeNode]) also tears down the
     // puller and the backing slot, so nothing is stranded.
-    undrive();
+    lazy();
     _backing.dispose();
   }
 
   @override
   String toString() =>
-      _driven ? 'FormulaCell(driven, $_value)' : 'FormulaCell(lazy)';
+      _eager ? 'Computed(eager, $_value)' : 'Computed(lazy)';
 }
 
-/// Create a lazy, guarded [FormulaCell] bound to [ctx].
+/// Create a lazy, guarded [Computed] bound to [ctx].
 ///
 /// The canonical derived-value constructor of the Cell kernel — it is the
-/// spelling of the reference's `ctx.formula(f)` and replaces `computed` / `memo`
-/// / `slot` in the *reactive-value* sense. Call [FormulaCell.drive] for the
-/// eager form:
+/// spelling of the reference's `ctx.computed(f)`, **guarded by default** (an
+/// equal recompute suppresses the downstream cascade). It replaces the old
+/// `formula` / `memo` names. Call [Computed.eager] for the eager form:
 ///
-///     final n = Cell<int>(ctx, 1);
-///     final doubled = formula(ctx, (_) => n.value * 2).drive();
+///     final n = source(ctx, 1);
+///     final doubled = computed(ctx, (_) => n.value * 2).eager();
 ///     doubled.value; // 2, kept fresh eagerly
-FormulaCell<T> formula<T>(Context ctx, T Function(Context ctx) compute) =>
-    FormulaCell<T>(ctx, compute);
+Computed<T> computed<T>(Context ctx, T Function(Context ctx) compute) =>
+    Computed<T>(ctx, compute);
 
-/// Back-compat: an eager (driven) [FormulaCell].
+/// Back-compat: an eager [Computed].
 ///
-/// `Signal(ctx, f)` is exactly `formula(ctx, f).drive()` — a formula that is
-/// driven at construction, the behaviour the former standalone `Signal` had.
-/// Prefer `formula(ctx, f).drive()` in new code.
-class Signal<T> extends FormulaCell<T> {
-  /// Creates a driven formula bound to [ctx]. The value is computed once now.
+/// `Signal(ctx, f)` is exactly `computed(ctx, f).eager()` — a computed that is
+/// eager at construction, the behaviour the former standalone `Signal` had.
+/// Prefer `computed(ctx, f).eager()` in new code.
+class Signal<T> extends Computed<T> {
+  /// Creates an eager computed bound to [ctx]. The value is computed once now.
   Signal(super.ctx, super.compute) {
-    drive();
+    eager();
   }
 }
 
@@ -1153,8 +1195,8 @@ typedef EffectRun = void Function()? Function(Context ctx);
 /// A side-effect observer that reruns whenever a tracked dependency changes.
 ///
 /// [Effect] is the eager-push primitive for side effects (logging, DOM writes,
-/// I/O). It registers dependencies dynamically: any [Cell], [Slot], or
-/// [FormulaCell] read inside [run] during the current execution becomes a
+/// I/O). It registers dependencies dynamically: any [Source], [Slot], or
+/// [Computed] read inside [run] during the current execution becomes a
 /// dependency. When any dependency changes, the effect is scheduled and reruns
 /// after the current cascade (or at [batch] exit).
 ///
@@ -1240,30 +1282,38 @@ class Effect extends _ReactiveNode {
   String toString() => 'Effect(${_disposed ? 'disposed' : 'active'})';
 }
 
-/// A lazy, cached, dependency-tracking computation with an equality guard.
+/// The **guarded backing slot** of a [Computed] — a lazy, cached,
+/// dependency-tracking computation with an equality guard (`#lzcellkernel` v2).
 ///
-/// [Memo] behaves like [Slot] but suppresses downstream invalidation when a
-/// recompute yields a value equal (`==`) to the previous one. This is the
-/// memo-equality invariant from the lazily-spec: "a dirty `memo()` that
-/// recomputes equal emits no `SlotValue` and no downstream `Invalidate`."
+/// It behaves like [Slot] but, **while its inline guard is enabled**, suppresses
+/// downstream invalidation when a recompute yields a value equal (`==`) to the
+/// previous one. This is the memo-equality invariant from the lazily-spec: "a
+/// dirty computed that recomputes equal emits no `SlotValue` and no downstream
+/// `Invalidate`." On invalidation it eagerly recomputes (to check equality)
+/// rather than waiting for a read; if the new value equals the old, the
+/// downstream cascade is aborted and dependents stay cached.
 ///
-/// On invalidation, [Memo] eagerly recomputes (to check equality) rather than
-/// waiting for a read. If the new value equals the old, the downstream cascade
-/// is aborted and dependents stay cached.
-///
-///     final ctx = Context();
-///   final width = Cell<int>(ctx, 10);
-///   // area only cascades when width is even — odd widths give the same tag.
-///   final area = Memo<String>(ctx, (_) => width.value.isEven ? 'even' : 'odd');
-///   // Observe it with an Effect; `area` only cascades when the tag changes.
-///   final effect = Effect(ctx, (_) { print(area()); return null; });
-class Memo<T> extends Slot<T> {
-  Memo(super.ctx, super.compute, {super.name});
+/// This replaces the former public `Memo` type — the equality guard is folded
+/// into [Computed], which owns one of these as its backing. While the owning
+/// [Computed] is **eager**, [_guardEnabled] is switched off and this reverts to
+/// plain [Slot] behaviour so the scheduled puller is the single point of
+/// coalescing (`reactive-graph.md` clause 3); the guard then lives on the puller.
+class _GuardedSlot<T> extends Slot<T> {
+  _GuardedSlot(super.ctx, super.compute, {super.name});
 
+  /// Whether the inline equality guard is active. On while the owning [Computed]
+  /// is lazy; switched off while it is eager.
+  bool _guardEnabled = true;
   bool _guardActive = false;
 
   @override
   void _invalidateInto(List<_ReactiveNode> stack) {
+    if (!_guardEnabled) {
+      // Eager owner: behave as a plain [Slot] — mark dirty (via [onInvalidate])
+      // and push dependents, letting the puller recompute once at flush.
+      super._invalidateInto(stack);
+      return;
+    }
     if (_guardActive) return;
     if (ctx._disposalDepth > 0) {
       // A disposal cascade is mark-only, so the equality guard is skipped and
@@ -1316,8 +1366,10 @@ class Memo<T> extends Slot<T> {
 
   @override
   void onInvalidate() {
-    // Memo manages its own cache lifecycle inside [_invalidate]; the
-    // default eviction is intentionally bypassed.
+    // While guarded, this slot manages its own cache lifecycle inside
+    // [_invalidateInto]; the default eviction is intentionally bypassed. While
+    // un-guarded (an eager owner), behave as a plain [Slot] and evict here.
+    if (!_guardEnabled) _uncache(ctx);
   }
 }
 
@@ -1393,16 +1445,16 @@ class TeardownScope {
     return node;
   }
 
-  /// Create a source [Cell] owned by this scope.
-  Cell<T> cell<T>(T initialValue) => adopt(Cell<T>(ctx, initialValue));
+  /// Create a [Source] owned by this scope.
+  Source<T> cell<T>(T initialValue) => adopt(Source<T>(ctx, initialValue));
 
   /// Create a lazily-computed [Slot] owned by this scope.
   Slot<T> slot<T>(T Function(Context ctx) compute, {String? name}) =>
       adopt(Slot<T>(ctx, compute, name: name));
 
-  /// Create a [Memo] owned by this scope.
-  Memo<T> memo<T>(T Function(Context ctx) compute, {String? name}) =>
-      adopt(Memo<T>(ctx, compute, name: name));
+  /// Create a guarded [Computed] owned by this scope.
+  Computed<T> computed<T>(T Function(Context ctx) compute) =>
+      adopt(Computed<T>(ctx, compute));
 
   /// Register an [Effect] owned by this scope.
   Effect effect(EffectRun run) => adopt(Effect(ctx, run));

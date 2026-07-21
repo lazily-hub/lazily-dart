@@ -86,9 +86,10 @@ const supportedOps = {
   'dispose',
   'dispose_fanout',
   // `dispose_signal` / `signal` are the pre-kernel spellings; `undrive` /
-  // `drive` are the Cell-kernel spellings dual-accepted alongside them
-  // (`#lzcellkernel`): a driven `FormulaCell` is the former `Signal`, and
-  // `.drive()` / `.undrive()` are `signal` / `dispose_signal`.
+  // `drive` are the earlier Cell-kernel spellings — both dual-accepted
+  // (`#lzcellkernel`). In v2 the package methods are `.eager()` / `.lazy()`: an
+  // eager `Computed` is the former `Signal`, and `signal` / `drive` build one,
+  // `dispose_signal` / `undrive` revert it to lazy.
   'dispose_signal',
   'dispose_stale_handle',
   'drive',
@@ -263,18 +264,18 @@ class _SyncModel implements _Model {
 
   @override
   void defineSignal(String id, List<String> reads, num offset, String? scope) {
-    // The package's own eager construction: a driven [FormulaCell]. The Cell
-    // kernel retires the standalone `Signal`, so the eager surface the clauses
-    // are about is `formula(...).drive()` — not a composition assembled by the
+    // The package's own eager construction: an eager [Computed]. The Cell kernel
+    // retires the standalone `Signal`, so the eager surface the clauses are
+    // about is `computed(...).eager()` — not a composition assembled by the
     // runner, which would test the runner.
-    final signal = formula(ctx, _body(id, reads, offset)).drive();
+    final signal = computed(ctx, _body(id, reads, offset)).eager();
     if (scope != null) scopes[scope]!.adopt(signal);
     nodes[id] = signal;
   }
 
   @override
   Future<void> disposeSignal(String id) async =>
-      (nodes[id] as FormulaCell<num>).undrive();
+      (nodes[id] as Computed<num>).lazy();
 
   @override
   Future<void> runBatch(List<(String, num)> writes) async {
@@ -307,8 +308,8 @@ class _SyncModel implements _Model {
 
   num _readNode(String id) {
     final node = nodes[id];
-    if (node is Cell<num>) return node.value;
-    if (node is FormulaCell<num>) return node.value;
+    if (node is Source<num>) return node.value;
+    if (node is Computed<num>) return node.value;
     if (node is Slot<num>) return node();
     throw StateError('unknown or unreadable node $id');
   }
@@ -663,9 +664,9 @@ Future<_Report> _replay(
         final (value, err) = await readId(op['id'] as String);
         opValue = value;
         opError = err;
-      // `signal` and its Cell-kernel spelling `drive` both build a driven
-      // `FormulaCell` (`#lzcellkernel`); `dispose_signal` and `undrive` both
-      // stop eager recomputation and revert to lazy.
+      // `signal` and its Cell-kernel spelling `drive` both build an eager
+      // `Computed` via `.eager()` (`#lzcellkernel`); `dispose_signal` and
+      // `undrive` both `.lazy()` it — stop eager recomputation, revert to lazy.
       case 'signal':
       case 'drive':
         model.defineSignal(
