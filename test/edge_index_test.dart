@@ -39,7 +39,7 @@ void main() {
     for (final width in widths) {
       test('width $width: every dependent observes every publish', () {
         final ctx = Context();
-        final source = Cell<int>(ctx, 0);
+        final source = Source<int>(ctx, 0);
         final subs = [
           for (var i = 0; i < width; i++)
             Slot<int>(ctx, (_) => source.value * 1000 + i),
@@ -64,7 +64,7 @@ void main() {
   test('reading a source twice in one computation registers one edge', () {
     // Dedup must survive the indexed path, not just the scan path.
     final ctx = Context();
-    final source = Cell<int>(ctx, 1);
+    final source = Source<int>(ctx, 1);
     var runs = 0;
 
     // Pad the source's dependent list past the promote threshold so the
@@ -94,8 +94,8 @@ void main() {
     // dynamic dependencies, then back up. A stale index would either resurrect
     // dropped edges or lose live ones.
     final ctx = Context();
-    final source = Cell<int>(ctx, 0);
-    final gate = Cell<bool>(ctx, true);
+    final source = Source<int>(ctx, 0);
+    final gate = Source<bool>(ctx, true);
 
     final subs = [
       for (var i = 0; i < edgeIndexPromoteThreshold * 2; i++)
@@ -134,7 +134,7 @@ void main() {
     // The upstream (`_dependencies`) index is the symmetric case.
     final ctx = Context();
     final sources = [
-      for (var i = 0; i < edgeIndexPromoteThreshold * 3; i++) Cell<int>(ctx, 1),
+      for (var i = 0; i < edgeIndexPromoteThreshold * 3; i++) Source<int>(ctx, 1),
     ];
     final total = Slot<int>(ctx, (_) {
       var sum = 0;
@@ -160,7 +160,7 @@ void main() {
 
   test('effects at wide fan-out fire exactly once per publish', () {
     final ctx = Context();
-    final source = Cell<int>(ctx, 0);
+    final source = Source<int>(ctx, 0);
     final counts = List<int>.filled(edgeIndexPromoteThreshold * 2, 0);
     final effects = <Effect>[
       for (var i = 0; i < counts.length; i++)
@@ -221,7 +221,7 @@ void _disposalPlaneTests() {
       // `lazily-js` 4d20670): detaching edges without marking dependents leaves
       // a live reader frozen on the value it cached *through* the disposed node.
       final ctx = Context();
-      final src = Cell<int>(ctx, 1);
+      final src = Source<int>(ctx, 1);
       final mid = Slot<int>(ctx, (_) => src.value + 1);
       final reader = Slot<int>(ctx, (_) => mid() * 10);
 
@@ -239,7 +239,7 @@ void _disposalPlaneTests() {
       // itself into a throw and breaks teardown idempotence. Mark dirty only —
       // the contract is "errors on the next recompute".
       final ctx = Context();
-      final src = Cell<int>(ctx, 1);
+      final src = Source<int>(ctx, 1);
       final mid = Slot<int>(ctx, (_) => src.value + 1);
 
       var runs = 0;
@@ -270,7 +270,7 @@ void _disposalPlaneTests() {
       // the damage rather than avoiding it: the effect then fires on the next
       // unrelated flush — a write to a cell it does not even read — as a
       // spurious rerun no publish asked for.
-      final unrelated = Cell<int>(ctx, 0);
+      final unrelated = Source<int>(ctx, 0);
       Effect(ctx, (_) {
         unrelated.value;
         return null;
@@ -289,7 +289,7 @@ void _disposalPlaneTests() {
 
     test('is idempotent', () {
       final ctx = Context();
-      final cell = Cell<int>(ctx, 1);
+      final cell = Source<int>(ctx, 1);
       final slot = Slot<int>(ctx, (_) => cell.value);
       expect(slot(), 1);
 
@@ -301,7 +301,7 @@ void _disposalPlaneTests() {
 
     test('detaches edges in both directions', () {
       final ctx = Context();
-      final src = Cell<int>(ctx, 1);
+      final src = Source<int>(ctx, 1);
       final mid = Slot<int>(ctx, (_) => src.value + 1);
       final sink = Slot<int>(ctx, (_) => mid() + 10);
 
@@ -319,7 +319,7 @@ void _disposalPlaneTests() {
 
     test('subscribe/unsubscribe churn returns to baseline', () {
       final ctx = Context();
-      final topic = Cell<int>(ctx, 0);
+      final topic = Source<int>(ctx, 0);
       final subs = <Effect>[
         for (var i = 0; i < 8; i++)
           Effect(ctx, (_) {
@@ -350,7 +350,7 @@ void _disposalPlaneTests() {
       // dependents go before what they read, so a scope never transiently
       // dangles inside itself.
       final ctx = Context();
-      final topic = Cell<int>(ctx, 1);
+      final topic = Source<int>(ctx, 1);
       final cleanups = <String>[];
       final scope = ctx.scope();
       final a = scope.slot<int>((_) => topic.value + 1);
@@ -374,7 +374,7 @@ void _disposalPlaneTests() {
     test('ending is observationally equal to disposing each member', () {
       List<Object> run(bool useScope) {
         final ctx = Context();
-        final topic = Cell<int>(ctx, 1);
+        final topic = Source<int>(ctx, 1);
         final cleanups = <String>[];
         final scope = ctx.scope();
         final a = useScope
@@ -405,7 +405,7 @@ void _disposalPlaneTests() {
 
     test('disarm cancels teardown and disposes nothing', () {
       final ctx = Context();
-      final topic = Cell<int>(ctx, 1);
+      final topic = Source<int>(ctx, 1);
       final scope = ctx.scope();
       final escaped = scope.slot<int>((_) => topic.value);
       expect(escaped(), 1);
@@ -429,7 +429,7 @@ void _disposalPlaneTests() {
 
     test('withScope ends the scope even on a throw', () {
       final ctx = Context();
-      final topic = Cell<int>(ctx, 1);
+      final topic = Source<int>(ctx, 1);
       late Slot<int> leaked;
       expect(
         () => ctx.withScope((scope) {
@@ -445,7 +445,7 @@ void _disposalPlaneTests() {
 
     test('bounds teardown, not visibility', () {
       final ctx = Context();
-      final topic = Cell<int>(ctx, 2);
+      final topic = Source<int>(ctx, 2);
       final parentOwned = Slot<int>(ctx, (_) => topic.value + 3);
 
       final g1 = ctx.scope();
@@ -470,7 +470,7 @@ void _disposalPlaneTests() {
   group('degree introspection', () {
     test('reports counts, and zero for disposed or wrong-kind nodes', () {
       final ctx = Context();
-      final cell = Cell<int>(ctx, 1);
+      final cell = Source<int>(ctx, 1);
       final slot = Slot<int>(ctx, (_) => cell.value);
       final effect = Effect(ctx, (_) {
         slot();

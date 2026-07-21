@@ -80,11 +80,11 @@ class LeaseCore {
 class LeaseCell {
   LeaseCell(this.ctx)
       : core = LeaseCore(),
-        holderCell = Cell<int?>(ctx, null);
+        holderCell = Source<int?>(ctx, null);
 
   final Context ctx;
   final LeaseCore core;
-  final Cell<int?> holderCell;
+  final Source<int?> holderCell;
 
   void _refresh(int now) => holderCell.value = core.holder(now);
 
@@ -130,12 +130,12 @@ enum LeaderRole { leader, follower, candidate }
 class LeaderCell {
   LeaderCell(this.ctx, this.me)
       : core = LeaseCore(),
-        currentLeaderCell = Cell<int?>(ctx, null);
+        currentLeaderCell = Source<int?>(ctx, null);
 
   final Context ctx;
   final int me;
   final LeaseCore core;
-  final Cell<int?> currentLeaderCell;
+  final Source<int?> currentLeaderCell;
 
   void _refresh(int now) => currentLeaderCell.value = core.holder(now);
 
@@ -175,11 +175,11 @@ class LeaderCell {
 class LockCell {
   LockCell(this.ctx)
       : core = LeaseCore(),
-        isLockedCell = Cell<bool>(ctx, false);
+        isLockedCell = Source<bool>(ctx, false);
 
   final Context ctx;
   final LeaseCore core;
-  final Cell<bool> isLockedCell;
+  final Source<bool> isLockedCell;
 
   void _refresh(int now) => isLockedCell.value = core.isHeld(now);
 
@@ -239,11 +239,11 @@ class SemaphoreCore {
 class SemaphoreCell {
   SemaphoreCell(this.ctx, int capacity)
       : core = SemaphoreCore(capacity),
-        permitsAvailableCell = Cell<int>(ctx, capacity);
+        permitsAvailableCell = Source<int>(ctx, capacity);
 
   final Context ctx;
   final SemaphoreCore core;
-  final Cell<int> permitsAvailableCell;
+  final Source<int> permitsAvailableCell;
 
   void _refresh() => permitsAvailableCell.value = core.available();
 
@@ -290,11 +290,11 @@ class BarrierCell {
       : core = BarrierCore(required),
         // No peers have arrived yet, so the gate starts open only if it
         // requires nothing (`0 >= required`) — mirrors `core.isOpen()`.
-        isOpenCell = Cell<bool>(ctx, required <= 0);
+        isOpenCell = Source<bool>(ctx, required <= 0);
 
   final Context ctx;
   final BarrierCore core;
-  final Cell<bool> isOpenCell;
+  final Source<bool> isOpenCell;
 
   /// A quorum gate: opens at a strict majority of [total].
   static BarrierCell quorum(Context ctx, int total) =>

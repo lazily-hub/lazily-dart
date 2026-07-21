@@ -10,16 +10,16 @@ void main() {
       // flushBatch_singleton_eq_setCell: the thread-safe context refines the
       // single-threaded kernel — a singleton batch ≡ setCell.
       final ts = ThreadSafeContext();
-      final cell = ts.cell<int>(0);
+      final cell = ts.source<int>(0);
       final doubled = ts.read((ctx) => Slot<int>(ctx, (_) => cell.value * 2));
       expect(ts.getSlot(doubled), 0);
 
-      ts.setCell(cell, 5);
+      ts.set(cell, 5);
       expect(ts.getSlot(doubled), 10);
 
       // Same observable result as driving a bare Context/Cell directly.
       final ctx2 = Context();
-      final cell2 = Cell<int>(ctx2, 0);
+      final cell2 = Source<int>(ctx2, 0);
       final doubled2 = Slot<int>(ctx2, (_) => cell2.value * 2);
       cell2.set(5);
       expect(doubled2(), ts.getSlot(doubled));
@@ -27,17 +27,17 @@ void main() {
 
     test('withLock gives access to the underlying Context', () {
       final ts = ThreadSafeContext();
-      late Cell<int> cell;
+      late Source<int> cell;
       ts.withLock((ctx) {
-        cell = Cell<int>(ctx, 7);
+        cell = Source<int>(ctx, 7);
       });
-      expect(ts.getCell(cell), 7);
+      expect(ts.get(cell), 7);
       expect(identical(ts.context, ts.context), isTrue);
     });
 
     test('read returns the closure result under the guard', () {
       final ts = ThreadSafeContext();
-      final cell = ts.cell<int>(3);
+      final cell = ts.source<int>(3);
       final v = ts.read((_) => cell.get() + 1);
       expect(v, 4);
     });
@@ -46,8 +46,8 @@ void main() {
   group('ThreadSafeContext reentrancy', () {
     test('withLock body may call batch/setCell without deadlock', () {
       final ts = ThreadSafeContext();
-      final a = ts.cell<int>(1);
-      final b = ts.cell<int>(2);
+      final a = ts.source<int>(1);
+      final b = ts.source<int>(2);
       final sum = ts.read((ctx) => Slot<int>(ctx, (_) => a.value + b.value));
       expect(ts.getSlot(sum), 3);
 
@@ -55,8 +55,8 @@ void main() {
         expect(ts.depth, 1); // inside the guard
         ts.batch(() {
           expect(ts.depth, 2); // reentrant nesting (withLock → batch)
-          ts.setCell(a, 10); // setCell re-enters to depth 3, unwinds to 2
-          ts.setCell(b, 20);
+          ts.set(a, 10); // setCell re-enters to depth 3, unwinds to 2
+          ts.set(b, 20);
           expect(ts.depth, 2); // back at the batch level after each setCell
         });
       });
@@ -69,8 +69,8 @@ void main() {
       expect(ts.depth, 0);
       ts.read((_) => 1);
       expect(ts.depth, 0);
-      final cell = ts.cell<int>(0);
-      ts.setCell(cell, 1);
+      final cell = ts.source<int>(0);
+      ts.set(cell, 1);
       expect(ts.depth, 0);
     });
   });
@@ -78,8 +78,8 @@ void main() {
   group('ThreadSafeContext batch coalescing', () {
     test('batched writes flush once at the outermost boundary', () {
       final ts = ThreadSafeContext();
-      final a = ts.cell<int>(1);
-      final b = ts.cell<int>(2);
+      final a = ts.source<int>(1);
+      final b = ts.source<int>(2);
       var recomputes = 0;
       final sum = ts.read((ctx) => Slot<int>(ctx, (_) {
             recomputes++;
@@ -89,8 +89,8 @@ void main() {
       expect(recomputes, 1);
 
       ts.batch(() {
-        ts.setCell(a, 10);
-        ts.setCell(b, 20);
+        ts.set(a, 10);
+        ts.set(b, 20);
       });
       // Coalesced: both writes → one invalidation → one recompute on next read.
       expect(ts.getSlot(sum), 30);

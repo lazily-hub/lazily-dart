@@ -36,7 +36,7 @@ void main() {
   group('Cell', () {
     test('holds a mutable value', () {
       final ctx = Context();
-      final c = Cell<int>(ctx, 10);
+      final c = Source<int>(ctx, 10);
       expect(c.value, 10);
       c.value = 20;
       expect(c.value, 20);
@@ -44,7 +44,7 @@ void main() {
 
     test('does not cascade when set to an equal value', () {
       final ctx = Context();
-      final c = Cell<int>(ctx, 5);
+      final c = Source<int>(ctx, 5);
       var fired = 0;
       Effect(ctx, (_) {
         c.value;
@@ -60,7 +60,7 @@ void main() {
 
     test('an effect observes changes and can be disposed', () {
       final ctx = Context();
-      final c = Cell<int>(ctx, 0);
+      final c = Source<int>(ctx, 0);
       final seen = <int>[];
       final effect = Effect(ctx, (_) {
         seen.add(c.value);
@@ -78,7 +78,7 @@ void main() {
   group('dependency tracking', () {
     test('a slot recomputes when a cell it reads changes', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 2);
+      final a = Source<int>(ctx, 2);
       final doubled = Slot<int>(ctx, (_) => a.value * 2);
 
       expect(doubled(), 4);
@@ -88,7 +88,7 @@ void main() {
 
     test('diamond: a shared dependency updates both branches and the join', () {
       final ctx = Context();
-      final base = Cell<int>(ctx, 1);
+      final base = Source<int>(ctx, 1);
       var leftCalls = 0;
       var rightCalls = 0;
       var joinCalls = 0;
@@ -121,8 +121,8 @@ void main() {
         'stale edges do not accumulate: each recompute detaches upstream first',
         () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 0);
-      final b = Cell<int>(ctx, 0);
+      final a = Source<int>(ctx, 0);
+      final b = Source<int>(ctx, 0);
       final s = Slot<int>(ctx, (_) => a.value + b.value);
 
       s();
@@ -140,15 +140,15 @@ void main() {
     });
   });
 
-  group('Signal', () {
+  group('eager Computed', () {
     test('computes eagerly at construction', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 3);
+      final a = Source<int>(ctx, 3);
       var calls = 0;
-      final sig = Signal<int>(ctx, (_) {
+      final sig = computed<int>(ctx, (_) {
         calls++;
         return a.value * 10;
-      });
+      }).eager();
       expect(calls, 1); // eager
       expect(sig.value, 30);
       expect(calls, 1); // no recompute from a read
@@ -156,8 +156,8 @@ void main() {
 
     test('recomputes immediately when a dependency changes', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 1);
-      final sig = Signal<int>(ctx, (_) => a.value * 2);
+      final a = Source<int>(ctx, 1);
+      final sig = computed<int>(ctx, (_) => a.value * 2).eager();
       expect(sig.value, 2);
       a.value = 5;
       expect(sig.value, 10); // already updated before read
@@ -166,12 +166,12 @@ void main() {
     test('PartialEq guard suppresses cascade on equal recompute', () {
       final ctx = Context();
       // Signal maps cell through a function whose output is stable for some inputs.
-      final src = Cell<int>(ctx, 0);
+      final src = Source<int>(ctx, 0);
       var computeCalls = 0;
-      final sig = Signal<int>(ctx, (_) {
+      final sig = computed<int>(ctx, (_) {
         computeCalls++;
         return src.value.isEven ? 1 : 1; // always 1
-      });
+      }).eager();
       expect(sig.value, 1);
       final downstream = Slot<int>(ctx, (_) => sig.value + 100);
       expect(downstream(), 101);
@@ -186,16 +186,16 @@ void main() {
 
     test('dispose removes the eager puller and reverts to lazy', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 1);
+      final a = Source<int>(ctx, 1);
       var calls = 0;
-      final sig = Signal<int>(ctx, (_) {
+      final sig = computed<int>(ctx, (_) {
         calls++;
         return a.value;
-      });
+      }).eager();
       expect(sig.value, 1);
       final callsAfterConstruct = calls;
       sig.dispose();
-      expect(sig.isActive, isFalse);
+      expect(sig.isEager, isFalse);
       a.value = 99;
       // No eager recompute after dispose:
       expect(calls, callsAfterConstruct);

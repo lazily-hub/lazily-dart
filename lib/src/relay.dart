@@ -79,15 +79,15 @@ class BackpressurePolicy {
     int highWater,
     int lowWater,
     Overflow overflow,
-  )   : dimension = Cell<BoundDim>(ctx, dimension),
-        highWater = Cell<int>(ctx, highWater),
-        lowWater = Cell<int>(ctx, lowWater),
-        overflow = Cell<Overflow>(ctx, overflow);
+  )   : dimension = Source<BoundDim>(ctx, dimension),
+        highWater = Source<int>(ctx, highWater),
+        lowWater = Source<int>(ctx, lowWater),
+        overflow = Source<Overflow>(ctx, overflow);
 
-  final Cell<BoundDim> dimension;
-  final Cell<int> highWater;
-  final Cell<int> lowWater;
-  final Cell<Overflow> overflow;
+  final Source<BoundDim> dimension;
+  final Source<int> highWater;
+  final Source<int> lowWater;
+  final Source<Overflow> overflow;
 }
 
 /// The algebra-typed conflating relay (Phase 2, in-proc core). The hot head is a
@@ -97,8 +97,8 @@ class BackpressurePolicy {
 /// The empty window is modeled with a nullable `T?` head cell (`null` = empty).
 class RelayCell<T> {
   RelayCell(this.ctx, this.policy, this.mergePolicy)
-      : _head = Cell<T?>(ctx, null),
-        _pending = Cell<int>(ctx, 0) {
+      : _head = Source<T?>(ctx, null),
+        _pending = Source<int>(ctx, 0) {
     if (policy.overflow.peek == Overflow.conflate && !mergePolicy.conflates) {
       throw RelayConfigException(RelayConfigError.conflateNotBounding);
     }
@@ -111,8 +111,8 @@ class RelayCell<T> {
   final BackpressurePolicy policy;
   final MergePolicy<T> mergePolicy;
 
-  final Cell<T?> _head;
-  final Cell<int> _pending;
+  final Source<T?> _head;
+  final Source<int> _pending;
 
   /// Demand-driven reader: current window depth (`Count`). Callable: `depth()`.
   late final Slot<int> depth;

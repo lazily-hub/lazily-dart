@@ -94,11 +94,11 @@ class HealthCore {
 class HealthCell {
   HealthCell(this.ctx)
       : core = HealthCore(),
-        healthCell = Cell<Health>(ctx, Health.healthy);
+        healthCell = Source<Health>(ctx, Health.healthy);
 
   final Context ctx;
   final HealthCore core;
-  final Cell<Health> healthCell;
+  final Source<Health> healthCell;
 
   void _refresh() => healthCell.value = core.health();
 
@@ -134,11 +134,11 @@ class ReadinessCore {
 class ReadinessCell {
   ReadinessCell(this.ctx)
       : core = ReadinessCore(),
-        readyCell = Cell<bool>(ctx, true);
+        readyCell = Source<bool>(ctx, true);
 
   final Context ctx;
   final ReadinessCore core;
-  final Cell<bool> readyCell;
+  final Source<bool> readyCell;
 
   void _refresh() => readyCell.value = core.ready();
 
@@ -182,11 +182,11 @@ class DiscoveryCore<P> {
 class DiscoveryCell<P> {
   DiscoveryCell(this.ctx)
       : core = DiscoveryCore<P>(),
-        discoveryCell = Cell<EndpointMap>(ctx, EndpointMap(const {}));
+        discoveryCell = Source<EndpointMap>(ctx, EndpointMap(const {}));
 
   final Context ctx;
   final DiscoveryCore<P> core;
-  final Cell<EndpointMap> discoveryCell;
+  final Source<EndpointMap> discoveryCell;
 
   void _refresh() => discoveryCell.value = EndpointMap(core.discovery());
 
@@ -275,11 +275,11 @@ class ServiceRegistryCore {
 class ServiceRegistry {
   ServiceRegistry(this.ctx)
       : core = ServiceRegistryCore(),
-        projectionCell = Cell<EndpointMap>(ctx, EndpointMap(const {}));
+        projectionCell = Source<EndpointMap>(ctx, EndpointMap(const {}));
 
   final Context ctx;
   final ServiceRegistryCore core;
-  final Cell<EndpointMap> projectionCell;
+  final Source<EndpointMap> projectionCell;
 
   void _refresh() => projectionCell.value = EndpointMap(core.projection());
 

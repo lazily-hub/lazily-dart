@@ -17,7 +17,7 @@ import 'core.dart';
 /// current value. Lets a single replay harness drive every operator.
 abstract class RateShapeCell<T extends Object> {
   /// The reactive cell the emitted value is projected onto.
-  Cell<T?> get outputCell;
+  Source<T?> get outputCell;
 
   /// The current projected output (`null` before the first emit).
   T? output();
@@ -62,12 +62,12 @@ class DebounceCore<T extends Object> {
 class DebounceCell<T extends Object> implements RateShapeCell<T> {
   DebounceCell(this.ctx, int quiet)
       : core = DebounceCore<T>(quiet),
-        outputCell = Cell<T?>(ctx, null);
+        outputCell = Source<T?>(ctx, null);
 
   final Context ctx;
   final DebounceCore<T> core;
   @override
-  final Cell<T?> outputCell;
+  final Source<T?> outputCell;
 
   void input(int now, T v) => core.input(now, v);
 
@@ -137,12 +137,12 @@ class ThrottleCore<T extends Object> {
 class ThrottleCell<T extends Object> implements RateShapeCell<T> {
   ThrottleCell(this.ctx, ThrottleEdge edge, int window)
       : core = ThrottleCore<T>(edge, window),
-        outputCell = Cell<T?>(ctx, null);
+        outputCell = Source<T?>(ctx, null);
 
   final Context ctx;
   final ThrottleCore<T> core;
   @override
-  final Cell<T?> outputCell;
+  final Source<T?> outputCell;
 
   T? input(int now, T v) {
     final emitted = core.input(now, v);
@@ -221,12 +221,12 @@ class SampleCore<T extends Object> {
 class SampleCell<T extends Object> implements RateShapeCell<T> {
   SampleCell(this.ctx, SampleMode mode)
       : core = SampleCore<T>(mode),
-        outputCell = Cell<T?>(ctx, null);
+        outputCell = Source<T?>(ctx, null);
 
   final Context ctx;
   final SampleCore<T> core;
   @override
-  final Cell<T?> outputCell;
+  final Source<T?> outputCell;
 
   T? input(T v) {
     final emitted = core.input(v);
@@ -289,13 +289,13 @@ class ProbabilisticSampleCore {
 class ProbabilisticSampleCell<T extends Object> implements RateShapeCell<T> {
   ProbabilisticSampleCell(this.ctx, double rate, this.rng)
       : core = ProbabilisticSampleCore(rate),
-        outputCell = Cell<T?>(ctx, null);
+        outputCell = Source<T?>(ctx, null);
 
   final Context ctx;
   final ProbabilisticSampleCore core;
   final Rng rng;
   @override
-  final Cell<T?> outputCell;
+  final Source<T?> outputCell;
 
   T? input(T v) => inputWithDraw(v, rng.nextDouble());
 

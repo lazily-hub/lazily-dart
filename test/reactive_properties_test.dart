@@ -5,7 +5,7 @@ import 'package:test/test.dart';
 // properties established by the Lean `LazilyFormal.Reactive` formal model in
 // `lazily-formal`. These are the guarantees no finite fixture suite can
 // establish: the `PartialEq` cell-write guard, the memo-equality suppression
-// guard, and the eager-`Signal` materialization invariant.
+// guard, and the eager-`computed().eager()` materialization invariant.
 //
 // Each test names the Lean theorem it mirrors and exercises the Dart
 // implementation against the theorem's statement. `test/formal_check_test.dart`
@@ -20,7 +20,7 @@ void main() {
   // ===========================================================================
   test('Lean setCell_equal_preserves_graph: equal setCell invalidates no dependent', () {
     final ctx = Context();
-    final a = Cell<int>(ctx, 2);
+    final a = Source<int>(ctx, 2);
 
     var slotFires = 0;
     final dependent = Slot<int>(ctx, (_) {
@@ -53,11 +53,11 @@ void main() {
   // ===========================================================================
   test('Lean setCell_different_invalidates_dependents: different setCell invalidates every direct dependent', () {
     final ctx = Context();
-    final a = Cell<int>(ctx, 1);
+    final a = Source<int>(ctx, 1);
 
     // Two flavors of direct dependent: lazy slot, eager signal.
     final lazy = Slot<int>(ctx, (_) => a.value + 1);
-    final eager = Signal<int>(ctx, (_) => a.value * 10);
+    final eager = computed<int>(ctx, (_) => a.value * 10).eager();
 
     expect(lazy(), 2); // materialize
     expect(eager.value, 10); // materialize
@@ -77,14 +77,14 @@ void main() {
   // ===========================================================================
   test('Lean recomputeSlot_equal_preserves_dependents: a signal that recomputes to an equal value leaves downstream untouched', () {
     final ctx = Context();
-    final toggle = Cell<String>(ctx, 'x');
+    final toggle = Source<String>(ctx, 'x');
     // A signal whose OUTPUT is stable even when its input flips: it derives
     // a constant `42` regardless of `toggle`. The memo guard must observe
     // equality and suppress downstream propagation.
-    final stable = Signal<int>(ctx, (_) {
+    final stable = computed<int>(ctx, (_) {
       toggle.value; // register the edge, even though output is constant
       return 42;
-    });
+    }).eager();
 
     var downstreamFires = 0;
     final downstream = Slot<int>(ctx, (_) {
@@ -111,8 +111,8 @@ void main() {
   // ===========================================================================
   test('Lean recomputeSlot_different_invalidates_dependents: a strictly-different signal recompute invalidates every direct dependent', () {
     final ctx = Context();
-    final src = Cell<int>(ctx, 1);
-    final sig = Signal<int>(ctx, (_) => src.value * 2);
+    final src = Source<int>(ctx, 1);
+    final sig = computed<int>(ctx, (_) => src.value * 2).eager();
 
     final lazyChild = Slot<int>(ctx, (_) => sig.value + 1);
     expect(lazyChild(), 3); // materialize
@@ -131,8 +131,8 @@ void main() {
   // ===========================================================================
   test('Lean signal_materialized_after_recompute: after a dependency change the signal is already materialized (not lazy)', () {
     final ctx = Context();
-    final a = Cell<int>(ctx, 1);
-    final sig = Signal<int>(ctx, (_) => a.value + 100);
+    final a = Source<int>(ctx, 1);
+    final sig = computed<int>(ctx, (_) => a.value + 100).eager();
 
     expect(sig.value, 101); // materialize
 

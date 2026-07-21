@@ -97,11 +97,11 @@ class CircuitBreakerCell {
     int failureThreshold,
     int resetTimeout,
   )   : core = CircuitBreakerCore(window, failureThreshold, resetTimeout),
-        stateCell = Cell<BreakerState>(ctx, BreakerState.closed);
+        stateCell = Source<BreakerState>(ctx, BreakerState.closed);
 
   final Context ctx;
   final CircuitBreakerCore core;
-  final Cell<BreakerState> stateCell;
+  final Source<BreakerState> stateCell;
 
   void _refresh() {
     stateCell.value = core.state;
@@ -158,11 +158,11 @@ class RetryPolicyCore {
 class RetryPolicyCell {
   RetryPolicyCell(this.ctx, int base, int cap)
       : core = RetryPolicyCore(base, cap),
-        delayCell = Cell<int>(ctx, 0);
+        delayCell = Source<int>(ctx, 0);
 
   final Context ctx;
   final RetryPolicyCore core;
-  final Cell<int> delayCell;
+  final Source<int> delayCell;
 
   int nextDelay() {
     final d = core.nextDelay();
@@ -207,11 +207,11 @@ class BulkheadCore {
 class BulkheadCell {
   BulkheadCell(this.ctx, int capacity)
       : core = BulkheadCore(capacity),
-        inUseCell = Cell<int>(ctx, 0);
+        inUseCell = Source<int>(ctx, 0);
 
   final Context ctx;
   final BulkheadCore core;
-  final Cell<int> inUseCell;
+  final Source<int> inUseCell;
 
   void _refresh() {
     inUseCell.value = core.inUse;
@@ -265,11 +265,11 @@ class TimeoutCore {
 class TimeoutCell {
   TimeoutCell(this.ctx)
       : core = TimeoutCore(),
-        timedOutCell = Cell<bool>(ctx, false);
+        timedOutCell = Source<bool>(ctx, false);
 
   final Context ctx;
   final TimeoutCore core;
-  final Cell<bool> timedOutCell;
+  final Source<bool> timedOutCell;
 
   void _refresh() {
     timedOutCell.value = core.isTimedOut();

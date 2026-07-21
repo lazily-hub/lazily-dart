@@ -279,7 +279,7 @@ class _SyncModel implements _Model {
 
   @override
   void defineCell(String id, num value, String? scope) {
-    final cell = Cell<num>(ctx, value);
+    final cell = Source<num>(ctx, value);
     if (scope != null) scopes[scope]!.adopt(cell);
     nodes[id] = cell;
   }
@@ -323,7 +323,7 @@ class _SyncModel implements _Model {
   Future<void> runBatch(List<(String, num)> writes) async {
     ctx.batch(() {
       for (final (id, value) in writes) {
-        (nodes[id] as Cell<num>).value = value;
+        (nodes[id] as Source<num>).value = value;
       }
     });
   }
@@ -362,7 +362,7 @@ class _SyncModel implements _Model {
   @override
   Future<void> setCell(String id, num value) async {
     final cell = nodes[id];
-    if (cell is! Cell<num>) throw StateError('set_cell on non-cell $id');
+    if (cell is! Source<num>) throw StateError('set_cell on non-cell $id');
     cell.value = value;
   }
 

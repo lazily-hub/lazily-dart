@@ -5,7 +5,7 @@ void main() {
   group('Effect', () {
     test('runs on creation and reruns on dependency change', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 1);
+      final a = Source<int>(ctx, 1);
       final log = <int>[];
       Effect(ctx, (_) {
         log.add(a.value);
@@ -20,7 +20,7 @@ void main() {
 
     test('cleanup runs before rerun and on dispose', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 0);
+      final a = Source<int>(ctx, 0);
       final cleanups = <int>[];
       final effect = Effect(ctx, (_) {
         final seen = a.value;
@@ -36,8 +36,8 @@ void main() {
 
     test('does not rerun when an unrelated cell changes', () {
       final ctx = Context();
-      final tracked = Cell<int>(ctx, 10);
-      final untracked = Cell<int>(ctx, 100);
+      final tracked = Source<int>(ctx, 10);
+      final untracked = Source<int>(ctx, 100);
       var runs = 0;
       Effect(ctx, (_) {
         tracked.value;
@@ -53,7 +53,7 @@ void main() {
 
     test('isActive is false after dispose', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 0);
+      final a = Source<int>(ctx, 0);
       final effect = Effect(ctx, (_) {
         a.value;
         return null;
@@ -67,7 +67,7 @@ void main() {
   group('Computed (guarded)', () {
     test('suppresses downstream when recomputed value is equal', () {
       final ctx = Context();
-      final width = Cell<int>(ctx, 4);
+      final width = Source<int>(ctx, 4);
       final parity =
           computed<String>(ctx, (_) => width.value.isEven ? 'even' : 'odd');
       var effectRuns = 0;
@@ -88,8 +88,8 @@ void main() {
 
     test('returns the cached value on read', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 2);
-      final b = Cell<int>(ctx, 3);
+      final a = Source<int>(ctx, 2);
+      final b = Source<int>(ctx, 3);
       final sum = computed<int>(ctx, (_) => a.value + b.value);
       expect(sum(), 5);
       a.value = 10;
@@ -98,7 +98,7 @@ void main() {
 
     test('cascades normally when value changes', () {
       final ctx = Context();
-      final src = Cell<int>(ctx, 1);
+      final src = Source<int>(ctx, 1);
       final doubled = computed<int>(ctx, (_) => src.value * 2);
       final quadrupled = computed<int>(ctx, (_) => doubled() * 2);
       expect(quadrupled(), 4);
@@ -110,8 +110,8 @@ void main() {
   group('batch', () {
     test('coalesces multiple cell writes into one cascade', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 1);
-      final b = Cell<int>(ctx, 2);
+      final a = Source<int>(ctx, 1);
+      final b = Source<int>(ctx, 2);
       var runs = 0;
       Effect(ctx, (_) {
         a.value;
@@ -129,7 +129,7 @@ void main() {
 
     test('nested batch defers to outermost exit', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 0);
+      final a = Source<int>(ctx, 0);
       var runs = 0;
       Effect(ctx, (_) {
         a.value;
@@ -151,7 +151,7 @@ void main() {
 
     test('cell writes inside batch are visible immediately', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 0);
+      final a = Source<int>(ctx, 0);
       ctx.batch(() {
         a.value = 42;
         expect(a.peek, 42);
@@ -160,7 +160,7 @@ void main() {
 
     test('no-op batch does not trigger spurious effects', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 1);
+      final a = Source<int>(ctx, 1);
       var runs = 0;
       Effect(ctx, (_) {
         a.value;
@@ -174,7 +174,7 @@ void main() {
 
     test('equal writes inside batch are absorbed', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 5);
+      final a = Source<int>(ctx, 5);
       var runs = 0;
       Effect(ctx, (_) {
         a.value;

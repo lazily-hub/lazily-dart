@@ -347,7 +347,7 @@ class QueueCell<T> {
     _lenSlot = Slot<int>(ctx, (_) => s.len());
     _isEmptySlot = Slot<bool>(ctx, (_) => s.len() == 0);
     _isFullSlot = Slot<bool>(ctx, (_) => cap != null && s.len() >= cap);
-    _closedCell = Cell<bool>(ctx, s.isClosed());
+    _closedCell = Source<bool>(ctx, s.isClosed());
   }
 
   /// Create an unbounded queue (the default reference backend).
@@ -375,7 +375,7 @@ class QueueCell<T> {
   late final Slot<int> _lenSlot;
   late final Slot<bool> _isEmptySlot;
   late final Slot<bool> _isFullSlot;
-  late final Cell<bool> _closedCell;
+  late final Source<bool> _closedCell;
 
   // `capacity` is an optional, fixed backend capability — cached once.
   late final int? _capacity;

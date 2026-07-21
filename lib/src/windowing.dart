@@ -164,10 +164,10 @@ class SessionCore<T> {
 /// Writes only on a real emit (non-`null`), so the cell's `!=` guard means
 /// dependents invalidate only when a window actually fires a new aggregate.
 class _WindowOutput<T> {
-  _WindowOutput(this.ctx) : outputCell = Cell<T?>(ctx, null);
+  _WindowOutput(this.ctx) : outputCell = Source<T?>(ctx, null);
 
   final Context ctx;
-  final Cell<T?> outputCell;
+  final Source<T?> outputCell;
 
   T? emit(T? e) {
     if (e != null) outputCell.value = e;
@@ -187,7 +187,7 @@ class TumblingCountWindow<T> {
   final _WindowOutput<T> _out;
 
   /// The reactive output cell projecting the last emitted aggregate.
-  Cell<T?> get outputCell => _out.outputCell;
+  Source<T?> get outputCell => _out.outputCell;
 
   T? push(T v) => _out.emit(core.push(v));
 
@@ -204,7 +204,7 @@ class TumblingTimeWindow<T> {
   final _WindowOutput<T> _out;
 
   /// The reactive output cell projecting the last emitted aggregate.
-  Cell<T?> get outputCell => _out.outputCell;
+  Source<T?> get outputCell => _out.outputCell;
 
   void push(int now, T v) => core.push(now, v);
 
@@ -223,7 +223,7 @@ class SlidingWindow<T> {
   final _WindowOutput<T> _out;
 
   /// The reactive output cell projecting the last emitted aggregate.
-  Cell<T?> get outputCell => _out.outputCell;
+  Source<T?> get outputCell => _out.outputCell;
 
   T? push(T v) => _out.emit(core.push(v));
 
@@ -240,7 +240,7 @@ class SessionWindow<T> {
   final _WindowOutput<T> _out;
 
   /// The reactive output cell projecting the last emitted aggregate.
-  Cell<T?> get outputCell => _out.outputCell;
+  Source<T?> get outputCell => _out.outputCell;
 
   T? push(int now, T v) => _out.emit(core.push(now, v));
 

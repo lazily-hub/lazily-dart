@@ -68,11 +68,11 @@ class EphemeralCore<T> with Ephemeral {
 class EphemeralCell<T> with Ephemeral {
   EphemeralCell(this.ctx)
       : core = EphemeralCore<T>(),
-        valueCell = Cell<T?>(ctx, null);
+        valueCell = Source<T?>(ctx, null);
 
   final Context ctx;
   final EphemeralCore<T> core;
-  final Cell<T?> valueCell;
+  final Source<T?> valueCell;
 
   /// The ephemeral plane tag.
   Plane get plane => Plane.ephemeral;
@@ -183,12 +183,12 @@ abstract class EphemeralMapCell<K extends Comparable<Object?>, V>
   EphemeralMapCell(this.ctx, this.ttl)
       : core = EphemeralMapCore<K, V>(),
         presentCell =
-            Cell<PresenceView<K, V>>(ctx, PresenceView<K, V>(<K, V>{}));
+            Source<PresenceView<K, V>>(ctx, PresenceView<K, V>(<K, V>{}));
 
   final Context ctx;
   final int ttl;
   final EphemeralMapCore<K, V> core;
-  final Cell<PresenceView<K, V>> presentCell;
+  final Source<PresenceView<K, V>> presentCell;
 
   /// The ephemeral plane tag.
   Plane get plane => Plane.ephemeral;

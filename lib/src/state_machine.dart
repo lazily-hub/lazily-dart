@@ -24,17 +24,17 @@ class StateMachine<S, E> {
   /// Creates a machine bound to [ctx] with [initial] state and [transition].
   StateMachine(this.ctx, S initial, S? Function(S state, E event) transition)
       : _transition = transition,
-        _cell = Cell<S>(ctx, initial);
+        _cell = Source<S>(ctx, initial);
 
   final Context ctx;
-  final Cell<S> _cell;
+  final Source<S> _cell;
   final S? Function(S state, E event) _transition;
 
   /// The current state. Reading inside a computation subscribes the reader.
   S get state => _cell.value;
 
   /// The underlying [Cell] holding the state value.
-  Cell<S> get cell => _cell;
+  Source<S> get cell => _cell;
 
   /// Send an event to the machine.
   ///

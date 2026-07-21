@@ -77,8 +77,8 @@ enum EntryKind {
 /// the Dart form of the `MapHandle` trait.
 abstract class ReactiveMap<K, V, H> {
   ReactiveMap(this.ctx)
-      : _membership = Cell<int>(ctx, 0),
-        _orderSignal = Cell<int>(ctx, 0);
+      : _membership = Source<int>(ctx, 0),
+        _orderSignal = Source<int>(ctx, 0);
 
   final Context ctx;
   final Map<K, H> _entries = {};
@@ -86,10 +86,10 @@ abstract class ReactiveMap<K, V, H> {
 
   /// Reactive *set-membership* signal: a monotonic version bumped only when the
   /// **set** of keys changes (add/remove).
-  final Cell<int> _membership;
+  final Source<int> _membership;
 
   /// Reactive *order* signal: bumped on add/remove **and on move/reorder**.
-  final Cell<int> _orderSignal;
+  final Source<int> _orderSignal;
 
   int _membershipVersion = 0;
   int _orderVersion = 0;
@@ -268,7 +268,7 @@ abstract class ReactiveMap<K, V, H> {
 ///
 /// Adds cell-only [set] and eager value-minting ([entry] / [entryWith]) on top
 /// of the shared reactive keyed surface. Mirrors `lazily-rs::CellMap`.
-class CellMap<K, V> extends ReactiveMap<K, V, Cell<V>> {
+class CellMap<K, V> extends ReactiveMap<K, V, Source<V>> {
   CellMap(super.ctx);
 
   @override
@@ -276,29 +276,29 @@ class CellMap<K, V> extends ReactiveMap<K, V, Cell<V>> {
 
   @override
   // An input has no derivation: materialize by setting its value directly.
-  Cell<V> _materializeHandle(V Function() compute) => Cell<V>(ctx, compute());
+  Source<V> _materializeHandle(V Function() compute) => Source<V>(ctx, compute());
 
   @override
-  V _observeHandle(Cell<V> handle) => handle.value;
+  V _observeHandle(Source<V> handle) => handle.value;
 
   @override
   // Invalidate the orphaned cell's dependents (mirrors lazily-rs
   // `CellHandle::clear_dependents`).
-  void _clearHandle(Cell<V> handle) => handle.invalidate();
+  void _clearHandle(Source<V> handle) => handle.invalidate();
 
   /// Return the value cell for [key], minting it with [defaultValue] on first
   /// access. Adding a new key bumps reactive membership; re-fetching an existing
   /// key does not. Cell-only: eager value-minting has no derived-slot analog.
-  Cell<V> entryWith(K key, V Function() defaultValue) =>
+  Source<V> entryWith(K key, V Function() defaultValue) =>
       _mintWith(key, defaultValue);
 
   /// Return the value cell for [key], minting it with [defaultValue] on first
   /// access. Convenience wrapper over [entryWith].
-  Cell<V> entry(K key, V defaultValue) => entryWith(key, () => defaultValue);
+  Source<V> entry(K key, V defaultValue) => entryWith(key, () => defaultValue);
 
   /// The existing value cell for [key], or `null`. Non-reactive: does not
   /// subscribe the caller to membership. Alias for [handle].
-  Cell<V>? cell(K key) => handle(key);
+  Source<V>? cell(K key) => handle(key);
 
   /// Read the value at [key] if present, without registering a dependency
   /// (non-reactive peek).
@@ -662,12 +662,12 @@ List<int> _longestIncreasingSubsequence(List<int> seq) {
 /// (path-based). This Dart port is recursive like Rust.
 class CellTree<K, V> {
   CellTree(this.ctx, this.id, V initialValue)
-      : value = Cell<V>(ctx, initialValue),
+      : value = Source<V>(ctx, initialValue),
         children = CellMap<K, CellTree<K, V>>(ctx);
 
   final Context ctx;
   final K id;
-  final Cell<V> value;
+  final Source<V> value;
   final CellMap<K, CellTree<K, V>> children;
 
   /// Read this node's value (reactive).

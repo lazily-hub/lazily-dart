@@ -367,7 +367,7 @@ class StateChart {
     final enter = <String>{};
     final actions = <String>[];
     _enterSubtree(def.root, enter, actions);
-    _config = Cell<Configuration>(ctx, Configuration(enter));
+    _config = Source<Configuration>(ctx, Configuration(enter));
     _lastActions = actions;
   }
 
@@ -382,7 +382,7 @@ class StateChart {
   /// Actions fired by the initial entry or the most recent [send]
   /// (exit innermost-first → transition → entry outermost-first).
   List<String> _lastActions;
-  late final Cell<Configuration> _config;
+  late final Source<Configuration> _config;
 
   /// Ordered action names fired by the initial entry or the most recent [send].
   List<String> lastActions() => List<String>.unmodifiable(_lastActions);

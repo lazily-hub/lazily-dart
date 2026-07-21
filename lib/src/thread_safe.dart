@@ -100,28 +100,51 @@ class ThreadSafeContext {
 
   // -- Reactive creation (guarded passthroughs) --------------------------------
 
-  /// Create a [Cell] under the guard.
-  Cell<T> cell<T>(T value) => read((ctx) => Cell<T>(ctx, value));
+  /// Create a [Source] (source cell) under the guard.
+  Source<T> source<T>(T value) => read((ctx) => Source<T>(ctx, value));
 
-  /// Create a lazy [Slot] under the guard.
+  /// Deprecated alias for [source] (`#lzcellkernel`).
+  @Deprecated('Use source — the canonical source-cell constructor (#lzcellkernel)')
+  Source<T> cell<T>(T value) => source<T>(value);
+
+  /// Create a guarded [Computed] under the guard.
+  Computed<T> computed<T>(T Function(Context ctx) compute) =>
+      read((ctx) => Computed<T>(ctx, compute));
+
+  /// Create a lazy, unguarded [Slot] under the guard. Retained as the
+  /// lower-level unguarded primitive (dart keeps [Slot] distinct from the
+  /// guarded [Computed]); prefer [computed] for a guarded derived value.
   Slot<T> slot<T>(T Function(Context ctx) compute) =>
       read((ctx) => Slot<T>(ctx, compute));
 
   // -- Reads (guarded passthroughs) --------------------------------------------
 
-  /// Read a [Cell] value under the guard.
-  T getCell<T>(Cell<T> cell) => read((_) => cell.get());
+  /// Read a [Source] value under the guard — the unified cell read
+  /// (`#lzcellkernel`).
+  T get<T>(Source<T> handle) => read((_) => handle.get());
+
+  /// Deprecated alias for [get] (`#lzcellkernel`).
+  @Deprecated('Use get — the unified cell read (#lzcellkernel)')
+  T getCell<T>(Source<T> cell) => get<T>(cell);
+
+  /// Read a guarded [Computed] value under the guard.
+  T getComputed<T>(Computed<T> handle) => read((_) => handle.get());
 
   /// Read a [Slot] value under the guard.
   T getSlot<T>(Slot<T> slot) => read((_) => slot.call());
 
   // -- Writes (guarded passthroughs) -------------------------------------------
 
-  /// Write a [Cell] value under the guard. Outside a [batch] it applies
-  /// immediately (a singleton batch ≡ [Cell.set], per
+  /// Write a [Source] value under the guard — the unified cell write
+  /// (`#lzcellkernel`; only source cells are writable). Outside a [batch] it
+  /// applies immediately (a singleton batch ≡ [Source.set], per
   /// `flushBatch_singleton_eq_setCell`); inside a [batch] it defers to the
   /// coalesced flush. Reentrant.
-  void setCell<T>(Cell<T> cell, T value) => withLock((_) => cell.set(value));
+  void set<T>(Source<T> handle, T value) => withLock((_) => handle.set(value));
+
+  /// Deprecated alias for [set] (`#lzcellkernel`).
+  @Deprecated('Use set — the unified cell write (#lzcellkernel)')
+  void setCell<T>(Source<T> cell, T value) => set<T>(cell, value);
 }
 
 // --- pure batch-flush kernel (faithful port of the Lean ThreadSafe model) --- //

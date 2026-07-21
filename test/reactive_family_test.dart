@@ -90,7 +90,7 @@ void main() {
 
     test('a derived slot recomputes when an upstream cell changes', () {
       final ctx = Context();
-      final base = Cell<int>(ctx, 2);
+      final base = Source<int>(ctx, 2);
       final fam = SlotMap<int, int>(ctx);
       expect(fam.getOrInsertWith(3, (k) => base.value * k), 6);
       base.value = 10;

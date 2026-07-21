@@ -134,10 +134,10 @@ class PnCounter {
 /// (LWW, MV, or custom).
 class CellCrdt<T> {
   CellCrdt(this.ctx, T initial, this._merge)
-      : _cell = Cell<T>(ctx, initial);
+      : _cell = Source<T>(ctx, initial);
 
   final Context ctx;
-  final Cell<T> _cell;
+  final Source<T> _cell;
   final T Function(T current, T incoming) _merge;
 
   /// The current merged value (reactive read).
@@ -149,5 +149,5 @@ class CellCrdt<T> {
   }
 
   /// The underlying cell.
-  Cell<T> get cell => _cell;
+  Source<T> get cell => _cell;
 }

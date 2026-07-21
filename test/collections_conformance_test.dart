@@ -126,7 +126,7 @@ void _runStepsFixture(String name) {
             .map((e) => e.key)
             .toList() ??
         const <String>[];
-    final handlesBefore = <String, Cell<int>>{
+    final handlesBefore = <String, Source<int>>{
       for (final k in handleStableKeys) k: map.cell(k)!,
     };
 

@@ -48,21 +48,21 @@ List<BenchmarkResult> runBenchmarkSuite({int iterations = 10000}) {
   return [
     benchmark('Cell read/write', () {
       final ctx = Context();
-      final c = Cell<int>(ctx, 0);
+      final c = Source<int>(ctx, 0);
       c.value = 42;
       c.value;
     }, iterations: iterations),
     benchmark('Slot recompute', () {
       final ctx = Context();
-      final a = Cell<int>(ctx, 1);
-      final b = Cell<int>(ctx, 2);
+      final a = Source<int>(ctx, 1);
+      final b = Source<int>(ctx, 2);
       final sum = Slot<int>(ctx, (_) => a.value + b.value);
       a.value = 10;
       sum();
     }, iterations: iterations),
     benchmark('Computed equality guard (cache hit)', () {
       final ctx = Context();
-      final src = Cell<int>(ctx, 4);
+      final src = Source<int>(ctx, 4);
       final parity =
           computed<String>(ctx, (_) => src.value.isEven ? 'even' : 'odd');
       src.value = 6; // still even — the guard suppresses
@@ -70,7 +70,7 @@ List<BenchmarkResult> runBenchmarkSuite({int iterations = 10000}) {
     }, iterations: iterations),
     benchmark('batch coalesce (10 cells)', () {
       final ctx = Context();
-      final cells = [for (var i = 0; i < 10; i++) Cell<int>(ctx, i)];
+      final cells = [for (var i = 0; i < 10; i++) Source<int>(ctx, i)];
       Effect(ctx, (_) {
         for (final c in cells) {
           c.value;

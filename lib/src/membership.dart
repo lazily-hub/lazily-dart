@@ -294,20 +294,20 @@ bool _listEquals<P>(List<P> a, List<P> b) {
 
 /// The derived reactive alive-peer set — a `Cell<List<P>>` projected by
 /// [MembershipCell].
-typedef PeerSet<P extends Comparable> = Cell<List<P>>;
+typedef PeerSet<P extends Comparable> = Source<List<P>>;
 
 /// Reactive membership: drives a [MembershipCore] and projects the alive set
 /// onto a [Context] [Cell] so [peerSet] invalidates only on a set change.
 class MembershipCell<P extends Comparable> {
   MembershipCell(this.ctx, [MembershipConfig config = const MembershipConfig()])
       : core = MembershipCore<P>(config),
-        peerSetCell = Cell<List<P>>(ctx, <P>[]);
+        peerSetCell = Source<List<P>>(ctx, <P>[]);
 
   final Context ctx;
   final MembershipCore<P> core;
 
   /// The backing `PeerSet` cell, for direct subscription.
-  final Cell<List<P>> peerSetCell;
+  final Source<List<P>> peerSetCell;
 
   void _refresh() {
     final next = core.aliveSet();

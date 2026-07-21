@@ -63,7 +63,7 @@ void main() {
   group('MergeCell', () {
     test('Cell == MergeCell(KeepLatest)', () {
       final ctx = Context();
-      final cell = Cell<int>(ctx, 0);
+      final cell = Source<int>(ctx, 0);
       final mc = mergeCell(ctx, 0, keepLatest<int>());
       for (final v in [3, 3, 7, 7, 1]) {
         cell.set(v);

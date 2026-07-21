@@ -38,11 +38,11 @@ class TimerCore {
 class TimerCell {
   TimerCell(this.ctx, int fireAt)
       : core = TimerCore(fireAt),
-        firedCell = Cell<bool>(ctx, false);
+        firedCell = Source<bool>(ctx, false);
 
   final Context ctx;
   final TimerCore core;
-  final Cell<bool> firedCell;
+  final Source<bool> firedCell;
 
   bool tick(int now) {
     final edge = core.tick(now);
@@ -91,11 +91,11 @@ class IntervalCore {
 class IntervalCell {
   IntervalCell(this.ctx, int period)
       : core = IntervalCore(period),
-        countCell = Cell<int>(ctx, 0);
+        countCell = Source<int>(ctx, 0);
 
   final Context ctx;
   final IntervalCore core;
-  final Cell<int> countCell;
+  final Source<int> countCell;
 
   bool tick(int now) {
     final edge = core.tick(now);
@@ -179,11 +179,11 @@ class CronCore {
 class CronCell {
   CronCell(this.ctx, int cycle, List<int> offsets)
       : core = CronCore(cycle, offsets),
-        countCell = Cell<int>(ctx, 0);
+        countCell = Source<int>(ctx, 0);
 
   final Context ctx;
   final CronCore core;
-  final Cell<int> countCell;
+  final Source<int> countCell;
 
   bool tick(int now) {
     final edge = core.tick(now);
@@ -230,12 +230,12 @@ class DeadlineState<T> {
 class DeadlineCell<T> {
   DeadlineCell(this.ctx, this.value, int deadline)
       : core = DeadlineCore(deadline),
-        expiredCell = Cell<bool>(ctx, false);
+        expiredCell = Source<bool>(ctx, false);
 
   final Context ctx;
   final T value;
   final DeadlineCore core;
-  final Cell<bool> expiredCell;
+  final Source<bool> expiredCell;
 
   bool tick(int now) {
     final edge = core.tick(now);

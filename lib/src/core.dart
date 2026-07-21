@@ -37,8 +37,8 @@
 /// kind. Because the only way to make a computed eager is to attach a
 /// *scheduled* Effect, the `#lzsignaleager` per-write puller — recomputing
 /// inline during the invalidation wave — is structurally unrepresentable here.
-/// `Signal` / `signal` are retained as thin back-compat aliases for an eager
-/// [Computed].
+/// The former standalone `Signal` / `signal` are **gone** — an eager derived
+/// value is spelled `computed(ctx, f).eager()`.
 ///
 /// Values are **lazy by default**: dependents are marked dirty on invalidation
 /// but only recompute when accessed. When you need eager push-style semantics,
@@ -106,7 +106,7 @@ const int edgeIndexDemoteThreshold = edgeIndexPromoteThreshold ~/ 4;
 /// A node in a [Context]'s reactive graph (`#lzspecedgeindex`).
 ///
 /// Sealed: [Slot] (and its guarded backing), [Source] (a.k.a. [Cell]),
-/// [Computed] (and its back-compat subclass [Signal]), and [Effect] are the
+/// [Computed], and [Effect] are the
 /// only implementations, and the type cannot be
 /// implemented downstream. It exists so [Context.dependentCount],
 /// [Context.dependencyCount], [Context.disposeNode], and [TeardownScope] can
@@ -964,12 +964,14 @@ class Source<T> extends _ReactiveNode {
   String toString() => 'Source($_value)';
 }
 
-/// Retained compatibility spelling of [Source] (`#lzcellkernel` v2).
+/// Deprecated compatibility spelling of [Source] (`#lzcellkernel` v2).
 ///
 /// **Cell** is the value-node *concept* in v2 — a reactive that holds a readable
-/// value — not a genus type: there is no `Cell<T, K>`. This alias keeps the
-/// pervasive `Cell<T>` call sites and the `Source ≡ MergeCell(KeepLatest)`
-/// identity readable; the concrete handle is [Source].
+/// value — not a genus type: there is no `Cell<T, K>`. The concrete
+/// source-cell handle is [Source] (`Source ≡ MergeCell(KeepLatest)`); use it
+/// directly. This alias is retained only so existing `Cell<T>` call sites keep
+/// compiling.
+@Deprecated('Use Source — the canonical source-cell handle (#lzcellkernel)')
 typedef Cell<T> = Source<T>;
 
 /// Create a [Source] (a keep-latest cell) over [ctx].
@@ -1140,9 +1142,6 @@ class Computed<T> extends _ReactiveNode {
   /// Whether this computed is currently eager (has an active puller).
   bool get isEager => _eager;
 
-  /// Deprecated alias for [isEager] (the former `Signal.isActive`).
-  bool get isActive => _eager;
-
   @override
   void onInvalidate() {
     // The computed holds its materialized value directly; nothing to evict. The
@@ -1174,18 +1173,6 @@ class Computed<T> extends _ReactiveNode {
 ///     doubled.value; // 2, kept fresh eagerly
 Computed<T> computed<T>(Context ctx, T Function(Context ctx) compute) =>
     Computed<T>(ctx, compute);
-
-/// Back-compat: an eager [Computed].
-///
-/// `Signal(ctx, f)` is exactly `computed(ctx, f).eager()` — a computed that is
-/// eager at construction, the behaviour the former standalone `Signal` had.
-/// Prefer `computed(ctx, f).eager()` in new code.
-class Signal<T> extends Computed<T> {
-  /// Creates an eager computed bound to [ctx]. The value is computed once now.
-  Signal(super.ctx, super.compute) {
-    eager();
-  }
-}
 
 /// A side-effect function that may return a cleanup callback.
 ///
@@ -1445,8 +1432,13 @@ class TeardownScope {
     return node;
   }
 
-  /// Create a [Source] owned by this scope.
-  Source<T> cell<T>(T initialValue) => adopt(Source<T>(ctx, initialValue));
+  /// Create a [Source] (source cell) owned by this scope — the canonical
+  /// spelling (`#lzcellkernel`).
+  Source<T> source<T>(T initialValue) => adopt(Source<T>(ctx, initialValue));
+
+  /// Compatibility alias for [source]. Retained (not deprecated) because the
+  /// async wrapper's scope adopts through it.
+  Source<T> cell<T>(T initialValue) => source<T>(initialValue);
 
   /// Create a lazily-computed [Slot] owned by this scope.
   Slot<T> slot<T>(T Function(Context ctx) compute, {String? name}) =>
