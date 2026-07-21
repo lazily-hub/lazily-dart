@@ -43,9 +43,11 @@ import 'package:lazily/lazily.dart';
 /// `executed` after it has actually replayed ops AND evaluated assertions
 /// (`ops > 0 && checks > 0`) — not when its file is found, not when it is
 /// parsed, not when it is dispatched. The corpus assertion then requires the
-/// on-disk fixture set to equal [expectedFixtures] exactly, requires every one
-/// of them to have been replayed, requires the transitive-depth fixture by name
-/// (the one pinning `c91a32a`), and requires non-zero total ops and checks.
+/// on-disk fixture set to equal [expectedFixtures] exactly, requires every
+/// *replayable* fixture (the set minus the [expectedSkips] ledger) to have been
+/// replayed, requires the observed skip set to equal [expectedSkips] exactly,
+/// requires the transitive-depth fixture by name (the one pinning `c91a32a`),
+/// and requires non-zero total ops and checks.
 ///
 /// ## Divergence ledger
 ///
@@ -64,6 +66,12 @@ const expectedFixtures = {
   'disarm_disposes_nothing.json',
   'disposal_does_not_run_surviving_effects.json',
   'dispose_detaches_edges_both_directions.json',
+  'exact_fold_paths_stay_exact.json',
+  'feedback_drain_bound_reports_exhaustion.json',
+  'merge_cell_acquires_no_dependency_edge.json',
+  'merge_feed_through_a_formula_coalesces.json',
+  'merge_folds_synchronously_in_batch.json',
+  'merge_per_settled_cone_not_per_write.json',
   'read_after_dispose_is_an_error.json',
   'recycled_id_inherits_nothing.json',
   'dispose_signal_reverts_to_lazy.json',
@@ -73,6 +81,40 @@ const expectedFixtures = {
   'signal_materializes_without_a_read.json',
   'teardown_runs_members_in_reverse_creation_order.json',
   'transitive_invalidation_reaches_depth.json',
+};
+
+/// Fixtures that landed on spec main under `#lzmergefeed` (Step 3) which this
+/// runner cannot replay yet, as `<fixture> -> <reason>`. They are
+/// accounted-for skips, not silent gaps: each is still opened and parsed (so
+/// the found-vs-executed positive assertion holds), and the observed skip set
+/// is asserted to equal this map EXACTLY. A fixture that becomes replayable
+/// fails the build until its entry is deleted; a newly-unsupported fixture
+/// fails immediately. Neither direction can pass unnoticed, and none is ever
+/// addressed by relaxing a fixture — the reference `lazily-cpp` runner
+/// (`d36130b`) records the same six.
+///
+/// Five exercise the `merge_cell` op — the accumulate/fold write surface
+/// (`RelayCell` / `MergePolicy`) — which this reactive-graph runner's op
+/// vocabulary has no node kind for. `feedback_drain_bound_reports_exhaustion`
+/// uses only supported ops but asserts the `drain_exhausted` expectation key
+/// this runner does not model (bounded-feedback drain semantics, a
+/// carry-forward item), so it is parked by name via [parkedFixtures] rather
+/// than mis-replayed against a key the runner cannot check.
+const expectedSkips = {
+  'exact_fold_paths_stay_exact.json': 'merge_cell',
+  'feedback_drain_bound_reports_exhaustion.json': 'drain_exhausted (#lzmergefeed)',
+  'merge_cell_acquires_no_dependency_edge.json': 'merge_cell',
+  'merge_feed_through_a_formula_coalesces.json': 'merge_cell',
+  'merge_folds_synchronously_in_batch.json': 'merge_cell',
+  'merge_per_settled_cone_not_per_write.json': 'merge_cell',
+};
+
+/// Fixtures parked from replay despite using only supported ops, because they
+/// assert expectation keys this runner does not model. Checked before the op
+/// filter so the recorded reason is the parked one rather than a spurious
+/// "no unsupported op". See [expectedSkips].
+const parkedFixtures = {
+  'feedback_drain_bound_reports_exhaustion.json': 'drain_exhausted (#lzmergefeed)',
 };
 
 /// Ops this package can model. Anything else in a fixture skips it, by name.
@@ -923,7 +965,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
           'replayed by this runner');
 
   final executed = <String>{};
-  final skipped = <String, List<String>>{};
+  final skipped = <String, String>{};
   final divergences = <String>{};
   var totalOps = 0;
   var totalChecks = 0;
@@ -932,10 +974,19 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
     final fx = (jsonDecode(File('$specDir/$name').readAsStringSync()) as Map)
         .cast<String, dynamic>();
     final unsupported = _opsOf(fx).difference(supportedOps).toList()..sort();
-    if (unsupported.isNotEmpty) {
-      skipped[name] = unsupported;
-      stderr.writeln('reactive-graph[$modelName] SKIP $name — unsupported '
-          'op(s): ${unsupported.join(', ')}');
+    // A parked fixture is skipped before the op filter (it uses only supported
+    // ops but asserts an expectation key this runner does not model), and a
+    // fixture using an unmodelled op is skipped by that op's name. Either way
+    // the file was opened and parsed above, so the skip is accounted for, not
+    // silent — and the reason must match [expectedSkips] exactly.
+    final reasons = <String>[
+      if (parkedFixtures.containsKey(name)) parkedFixtures[name]!,
+      if (unsupported.isNotEmpty) unsupported.join(', '),
+    ];
+    if (reasons.isNotEmpty) {
+      final reason = reasons.join('; ');
+      skipped[name] = reason;
+      stderr.writeln('reactive-graph[$modelName] SKIP $name — $reason');
       continue;
     }
 
@@ -1016,9 +1067,9 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   }
 
   stderr.writeln('reactive-graph[$modelName]: ${executed.length}/'
-      '${expectedFixtures.length} fixtures replayed, $totalOps ops, '
-      '$totalChecks assertions, ${skipped.length} skipped, '
-      '${divergences.length} divergences');
+      '${expectedFixtures.length - expectedSkips.length} replayable fixtures '
+      'replayed ($totalOps ops, $totalChecks assertions), '
+      '${skipped.length} skipped, ${divergences.length} divergences');
 
   // Divergence ledger: the observed set must equal the documented one, so a new
   // divergence fails the build and a fixed one forces its entry to be deleted.
@@ -1030,8 +1081,18 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
       reason: '$modelName: divergence ledger is stale — update '
           'knownDivergences (left = observed, right = documented)');
 
-  expect(executed, equals(expectedFixtures),
+  // The skip ledger must match the documented one EXACTLY, in both directions:
+  // a fixture that becomes replayable fails here until its entry is deleted,
+  // and a newly-unsupported fixture fails here immediately. Never relax a
+  // fixture to make this pass. (`#lzmergefeed`.)
+  expect(skipped, equals(expectedSkips),
+      reason: '$modelName: skip ledger drifted — update expectedSkips '
+          '(left = observed, right = documented)');
+
+  final replayable = expectedFixtures.difference(expectedSkips.keys.toSet());
+  expect(executed, equals(replayable),
       reason: 'found ${expectedFixtures.length} fixture file(s) under $specDir '
+          '(${replayable.length} replayable, ${expectedSkips.length} skipped) '
           'but did not replay them all. A non-empty fixture directory is not '
           'evidence of coverage — skipped: $skipped');
   expect(executed, contains('transitive_invalidation_reaches_depth.json'),
