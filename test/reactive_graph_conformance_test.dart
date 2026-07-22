@@ -286,7 +286,7 @@ class _SyncModel implements _Model {
 
   /// The one place a synthesized compute body lives, so `computes_of` counts
   /// exactly the invocations it claims to and `computed`/`signal` cannot drift.
-  num Function(Context) _body(String id, List<String> reads, num offset) =>
+  num Function(Compute) _body(String id, List<String> reads, num offset) =>
       (_) {
         computes[id] = (computes[id] ?? 0) + 1;
         var sum = offset;

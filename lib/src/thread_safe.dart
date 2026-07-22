@@ -108,13 +108,13 @@ class ThreadSafeContext {
   Source<T> cell<T>(T value) => source<T>(value);
 
   /// Create a guarded [Computed] under the guard.
-  Computed<T> computed<T>(T Function(Context ctx) compute) =>
+  Computed<T> computed<T>(T Function(Compute cx) compute) =>
       read((ctx) => Computed<T>(ctx, compute));
 
   /// Create a lazy, unguarded [Slot] under the guard. Retained as the
   /// lower-level unguarded primitive (dart keeps [Slot] distinct from the
   /// guarded [Computed]); prefer [computed] for a guarded derived value.
-  Slot<T> slot<T>(T Function(Context ctx) compute) =>
+  Slot<T> slot<T>(T Function(Compute cx) compute) =>
       read((ctx) => Slot<T>(ctx, compute));
 
   // -- Reads (guarded passthroughs) --------------------------------------------

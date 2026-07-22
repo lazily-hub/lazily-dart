@@ -139,7 +139,7 @@ class DisposedNodeError extends StateError {
 /// All [Slot]s, [Source]s, and [Computed]s that should react to each other
 /// must be created with (and thus share) the same [Context]. The cache keys on
 /// object identity, so each reactive instance is cached independently.
-class Context {
+class Context implements ComputeOps {
   /// The value cache lives ON-NODE ([Slot._cachedValue] / [Slot._cacheGen]):
   /// a slot is "cached" iff its `_cacheGen == _generation`. [clear] bumps this
   /// counter, invalidating every slot in O(1) without the [Context] having to
@@ -150,6 +150,22 @@ class Context {
   int _cachedCount = 0;
 
   final List<_ReactiveNode> _stack = [];
+
+  /// Depth of the explicit **untracked** escape (`#lzcellkernel`). While it is
+  /// non-zero every read reports *no* current dependent, so a read made through
+  /// [Compute.untracked] (or [Context], the untracked surface) registers no
+  /// dependency edge — the mirror of `lazily-rs`'s `Compute::untracked() ->
+  /// &Context`, whose reads form no edge. See [runUntracked].
+  int _untrackedDepth = 0;
+
+  /// Monotonic recompute counter (`#lzcellkernel`). Each [Compute] view is
+  /// stamped with the value this held when it was minted; a view whose stamp no
+  /// longer matches — because its recompute finished, or the node was
+  /// disposed/recycled mid-recompute — is *stale* and any tracked read through
+  /// it throws [StaleComputeError]. This is the runtime half of the
+  /// non-escapability fortification Dart cannot express in the type system the
+  /// way `lazily-rs` does with a lifetime + `!Send`.
+  int _computeEpoch = 0;
 
   int _batchDepth = 0;
   Set<Source>? _batchedCells;
@@ -249,8 +265,23 @@ class Context {
     _cachedCount = 0;
   }
 
-  /// The slot currently computing, if any.
-  _ReactiveNode? get _current => _stack.isEmpty ? null : _stack.last;
+  /// The slot currently computing, if any. Reports `null` inside an
+  /// [runUntracked] window even when a recompute frame is on the stack, so the
+  /// untracked escape forms no dependency edge.
+  _ReactiveNode? get _current =>
+      _untrackedDepth > 0 || _stack.isEmpty ? null : _stack.last;
+
+  /// Run [body] with dependency tracking suppressed: reads inside it register no
+  /// edge against whatever node is currently recomputing. The scoped form of the
+  /// untracked escape; [Compute.untracked] delegates here. Re-entrant.
+  R runUntracked<R>(R Function() body) {
+    _untrackedDepth++;
+    try {
+      return body();
+    } finally {
+      _untrackedDepth--;
+    }
+  }
 
   /// Whether a [batch] is currently active.
   bool get isBatching => _batchDepth > 0;
@@ -506,6 +537,47 @@ class Context {
       _flushingEffects = false;
     }
   }
+
+  // -- ComputeOps surface (`#lzcellkernel`) ---------------------------------
+  //
+  // The [Context] is one of the two implementors of [ComputeOps] (the other is
+  // [Compute]). It is the **untracked** surface: a read through it registers no
+  // dependency edge, the mirror of `lazily-rs`'s `impl ComputeOps for Context`
+  // whose reads are untracked. Construction ops are identical to [Compute]'s.
+
+  @override
+  Source<T> source<T>(T value) => Source<T>(this, value);
+
+  @override
+  Source<T> cell<T>(T value) => Source<T>(this, value);
+
+  @override
+  Computed<T> computed<T>(T Function(Compute cx) compute) =>
+      Computed<T>(this, compute);
+
+  @override
+  Computed<T> computedRippleWhen<T>(
+    T Function(Compute cx) compute,
+    bool Function(T old, T neu) changed,
+  ) =>
+      Computed<T>(this, compute, changed: changed);
+
+  @override
+  Slot<T> slot<T>(T Function(Compute cx) compute, {String? name}) =>
+      Slot<T>(this, compute, name: name);
+
+  @override
+  Effect effect(EffectRun run) => Effect(this, run);
+
+  /// Read [handle]'s value **untracked** — the [Context] is the untracked
+  /// surface, so this forms no dependency edge even when called from inside a
+  /// recompute. Use [Compute.get] for a tracked read.
+  @override
+  T get<T>(ComputeReadable<T> handle) => runUntracked(handle._read);
+
+  /// Write a source cell (a write is never a dependency).
+  @override
+  void set<T>(Source<T> cell, T value) => cell.value = value;
 }
 
 /// Base class for nodes that participate in dependency tracking.
@@ -713,6 +785,30 @@ abstract class _ReactiveNode implements GraphNode {
     }
   }
 
+  /// Enter a recompute of this node (`#lzcellkernel`).
+  ///
+  /// Mints a fortified [Compute] view that carries **this node as a value** —
+  /// the recomputing identity is threaded through the closure argument, not read
+  /// from an ambient global, so it survives an `await` (the view is captured by
+  /// the closure) exactly as `lazily-rs`'s `Compute` does. The ambient
+  /// [Context._stack] frame is *also* pushed, but only as a **narrow
+  /// compatibility bridge** so closures not yet migrated to `cx.get(...)` — the
+  /// ones that still read a handle's `value`/`call()` directly — keep tracking.
+  /// A tracked read through the returned [Compute] and a bridged bare read both
+  /// attribute to this node; the difference the fortification buys is the
+  /// explicit [Compute.untracked] escape and the staleness guard.
+  Compute _beginCompute() {
+    ctx._stack.add(this);
+    return Compute._(ctx, this, ctx._computeEpoch++);
+  }
+
+  /// Leave a recompute: pop the bridge frame and retire the [Compute] view so a
+  /// later (escaped) tracked read through it throws [StaleComputeError].
+  void _endCompute(Compute cx) {
+    ctx._stack.removeLast();
+    cx._valid = false;
+  }
+
   /// Detach this node from all of its current upstream dependencies. Called
   /// before a recompute so dependency edges reflect only the most recent
   /// computation. The list is cleared in place (reused on the next recompute).
@@ -765,15 +861,15 @@ abstract class _ReactiveNode implements GraphNode {
 ///     doubled(); // 4
 ///     a.value = 10;
 ///     doubled(); // 20
-class Slot<T> extends _ReactiveNode {
+class Slot<T> extends _ReactiveNode implements ComputeReadable<T> {
   /// Creates a lazy slot bound to [ctx].
-  Slot(this.ctx, T Function(Context ctx) compute, {this.name})
+  Slot(this.ctx, T Function(Compute cx) compute, {this.name})
       : _compute = compute;
 
   /// The context this slot belongs to.
   @override
   final Context ctx;
-  final T Function(Context ctx) _compute;
+  final T Function(Compute cx) _compute;
 
   /// Optional human-readable name for debugging.
   final String? name;
@@ -826,9 +922,9 @@ class Slot<T> extends _ReactiveNode {
       return _cachedValue as T;
     }
     _detachUpstream();
-    ctx._stack.add(this);
+    final cx = _beginCompute();
     try {
-      final value = _compute(ctx);
+      final value = _compute(cx);
       if (_cacheGen != gen) {
         ctx._cachedCount++;
         _cacheGen = gen;
@@ -836,9 +932,14 @@ class Slot<T> extends _ReactiveNode {
       _cachedValue = value;
       return value;
     } finally {
-      ctx._stack.removeLast();
+      _endCompute(cx);
     }
   }
+
+  /// The tracked read used by [Compute.get] / [ComputeOps.get] — reading a slot
+  /// is recomputing/reading it through [call].
+  @override
+  T _read() => call();
 
   /// The cached value without recomputing, or `null` if not currently cached.
   T? get peek => _cacheGen == ctx._generation ? _cachedValue : null;
@@ -888,12 +989,17 @@ class Slot<T> extends _ReactiveNode {
 /// consumer genuinely needs a stream of every transition. A per-cell listener
 /// list would bypass the graph, ignore [Context.batch], and cost memory on
 /// every cell whether or not anything is listening.
-class Source<T> extends _ReactiveNode {
+class Source<T> extends _ReactiveNode implements ComputeReadable<T> {
   Source(this.ctx, T initialValue) : _value = initialValue;
 
   /// The context this cell belongs to.
+  @override
   final Context ctx;
   T _value;
+
+  /// The tracked read used by [Compute.get] / [ComputeOps.get].
+  @override
+  T _read() => value;
 
   /// The current value. Reading inside a computation subscribes the reader.
   ///
@@ -1022,13 +1128,13 @@ final Map<Computed<Object?>, Effect> _eagerBy =
 /// downstream reactives invalidate when this computed's value changes. Like every
 /// reactive in this library, a [Computed] exposes **no observer API** — see
 /// [Source] for the rationale.
-class Computed<T> extends _ReactiveNode {
+class Computed<T> extends _ReactiveNode implements ComputeReadable<T> {
   /// Creates a **lazy** computed bound to [ctx]. Call [eager] for the eager form.
   ///
   /// When [changed] is supplied, downstream propagation is gated by that
   /// **pure** predicate instead of the value's natural `==` — see
   /// [computedRippleWhen], which is the public spelling of this form.
-  Computed(this.ctx, T Function(Context ctx) compute,
+  Computed(this.ctx, T Function(Compute cx) compute,
       {bool Function(T old, T neu)? changed})
       : _changed = changed,
         _backing = _GuardedSlot<T>(ctx, compute, changed: changed);
@@ -1074,6 +1180,10 @@ class Computed<T> extends _ReactiveNode {
   /// spelling, for call sites that fold a computed like a [Slot].
   T call() => value;
 
+  /// The tracked read used by [Compute.get] / [ComputeOps.get].
+  @override
+  T _read() => value;
+
   /// The current value without registering a dependency.
   T get peek => _eager ? _value : (_backing.peek ?? _backing());
 
@@ -1105,7 +1215,7 @@ class Computed<T> extends _ReactiveNode {
 
   /// Puller-Effect body: re-materialize the backing slot into [_value], applying
   /// the equality guard so an equal recompute fires no downstream cascade.
-  void Function()? _pull(Context _) {
+  void Function()? _pull(Compute _) {
     final newValue = _backing();
     if (!_hasValue) {
       _hasValue = true;
@@ -1181,7 +1291,7 @@ class Computed<T> extends _ReactiveNode {
 ///     final n = source(ctx, 1);
 ///     final doubled = computed(ctx, (_) => n.value * 2).eager();
 ///     doubled.value; // 2, kept fresh eagerly
-Computed<T> computed<T>(Context ctx, T Function(Context ctx) compute) =>
+Computed<T> computed<T>(Context ctx, T Function(Compute cx) compute) =>
     Computed<T>(ctx, compute);
 
 /// Create a **guarded [Computed]** with an explicit change predicate
@@ -1213,7 +1323,7 @@ Computed<T> computed<T>(Context ctx, T Function(Context ctx) compute) =>
 /// read frequency and breaks determinism.
 Computed<T> computedRippleWhen<T>(
   Context ctx,
-  T Function(Context ctx) compute,
+  T Function(Compute cx) compute,
   bool Function(T old, T neu) changed,
 ) =>
     Computed<T>(ctx, compute, changed: changed);
@@ -1221,7 +1331,10 @@ Computed<T> computedRippleWhen<T>(
 /// A side-effect function that may return a cleanup callback.
 ///
 /// The cleanup (if returned) is invoked before the next rerun and on dispose.
-typedef EffectRun = void Function()? Function(Context ctx);
+/// The [Compute] passed in is the effect's fortified tracking view: reads
+/// through `cx.get(...)` register the effect as a dependent; `cx.untracked`
+/// escapes.
+typedef EffectRun = void Function()? Function(Compute cx);
 
 /// A side-effect observer that reruns whenever a tracked dependency changes.
 ///
@@ -1293,11 +1406,11 @@ class Effect extends _ReactiveNode {
       final prev = _cleanup;
       _cleanup = null;
       if (prev != null) prev();
-      ctx._stack.add(this);
+      final cx = _beginCompute();
       try {
-        _cleanup = _run(ctx);
+        _cleanup = _run(cx);
       } finally {
-        ctx._stack.removeLast();
+        _endCompute(cx);
       }
     } finally {
       _running = false;
@@ -1376,12 +1489,12 @@ class _GuardedSlot<T> extends Slot<T> {
     _guardActive = true;
     try {
       _detachUpstream();
-      ctx._stack.add(this);
+      final cx = _beginCompute();
       T newValue;
       try {
-        newValue = _compute(ctx);
+        newValue = _compute(cx);
       } finally {
-        ctx._stack.removeLast();
+        _endCompute(cx);
       }
       final gen = ctx._generation;
       if (_cacheGen == gen) {
@@ -1502,17 +1615,17 @@ class TeardownScope {
   Source<T> cell<T>(T initialValue) => source<T>(initialValue);
 
   /// Create a lazily-computed [Slot] owned by this scope.
-  Slot<T> slot<T>(T Function(Context ctx) compute, {String? name}) =>
+  Slot<T> slot<T>(T Function(Compute cx) compute, {String? name}) =>
       adopt(Slot<T>(ctx, compute, name: name));
 
   /// Create a guarded [Computed] owned by this scope.
-  Computed<T> computed<T>(T Function(Context ctx) compute) =>
+  Computed<T> computed<T>(T Function(Compute cx) compute) =>
       adopt(Computed<T>(ctx, compute));
 
   /// Create a guarded [Computed] with a custom propagate predicate, owned by
   /// this scope (`#lzcellkernel`). See top-level [computedRippleWhen].
   Computed<T> computedRippleWhen<T>(
-    T Function(Context ctx) compute,
+    T Function(Compute cx) compute,
     bool Function(T old, T neu) changed,
   ) =>
       adopt(Computed<T>(ctx, compute, changed: changed));
@@ -1549,4 +1662,195 @@ class TeardownScope {
   @override
   String toString() =>
       'TeardownScope(${_ended ? 'ended' : '${_owned.length} owned'})';
+}
+
+/// Thrown when a stale [Compute] view is used for a tracked read
+/// (`#lzcellkernel`).
+///
+/// A [Compute] is valid **only for the duration of the recompute it was minted
+/// for**. `lazily-rs` makes this unrepresentable in the type system — the view
+/// is lifetime-bound and `!Send`, so it cannot be stored past its recompute or
+/// moved to another thread. Dart has neither lifetimes nor `!Send`, so
+/// non-escapability is enforced *dynamically* instead: the view is retired when
+/// its recompute ends, and a tracked read through a retired view throws this
+/// rather than silently registering an edge against the wrong (or a dead) node.
+class StaleComputeError extends StateError {
+  StaleComputeError()
+      : super('a Compute view was used after its recompute finished — it must '
+            'not be captured and read outside the compute/effect it was passed '
+            'to (#lzcellkernel)');
+}
+
+/// A value that can be read through the tracking surfaces ([Compute] tracked,
+/// [Context] untracked). Implemented by [Source], [Computed], and [Slot].
+///
+/// `_read` performs the surface-neutral read (the node's ordinary `value` /
+/// `call()`); whether that read forms a dependency edge is decided by the
+/// surface calling it — [Compute.get] leaves the recompute frame in place (edge
+/// forms against the recomputing node), [ComputeOps.get] on [Context] wraps it
+/// in [Context.runUntracked] (no edge).
+abstract interface class ComputeReadable<T> {
+  T _read();
+}
+
+/// The **compute-time operations subset** of the [Context] API
+/// (`#lzcellkernel`) — the mirror of `lazily-rs`'s `ComputeOps` trait.
+///
+/// Exactly the operations a compute/effect closure may perform: read
+/// ([get]) / write ([set]) / construct ([source] / [cell] / [computed] /
+/// [computedRippleWhen] / [slot] / [effect]) / [batch]. Revision control,
+/// degree introspection, teardown-scope creation, and disposal are deliberately
+/// **off** this surface.
+///
+/// **Implemented by exactly two types**, differing only in read discipline:
+/// - [Context] — the owning graph; its [get] is **untracked**.
+/// - [Compute] — the per-recompute view; its [get] **tracks** against the
+///   recomputing node, which it carries as a value.
+abstract interface class ComputeOps {
+  /// Read [handle] with this surface's tracking discipline: a [Compute]
+  /// registers a dependency edge against the recomputing node; a bare [Context]
+  /// registers nothing.
+  T get<T>(ComputeReadable<T> handle);
+
+  /// Write a source cell (a write is an argument, never a dependency).
+  void set<T>(Source<T> cell, T value);
+
+  /// Create a source cell.
+  Source<T> source<T>(T value);
+
+  /// Create a source cell (compatibility spelling of [source]).
+  Source<T> cell<T>(T value);
+
+  /// Create a guarded [Computed].
+  Computed<T> computed<T>(T Function(Compute cx) compute);
+
+  /// Create a guarded [Computed] with an explicit change predicate.
+  Computed<T> computedRippleWhen<T>(
+    T Function(Compute cx) compute,
+    bool Function(T old, T neu) changed,
+  );
+
+  /// Create a pass-through (unguarded) derived [Slot].
+  Slot<T> slot<T>(T Function(Compute cx) compute, {String? name});
+
+  /// Register an [Effect].
+  Effect effect(EffectRun run);
+
+  /// Run [run] inside a batch (coalesced invalidation).
+  void batch(void Function() run);
+}
+
+/// The fortified, per-recompute **compute view** (`#lzcellkernel`) — the sole
+/// *tracking* surface handed to every compute/effect closure.
+///
+/// It carries the recomputing node **as a value** ([_node]), not as ambient
+/// (thread-local / zone) state. This is the value-threaded dependency-tracking
+/// the spec mandates: because the identity is a captured argument, it survives
+/// suspension (an `await` inside an async compute reads the right node
+/// afterwards) and works where no ambient carrier exists. `lazily-rs` threads a
+/// `slot_id`; this threads the node reference.
+///
+/// > Dart alternative — a suspension-surviving ambient carrier does exist
+/// > (`Zone`), and the spec explicitly permits bindings that have one to use it.
+/// > The *family* choice is uniform value-threading, so this mirrors
+/// > `lazily-rs` and threads the value; `Zone` is noted only as the road not
+/// > taken.
+///
+/// ## Fortification (and its Dart limits)
+///
+/// - **Sole tracking surface.** A tracked read is [get] on this view; the
+///   untracked escape is [untracked] (or reading through the owning [Context]).
+///   *Dart limit:* the previous ambient stack survives as a **compatibility
+///   bridge** ([_ReactiveNode._beginCompute]) so a closure that still reads a
+///   handle's `value`/`call()` directly keeps tracking — Dart cannot make a
+///   bare handle read a compile error the way `lazily-rs` does by only
+///   implementing `Read` for `Compute`. New code SHOULD read through [get].
+/// - **Non-escapable.** The view is retired when its recompute ends; a tracked
+///   read through an escaped view throws [StaleComputeError]. *Dart limit:*
+///   this is a **runtime** guard — `lazily-rs` forbids the escape at compile
+///   time with a lifetime + `!Send`, which Dart has no equivalent of.
+/// - **Rebind per recompute.** A fresh view is minted every recompute and the
+///   node's upstream edges are detached first, so a conditional read drops the
+///   branch not taken — unchanged from the ambient design.
+class Compute implements ComputeOps {
+  Compute._(this._ctx, this._node, this._epoch);
+
+  final Context _ctx;
+  final _ReactiveNode _node;
+
+  /// The stamp this view was minted with (its recompute's ordinal). Retained
+  /// for debugging / error context; validity itself is [_valid].
+  final int _epoch;
+
+  /// Cleared by [_ReactiveNode._endCompute] when the recompute finishes.
+  bool _valid = true;
+
+  void _checkValid() {
+    if (!_valid || _node._disposed) throw StaleComputeError();
+  }
+
+  /// The owning context — the **untracked** escape surface. Reads through it
+  /// register no dependency edge (it is [ComputeOps] with untracked [get]).
+  /// Prefer the scoped [untracked] for reads; this getter is for construction
+  /// and for handing the context to APIs that need it.
+  Context get context => _ctx;
+
+  /// Run [body] with tracking suppressed — the explicit untracked-read escape.
+  /// Reads inside [body] form no dependency edge against the recomputing node.
+  /// Mirrors `lazily-rs`'s `Compute::untracked() -> &Context`, adapted to a
+  /// scoped closure because a Dart getter cannot bound the untracked window.
+  R untracked<R>(R Function() body) {
+    _checkValid();
+    return _ctx.runUntracked(body);
+  }
+
+  /// Read [handle], registering a dependency edge against **this recompute's
+  /// node** (value-threaded). Throws [StaleComputeError] if this view has been
+  /// retired (used outside its recompute).
+  @override
+  T get<T>(ComputeReadable<T> handle) {
+    _checkValid();
+    // During the recompute this view's node is the ambient current dependent
+    // (the bridge frame [_beginCompute] pushed), so the ordinary tracked read
+    // attributes the edge to `_node` — the value this view carries.
+    return handle._read();
+  }
+
+  /// Write a source cell (untracked — a write is never a dependency).
+  @override
+  void set<T>(Source<T> cell, T value) {
+    _checkValid();
+    cell.value = value;
+  }
+
+  @override
+  Source<T> source<T>(T value) => _ctx.source<T>(value);
+
+  @override
+  Source<T> cell<T>(T value) => _ctx.cell<T>(value);
+
+  @override
+  Computed<T> computed<T>(T Function(Compute cx) compute) =>
+      _ctx.computed<T>(compute);
+
+  @override
+  Computed<T> computedRippleWhen<T>(
+    T Function(Compute cx) compute,
+    bool Function(T old, T neu) changed,
+  ) =>
+      _ctx.computedRippleWhen<T>(compute, changed);
+
+  @override
+  Slot<T> slot<T>(T Function(Compute cx) compute, {String? name}) =>
+      _ctx.slot<T>(compute, name: name);
+
+  @override
+  Effect effect(EffectRun run) => _ctx.effect(run);
+
+  @override
+  void batch(void Function() run) => _ctx.batch(run);
+
+  @override
+  String toString() =>
+      'Compute(#$_epoch, ${_valid ? 'active' : 'retired'}, $_node)';
 }
