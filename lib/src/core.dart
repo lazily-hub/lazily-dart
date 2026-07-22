@@ -149,8 +149,6 @@ class Context implements ComputeOps {
   int _generation = 0;
   int _cachedCount = 0;
 
-  final List<_ReactiveNode> _stack = [];
-
   /// Depth of the explicit **untracked** escape (`#lzcellkernel`). While it is
   /// non-zero every read reports *no* current dependent, so a read made through
   /// [Compute.untracked] (or [Context], the untracked surface) registers no
@@ -265,11 +263,11 @@ class Context implements ComputeOps {
     _cachedCount = 0;
   }
 
-  /// The slot currently computing, if any. Reports `null` inside an
-  /// [runUntracked] window even when a recompute frame is on the stack, so the
-  /// untracked escape forms no dependency edge.
-  _ReactiveNode? get _current =>
-      _untrackedDepth > 0 || _stack.isEmpty ? null : _stack.last;
+  /// Whether tracking is currently suppressed by an [runUntracked] /
+  /// [Compute.untracked] window. A [Compute.get] performed while this holds
+  /// forms no dependency edge — the value-threaded mirror of the old
+  /// `_current == null` short-circuit.
+  bool get _trackingSuppressed => _untrackedDepth > 0;
 
   /// Run [body] with dependency tracking suppressed: reads inside it register no
   /// edge against whatever node is currently recomputing. The scoped form of the
@@ -773,16 +771,15 @@ abstract class _ReactiveNode implements GraphNode {
     onDispose();
   }
 
-  /// Register the currently-computing slot (if any) as a dependent of this
-  /// node, and record the reverse edge on the computing slot. Called whenever
-  /// this node is read.
+  /// Register [reader] as a dependent of this node (downstream edge) and the
+  /// reverse dependency edge on [reader]. The value-threaded replacement for the
+  /// former ambient `_track`: the recomputing identity is supplied by the
+  /// [Compute] view performing the read ([Compute.get] / [ComputeReadable.
+  /// _readTrackedBy]), never read from a `Context`-owned current-node stack.
   @pragma('vm:prefer-inline')
-  void _track(Context ctx) {
-    final parent = ctx._current;
-    if (parent != null) {
-      _addDependent(parent);
-      parent._addDependency(this);
-    }
+  void _wireEdge(_ReactiveNode reader) {
+    _addDependent(reader);
+    reader._addDependency(this);
   }
 
   /// Enter a recompute of this node (`#lzcellkernel`).
@@ -790,22 +787,16 @@ abstract class _ReactiveNode implements GraphNode {
   /// Mints a fortified [Compute] view that carries **this node as a value** —
   /// the recomputing identity is threaded through the closure argument, not read
   /// from an ambient global, so it survives an `await` (the view is captured by
-  /// the closure) exactly as `lazily-rs`'s `Compute` does. The ambient
-  /// [Context._stack] frame is *also* pushed, but only as a **narrow
-  /// compatibility bridge** so closures not yet migrated to `cx.get(...)` — the
-  /// ones that still read a handle's `value`/`call()` directly — keep tracking.
-  /// A tracked read through the returned [Compute] and a bridged bare read both
-  /// attribute to this node; the difference the fortification buys is the
-  /// explicit [Compute.untracked] escape and the staleness guard.
+  /// the closure) exactly as `lazily-rs`'s `Compute` does. There is **no** ambient
+  /// current-node stack: a tracked read is exclusively [Compute.get], which wires
+  /// the edge against the node this view carries as a value.
   Compute _beginCompute() {
-    ctx._stack.add(this);
     return Compute._(ctx, this, ctx._computeEpoch++);
   }
 
-  /// Leave a recompute: pop the bridge frame and retire the [Compute] view so a
-  /// later (escaped) tracked read through it throws [StaleComputeError].
+  /// Leave a recompute: retire the [Compute] view so a later (escaped) tracked
+  /// read through it throws [StaleComputeError].
   void _endCompute(Compute cx) {
-    ctx._stack.removeLast();
     cx._valid = false;
   }
 
@@ -909,14 +900,13 @@ class Slot<T> extends _ReactiveNode implements ComputeReadable<T> {
 
   /// Read (and cache if needed) the value. The object is callable: `slot()`.
   ///
-  /// Throws [DisposedNodeError] if this slot has been disposed. The check comes
-  /// *before* [_track] deliberately: a reader that hits a disposed node must not
-  /// leave an edge pointing at it, so the throw happens before any edge is
-  /// registered and the reader's next recompute starts from a clean upstream
-  /// set.
+  /// **Untracked** on its own: it forms no dependency edge for a reader. Tracking
+  /// is the job of the reading [Compute] via [_readTrackedBy]; a bare `slot()`
+  /// call (outside a compute, or a legacy call site) simply reads/recomputes.
+  ///
+  /// Throws [DisposedNodeError] if this slot has been disposed.
   T call() {
     if (_disposed) throw DisposedNodeError(this);
-    _track(ctx);
     final gen = ctx._generation;
     if (_cacheGen == gen) {
       return _cachedValue as T;
@@ -936,10 +926,20 @@ class Slot<T> extends _ReactiveNode implements ComputeReadable<T> {
     }
   }
 
-  /// The tracked read used by [Compute.get] / [ComputeOps.get] — reading a slot
-  /// is recomputing/reading it through [call].
+  /// The untracked read used by [ComputeOps.get] on [Context] — reading a slot
+  /// is recomputing/reading it through [call], forming no reader edge.
   @override
   T _read() => call();
+
+  /// The tracked read used by [Compute.get]: wires [reader] ← this slot, then
+  /// reads (recomputing if stale). The disposed check precedes the edge so a
+  /// reader never leaves an edge pointing at a torn-down node.
+  @override
+  T _readTrackedBy(_ReactiveNode reader) {
+    if (_disposed) throw DisposedNodeError(this);
+    _wireEdge(reader);
+    return call();
+  }
 
   /// The cached value without recomputing, or `null` if not currently cached.
   T? get peek => _cacheGen == ctx._generation ? _cachedValue : null;
@@ -997,17 +997,27 @@ class Source<T> extends _ReactiveNode implements ComputeReadable<T> {
   final Context ctx;
   T _value;
 
-  /// The tracked read used by [Compute.get] / [ComputeOps.get].
+  /// The untracked read used by [ComputeOps.get] on [Context].
   @override
   T _read() => value;
 
-  /// The current value. Reading inside a computation subscribes the reader.
+  /// The tracked read used by [Compute.get]: wires [reader] ← this cell, then
+  /// returns the value.
+  @override
+  T _readTrackedBy(_ReactiveNode reader) {
+    if (_disposed) throw DisposedNodeError(this);
+    _wireEdge(reader);
+    return _value;
+  }
+
+  /// The current value. **Untracked** on its own — a bare `cell.value` read
+  /// forms no dependency edge. Reading inside a computation subscribes the reader
+  /// only through [Compute.get] (`cx.get(cell)`), which threads the reader.
   ///
   /// Throws [DisposedNodeError] if this cell has been disposed —
   /// `disposeCell` and `disposeSlot` share one read-after-dispose contract.
   T get value {
     if (_disposed) throw DisposedNodeError(this);
-    _track(ctx);
     return _value;
   }
 
@@ -1168,7 +1178,6 @@ class Computed<T> extends _ReactiveNode implements ComputeReadable<T> {
   /// backing slot, so an upstream change still invalidates the reader — and an
   /// equal recompute is suppressed by the backing's guard).
   T get value {
-    _track(ctx);
     if (!_eager) return _backing();
     return _value;
   }
@@ -1180,9 +1189,26 @@ class Computed<T> extends _ReactiveNode implements ComputeReadable<T> {
   /// spelling, for call sites that fold a computed like a [Slot].
   T call() => value;
 
-  /// The tracked read used by [Compute.get] / [ComputeOps.get].
+  /// The untracked read used by [ComputeOps.get] on [Context].
   @override
   T _read() => value;
+
+  /// The tracked read used by [Compute.get]. Wires [reader] ← this computed;
+  /// while **lazy** it also wires [reader] ← the guarded backing slot, so an
+  /// upstream change that ripples through the backing invalidates the reader
+  /// (the value-threaded form of the former dual `_track` this getter performed
+  /// through both the computed and its backing). While **eager** the puller
+  /// owns the backing edge and drives this computed's cascade, so only the
+  /// reader ← computed edge is wired here.
+  @override
+  T _readTrackedBy(_ReactiveNode reader) {
+    _wireEdge(reader);
+    if (!_eager) {
+      _backing._wireEdge(reader);
+      return _backing();
+    }
+    return _value;
+  }
 
   /// The current value without registering a dependency.
   T get peek => _eager ? _value : (_backing.peek ?? _backing());
@@ -1215,8 +1241,8 @@ class Computed<T> extends _ReactiveNode implements ComputeReadable<T> {
 
   /// Puller-Effect body: re-materialize the backing slot into [_value], applying
   /// the equality guard so an equal recompute fires no downstream cascade.
-  void Function()? _pull(Compute _) {
-    final newValue = _backing();
+  void Function()? _pull(Compute cx) {
+    final newValue = cx.get(_backing);
     if (!_hasValue) {
       _hasValue = true;
       _value = newValue;
@@ -1684,13 +1710,15 @@ class StaleComputeError extends StateError {
 /// A value that can be read through the tracking surfaces ([Compute] tracked,
 /// [Context] untracked). Implemented by [Source], [Computed], and [Slot].
 ///
-/// `_read` performs the surface-neutral read (the node's ordinary `value` /
-/// `call()`); whether that read forms a dependency edge is decided by the
-/// surface calling it — [Compute.get] leaves the recompute frame in place (edge
-/// forms against the recomputing node), [ComputeOps.get] on [Context] wraps it
-/// in [Context.runUntracked] (no edge).
+/// `_read` performs the **untracked** read (the node's ordinary `value` /
+/// `call()`, forming no reader edge); [_readTrackedBy] performs the **tracked**
+/// read, wiring the supplied recomputing node as a dependent before returning
+/// the value. Which one runs is decided by the surface: [Compute.get] threads
+/// its carried node into [_readTrackedBy]; [ComputeOps.get] on [Context] calls
+/// [_read] (no edge).
 abstract interface class ComputeReadable<T> {
   T _read();
+  T _readTrackedBy(_ReactiveNode reader);
 }
 
 /// The **compute-time operations subset** of the [Context] API
@@ -1760,11 +1788,12 @@ abstract interface class ComputeOps {
 ///
 /// - **Sole tracking surface.** A tracked read is [get] on this view; the
 ///   untracked escape is [untracked] (or reading through the owning [Context]).
-///   *Dart limit:* the previous ambient stack survives as a **compatibility
-///   bridge** ([_ReactiveNode._beginCompute]) so a closure that still reads a
-///   handle's `value`/`call()` directly keeps tracking — Dart cannot make a
-///   bare handle read a compile error the way `lazily-rs` does by only
-///   implementing `Read` for `Compute`. New code SHOULD read through [get].
+///   There is no ambient current-node stack: a bare handle read (`value` /
+///   `call()`) forms **no** dependency edge, so every dependency a compute
+///   declares is threaded through [get] against the node this view carries.
+///   *Dart limit:* Dart cannot make a bare handle read a compile error the way
+///   `lazily-rs` does by only implementing `Read` for `Compute`; it simply does
+///   not track, so every read that must subscribe MUST go through [get].
 /// - **Non-escapable.** The view is retired when its recompute ends; a tracked
 ///   read through an escaped view throws [StaleComputeError]. *Dart limit:*
 ///   this is a **runtime** guard — `lazily-rs` forbids the escape at compile
@@ -1810,10 +1839,11 @@ class Compute implements ComputeOps {
   @override
   T get<T>(ComputeReadable<T> handle) {
     _checkValid();
-    // During the recompute this view's node is the ambient current dependent
-    // (the bridge frame [_beginCompute] pushed), so the ordinary tracked read
-    // attributes the edge to `_node` — the value this view carries.
-    return handle._read();
+    // Value-threaded: the edge is attributed to `_node` — the recomputing node
+    // this view carries — not to any ambient current-node stack. An [untracked]
+    // window suppresses the edge (mirrors the old `_current == null` path).
+    if (_ctx._trackingSuppressed) return handle._read();
+    return handle._readTrackedBy(_node);
   }
 
   /// Write a source cell (untracked — a write is never a dependency).
