@@ -1024,11 +1024,21 @@ final Map<Computed<Object?>, Effect> _eagerBy =
 /// [Source] for the rationale.
 class Computed<T> extends _ReactiveNode {
   /// Creates a **lazy** computed bound to [ctx]. Call [eager] for the eager form.
-  Computed(this.ctx, T Function(Context ctx) compute)
-      : _backing = _GuardedSlot<T>(ctx, compute);
+  ///
+  /// When [changed] is supplied, downstream propagation is gated by that
+  /// **pure** predicate instead of the value's natural `==` — see
+  /// [computedRippleWhen], which is the public spelling of this form.
+  Computed(this.ctx, T Function(Context ctx) compute,
+      {bool Function(T old, T neu)? changed})
+      : _changed = changed,
+        _backing = _GuardedSlot<T>(ctx, compute, changed: changed);
 
   @override
   final Context ctx;
+
+  /// The custom propagate predicate (`#lzcellkernel`), mirrored from the backing
+  /// so the eager puller ([_pull]) applies the same guard the lazy backing does.
+  final bool Function(T old, T neu)? _changed;
 
   /// The backing [_GuardedSlot] — the storage/computation position (spec §5.0).
   /// **Guarded while lazy**: it recomputes inline on invalidation and suppresses
@@ -1100,7 +1110,7 @@ class Computed<T> extends _ReactiveNode {
     if (!_hasValue) {
       _hasValue = true;
       _value = newValue;
-    } else if (newValue != _value) {
+    } else if (_changed != null ? _changed(_value, newValue) : newValue != _value) {
       _value = newValue;
       // Cascade to *this computed's* dependents. Scheduled effects (consumers)
       // are enqueued after this puller, so they observe the fresh value.
@@ -1173,6 +1183,40 @@ class Computed<T> extends _ReactiveNode {
 ///     doubled.value; // 2, kept fresh eagerly
 Computed<T> computed<T>(Context ctx, T Function(Context ctx) compute) =>
     Computed<T>(ctx, compute);
+
+/// Create a **guarded [Computed]** with an explicit change predicate
+/// (`#lzcellkernel`).
+///
+/// Like [computed], but downstream propagation (the "ripple" to dependents) is
+/// gated by `changed(old, new)` instead of the value's natural `==`: `changed`
+/// returns `true` to **propagate** the recompute downstream, `false` to
+/// **suppress** it (treat it as "no meaningful change"). It is implemented over
+/// the existing guarded-computed engine by installing equality = `!changed`.
+///
+/// Two identities anchor it:
+///
+/// - `computed(ctx, f)` ≡ `computedRippleWhen(ctx, f, (o, n) => o != n)` — the
+///   default guard is natural inequality.
+/// - the pass-through `slot(f)` ≡ `computedRippleWhen(ctx, f, (_, __) => true)`
+///   — always propagate, no suppression.
+///
+/// Reach for it for a **custom significance policy**: dedup a large value by a
+/// version/hash field, epsilon float compare, hysteresis, a monotonic gate, or
+/// "propagate every N" when the counter lives in the value.
+///
+/// The value is **always computed** (the predicate needs `new`); `changed`
+/// gates only the downstream cascade, not the computation — it is a *propagate*
+/// guard, not a *compute* guard. `changed` MUST be a **pure** function of
+/// `(old, new)`: reading value-carried state (a version / counter / sequence
+/// field carried inside the value) is fine and stays deterministic; capturing
+/// **external mutable state** is not — under laziness it keys off recompute /
+/// read frequency and breaks determinism.
+Computed<T> computedRippleWhen<T>(
+  Context ctx,
+  T Function(Context ctx) compute,
+  bool Function(T old, T neu) changed,
+) =>
+    Computed<T>(ctx, compute, changed: changed);
 
 /// A side-effect function that may return a cleanup callback.
 ///
@@ -1286,7 +1330,22 @@ class Effect extends _ReactiveNode {
 /// plain [Slot] behaviour so the scheduled puller is the single point of
 /// coalescing (`reactive-graph.md` clause 3); the guard then lives on the puller.
 class _GuardedSlot<T> extends Slot<T> {
-  _GuardedSlot(super.ctx, super.compute, {super.name});
+  _GuardedSlot(super.ctx, super.compute, {super.name, bool Function(T old, T neu)? changed})
+      : _changed = changed;
+
+  /// Optional **custom propagate predicate** (`#lzcellkernel`). When non-null,
+  /// the inline guard propagates a recompute downstream iff `changed(old, new)`
+  /// is `true`, replacing the default natural-equality guard (`old != new`). It
+  /// is the negation of "equal/suppress": the engine suppresses exactly when
+  /// `!changed(old, new)`. MUST be pure in `(old, new)` — see
+  /// [computedRippleWhen].
+  final bool Function(T old, T neu)? _changed;
+
+  /// Should a recompute from [old] to [neu] ripple downstream? Custom predicate
+  /// when installed; otherwise the natural-equality guard (propagate iff `!=`).
+  @pragma('vm:prefer-inline')
+  bool _shouldRipple(T old, T neu) =>
+      _changed != null ? _changed(old, neu) : old != neu;
 
   /// Whether the inline equality guard is active. On while the owning [Computed]
   /// is lazy; switched off while it is eager.
@@ -1326,9 +1385,11 @@ class _GuardedSlot<T> extends Slot<T> {
       }
       final gen = ctx._generation;
       if (_cacheGen == gen) {
-        if (newValue == _cachedValue) {
-          // Value unchanged — suppress the downstream cascade. Dependents
-          // stay cached; edges are already re-established by the recompute.
+        if (!_shouldRipple(_cachedValue as T, newValue)) {
+          // No meaningful change (per the guard) — suppress the downstream
+          // cascade. Dependents stay cached; edges are already re-established
+          // by the recompute. Default guard: `old == new`; custom guard:
+          // `!changed(old, new)`.
           return;
         }
       } else {
@@ -1447,6 +1508,14 @@ class TeardownScope {
   /// Create a guarded [Computed] owned by this scope.
   Computed<T> computed<T>(T Function(Context ctx) compute) =>
       adopt(Computed<T>(ctx, compute));
+
+  /// Create a guarded [Computed] with a custom propagate predicate, owned by
+  /// this scope (`#lzcellkernel`). See top-level [computedRippleWhen].
+  Computed<T> computedRippleWhen<T>(
+    T Function(Context ctx) compute,
+    bool Function(T old, T neu) changed,
+  ) =>
+      adopt(Computed<T>(ctx, compute, changed: changed));
 
   /// Register an [Effect] owned by this scope.
   Effect effect(EffectRun run) => adopt(Effect(ctx, run));
