@@ -287,11 +287,11 @@ class _SyncModel implements _Model {
   /// The one place a synthesized compute body lives, so `computes_of` counts
   /// exactly the invocations it claims to and `computed`/`signal` cannot drift.
   num Function(Compute) _body(String id, List<String> reads, num offset) =>
-      (_) {
+      (cx) {
         computes[id] = (computes[id] ?? 0) + 1;
         var sum = offset;
         for (final r in reads) {
-          sum += _readNode(r);
+          sum += _readNodeTracked(cx, r);
         }
         return sum;
       };
@@ -330,14 +330,14 @@ class _SyncModel implements _Model {
 
   @override
   void defineEffect(String id, List<String> reads, String? scope) {
-    final effect = Effect(ctx, (_) {
+    final effect = Effect(ctx, (cx) {
       runLog.add(id);
       // Swallowed, not propagated: an effect that reads through a disposed node
       // must not turn the publish that scheduled it into a throw. The corpus
       // asserts read-after-dispose at top-level reads.
       try {
         for (final r in reads) {
-          _readNode(r);
+          _readNodeTracked(cx, r);
         }
       } on DisposedNodeError {
         // Observed by the top-level read that names the same node.
@@ -353,6 +353,16 @@ class _SyncModel implements _Model {
     if (node is Source<num>) return node.value;
     if (node is Computed<num>) return node.value;
     if (node is Slot<num>) return node();
+    throw StateError('unknown or unreadable node $id');
+  }
+
+  /// Tracked read through the value-threaded [Compute]: registers the
+  /// recomputing node as a dependent of [id].
+  num _readNodeTracked(Compute cx, String id) {
+    final node = nodes[id];
+    if (node is Source<num>) return cx.get(node);
+    if (node is Computed<num>) return cx.get(node);
+    if (node is Slot<num>) return cx.get(node);
     throw StateError('unknown or unreadable node $id');
   }
 

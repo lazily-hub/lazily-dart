@@ -11,7 +11,7 @@ void main() {
       // single-threaded kernel — a singleton batch ≡ setCell.
       final ts = ThreadSafeContext();
       final cell = ts.source<int>(0);
-      final doubled = ts.read((ctx) => Slot<int>(ctx, (_) => cell.value * 2));
+      final doubled = ts.read((ctx) => Slot<int>(ctx, (cx) => cx.get(cell) * 2));
       expect(ts.getSlot(doubled), 0);
 
       ts.set(cell, 5);
@@ -20,7 +20,7 @@ void main() {
       // Same observable result as driving a bare Context/Cell directly.
       final ctx2 = Context();
       final cell2 = Source<int>(ctx2, 0);
-      final doubled2 = Slot<int>(ctx2, (_) => cell2.value * 2);
+      final doubled2 = Slot<int>(ctx2, (cx) => cx.get(cell2) * 2);
       cell2.set(5);
       expect(doubled2(), ts.getSlot(doubled));
     });
@@ -48,7 +48,7 @@ void main() {
       final ts = ThreadSafeContext();
       final a = ts.source<int>(1);
       final b = ts.source<int>(2);
-      final sum = ts.read((ctx) => Slot<int>(ctx, (_) => a.value + b.value));
+      final sum = ts.read((ctx) => Slot<int>(ctx, (cx) => cx.get(a) + cx.get(b)));
       expect(ts.getSlot(sum), 3);
 
       ts.withLock((_) {
@@ -81,9 +81,9 @@ void main() {
       final a = ts.source<int>(1);
       final b = ts.source<int>(2);
       var recomputes = 0;
-      final sum = ts.read((ctx) => Slot<int>(ctx, (_) {
+      final sum = ts.read((ctx) => Slot<int>(ctx, (cx) {
             recomputes++;
-            return a.value + b.value;
+            return cx.get(a) + cx.get(b);
           }));
       expect(ts.getSlot(sum), 3); // recomputes == 1
       expect(recomputes, 1);

@@ -281,6 +281,27 @@ class Context implements ComputeOps {
     }
   }
 
+  /// Evaluate [body] once with a transient [Compute] view that is retired on
+  /// return and forms **no** dependency edges (`#lzcellkernel`).
+  ///
+  /// The value-threaded surface a compute/effect closure expects requires a
+  /// [Compute]; this hands a detached one to a factory whose result is a
+  /// *snapshot*, not a live derivation — e.g. seeding the initial value of a
+  /// source-cell entry ([CellMap]) from a `V Function(Compute cx, K key)`
+  /// factory. Reads through the handed [Compute] are untracked (the same
+  /// discipline as [runUntracked]), so no edge survives the call.
+  T computeDetached<T>(T Function(Compute cx) body) {
+    final probe = _DetachedComputeNode(this);
+    final cx = probe._beginCompute();
+    _untrackedDepth++;
+    try {
+      return body(cx);
+    } finally {
+      _untrackedDepth--;
+      probe._endCompute(cx);
+    }
+  }
+
   /// Whether a [batch] is currently active.
   bool get isBatching => _batchDepth > 0;
 
@@ -1719,6 +1740,16 @@ class StaleComputeError extends StateError {
 abstract interface class ComputeReadable<T> {
   T _read();
   T _readTrackedBy(_ReactiveNode reader);
+}
+
+/// A throwaway [_ReactiveNode] used only to mint a detached [Compute] for
+/// [Context.computeDetached]. It never joins the graph — reads through its
+/// [Compute] are untracked, so it acquires no edges and is collected after use.
+class _DetachedComputeNode extends _ReactiveNode {
+  _DetachedComputeNode(this.ctx);
+
+  @override
+  final Context ctx;
 }
 
 /// The **compute-time operations subset** of the [Context] API

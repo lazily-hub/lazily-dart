@@ -42,7 +42,7 @@ void main() {
         final source = Source<int>(ctx, 0);
         final subs = [
           for (var i = 0; i < width; i++)
-            Slot<int>(ctx, (_) => source.value * 1000 + i),
+            Slot<int>(ctx, (cx) => cx.get(source) * 1000 + i),
         ];
 
         for (final s in subs) {
@@ -71,15 +71,15 @@ void main() {
     // duplicate read below is deduped by the index rather than by scan.
     final padding = [
       for (var i = 0; i < edgeIndexPromoteThreshold + 8; i++)
-        Slot<int>(ctx, (_) => source.value + i),
+        Slot<int>(ctx, (cx) => cx.get(source) + i),
     ];
     for (final p in padding) {
       p();
     }
 
-    final doubleReader = Slot<int>(ctx, (_) {
+    final doubleReader = Slot<int>(ctx, (cx) {
       runs++;
-      return source.value + source.value;
+      return cx.get(source) + cx.get(source);
     });
     expect(doubleReader(), equals(2));
     expect(runs, equals(1));
@@ -99,7 +99,7 @@ void main() {
 
     final subs = [
       for (var i = 0; i < edgeIndexPromoteThreshold * 2; i++)
-        Slot<int>(ctx, (_) => gate.value ? source.value + i : -1),
+        Slot<int>(ctx, (cx) => cx.get(gate) ? cx.get(source) + i : -1),
     ];
     for (final s in subs) {
       s();
@@ -136,10 +136,10 @@ void main() {
     final sources = [
       for (var i = 0; i < edgeIndexPromoteThreshold * 3; i++) Source<int>(ctx, 1),
     ];
-    final total = Slot<int>(ctx, (_) {
+    final total = Slot<int>(ctx, (cx) {
       var sum = 0;
       for (final c in sources) {
-        sum += c.value;
+        sum += cx.get(c);
       }
       return sum;
     });
@@ -164,8 +164,8 @@ void main() {
     final counts = List<int>.filled(edgeIndexPromoteThreshold * 2, 0);
     final effects = <Effect>[
       for (var i = 0; i < counts.length; i++)
-        Effect(ctx, (_) {
-          source.value;
+        Effect(ctx, (cx) {
+          cx.get(source);
           counts[i]++;
           return null;
         }),
@@ -222,8 +222,8 @@ void _disposalPlaneTests() {
       // a live reader frozen on the value it cached *through* the disposed node.
       final ctx = Context();
       final src = Source<int>(ctx, 1);
-      final mid = Slot<int>(ctx, (_) => src.value + 1);
-      final reader = Slot<int>(ctx, (_) => mid() * 10);
+      final mid = Slot<int>(ctx, (cx) => cx.get(src) + 1);
+      final reader = Slot<int>(ctx, (cx) => cx.get(mid) * 10);
 
       expect(reader(), 20);
       ctx.disposeNode(mid);
@@ -240,20 +240,20 @@ void _disposalPlaneTests() {
       // the contract is "errors on the next recompute".
       final ctx = Context();
       final src = Source<int>(ctx, 1);
-      final mid = Slot<int>(ctx, (_) => src.value + 1);
+      final mid = Slot<int>(ctx, (cx) => cx.get(src) + 1);
 
       var runs = 0;
       var sawDisposed = false;
-      Effect(ctx, (_) {
+      Effect(ctx, (cx) {
         runs++;
         // Reads `src` directly as well as through `mid`, so the effect still
         // holds a live edge after `mid` is disposed and a later write to `src`
         // genuinely reaches it. An effect whose *only* dependency was the
         // disposed node has nothing left to schedule it and is deaf by
         // construction, which would make this test vacuous.
-        src.value;
+        cx.get(src);
         try {
-          mid();
+          cx.get(mid);
         } on DisposedNodeError {
           sawDisposed = true;
         }
@@ -271,8 +271,8 @@ void _disposalPlaneTests() {
       // unrelated flush — a write to a cell it does not even read — as a
       // spurious rerun no publish asked for.
       final unrelated = Source<int>(ctx, 0);
-      Effect(ctx, (_) {
-        unrelated.value;
+      Effect(ctx, (cx) {
+        cx.get(unrelated);
         return null;
       });
       unrelated.value = 1;
@@ -290,7 +290,7 @@ void _disposalPlaneTests() {
     test('is idempotent', () {
       final ctx = Context();
       final cell = Source<int>(ctx, 1);
-      final slot = Slot<int>(ctx, (_) => cell.value);
+      final slot = Slot<int>(ctx, (cx) => cx.get(cell));
       expect(slot(), 1);
 
       ctx.disposeNode(slot);
@@ -302,8 +302,8 @@ void _disposalPlaneTests() {
     test('detaches edges in both directions', () {
       final ctx = Context();
       final src = Source<int>(ctx, 1);
-      final mid = Slot<int>(ctx, (_) => src.value + 1);
-      final sink = Slot<int>(ctx, (_) => mid() + 10);
+      final mid = Slot<int>(ctx, (cx) => cx.get(src) + 1);
+      final sink = Slot<int>(ctx, (cx) => cx.get(mid) + 10);
 
       expect(sink(), 12);
       expect(ctx.dependentCount(src), 1);
@@ -322,8 +322,8 @@ void _disposalPlaneTests() {
       final topic = Source<int>(ctx, 0);
       final subs = <Effect>[
         for (var i = 0; i < 8; i++)
-          Effect(ctx, (_) {
-            topic.value;
+          Effect(ctx, (cx) {
+            cx.get(topic);
             return null;
           }),
       ];
@@ -332,8 +332,8 @@ void _disposalPlaneTests() {
       for (var c = 0; c < 200; c++) {
         final at = c % 8;
         subs[at].dispose();
-        subs[at] = Effect(ctx, (_) {
-          topic.value;
+        subs[at] = Effect(ctx, (cx) {
+          cx.get(topic);
           return null;
         });
       }
@@ -353,14 +353,14 @@ void _disposalPlaneTests() {
       final topic = Source<int>(ctx, 1);
       final cleanups = <String>[];
       final scope = ctx.scope();
-      final a = scope.slot<int>((_) => topic.value + 1);
-      final b = scope.slot<int>((_) => a() + 2);
-      scope.effect((_) {
-        b();
+      final a = scope.slot<int>((cx) => cx.get(topic) + 1);
+      final b = scope.slot<int>((cx) => cx.get(a) + 2);
+      scope.effect((cx) {
+        cx.get(b);
         return () => cleanups.add('watch_b');
       });
-      scope.effect((_) {
-        b();
+      scope.effect((cx) {
+        cx.get(b);
         return () => cleanups.add('watch_b2');
       });
 
@@ -378,13 +378,13 @@ void _disposalPlaneTests() {
         final cleanups = <String>[];
         final scope = ctx.scope();
         final a = useScope
-            ? scope.slot<int>((_) => topic.value + 1)
-            : Slot<int>(ctx, (_) => topic.value + 1);
+            ? scope.slot<int>((cx) => cx.get(topic) + 1)
+            : Slot<int>(ctx, (cx) => cx.get(topic) + 1);
         final b = useScope
-            ? scope.slot<int>((_) => a() + 2)
-            : Slot<int>(ctx, (_) => a() + 2);
-        Effect effect(Context c) => Effect(c, (_) {
-              b();
+            ? scope.slot<int>((cx) => cx.get(a) + 2)
+            : Slot<int>(ctx, (cx) => cx.get(a) + 2);
+        Effect effect(Context c) => Effect(c, (cx) {
+              cx.get(b);
               return () => cleanups.add('watch');
             });
         final w = useScope ? scope.adopt(effect(ctx)) : effect(ctx);
@@ -407,7 +407,7 @@ void _disposalPlaneTests() {
       final ctx = Context();
       final topic = Source<int>(ctx, 1);
       final scope = ctx.scope();
-      final escaped = scope.slot<int>((_) => topic.value);
+      final escaped = scope.slot<int>((cx) => cx.get(topic));
       expect(escaped(), 1);
       expect(scope.length, 1);
 
@@ -433,7 +433,7 @@ void _disposalPlaneTests() {
       late Slot<int> leaked;
       expect(
         () => ctx.withScope((scope) {
-          leaked = scope.slot<int>((_) => topic.value);
+          leaked = scope.slot<int>((cx) => cx.get(topic));
           leaked();
           throw StateError('boom');
         }),
@@ -446,13 +446,13 @@ void _disposalPlaneTests() {
     test('bounds teardown, not visibility', () {
       final ctx = Context();
       final topic = Source<int>(ctx, 2);
-      final parentOwned = Slot<int>(ctx, (_) => topic.value + 3);
+      final parentOwned = Slot<int>(ctx, (cx) => cx.get(topic) + 3);
 
       final g1 = ctx.scope();
       final g2 = ctx.scope();
-      final fromParent = g1.slot<int>((_) => parentOwned() + 1);
-      final fromSibling = g2.slot<int>((_) => fromParent() + 10);
-      final parentReadsChild = Slot<int>(ctx, (_) => fromSibling());
+      final fromParent = g1.slot<int>((cx) => cx.get(parentOwned) + 1);
+      final fromSibling = g2.slot<int>((cx) => cx.get(fromParent) + 10);
+      final parentReadsChild = Slot<int>(ctx, (cx) => cx.get(fromSibling));
 
       expect(parentReadsChild(), 16,
           reason: 'reads cross scope boundaries freely in every direction');
@@ -471,9 +471,9 @@ void _disposalPlaneTests() {
     test('reports counts, and zero for disposed or wrong-kind nodes', () {
       final ctx = Context();
       final cell = Source<int>(ctx, 1);
-      final slot = Slot<int>(ctx, (_) => cell.value);
-      final effect = Effect(ctx, (_) {
-        slot();
+      final slot = Slot<int>(ctx, (cx) => cx.get(cell));
+      final effect = Effect(ctx, (cx) {
+        cx.get(slot);
         return null;
       });
 

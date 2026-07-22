@@ -513,9 +513,9 @@ void main() {
       final ctx = Context();
       final chart = _playerChart(ctx); // on > playing
       var calls = 0;
-      final leaf = Slot<String>(ctx, (_) {
+      final leaf = Slot<String>(ctx, (cx) {
         calls++;
-        return chart.activeLeaves().join(',');
+        return chart.activeLeaves(cx).join(',');
       });
       expect(leaf(), 'playing');
       final baseline = calls;
@@ -531,9 +531,9 @@ void main() {
       final ctx = Context();
       final chart = _playerChart(ctx);
       var calls = 0;
-      final label = Slot<String>(ctx, (_) {
+      final label = Slot<String>(ctx, (cx) {
         calls++;
-        return 'leaf=${chart.activeLeaves().first}';
+        return 'leaf=${chart.activeLeaves(cx).first}';
       });
       expect(label(), 'leaf=playing');
       chart.send('pause');
@@ -545,9 +545,9 @@ void main() {
       final ctx = Context();
       final chart = _playerChart(ctx); // on > playing
       var calls = 0;
-      final isOn = Slot<bool>(ctx, (_) {
+      final isOn = Slot<bool>(ctx, (cx) {
         calls++;
-        return chart.matches('on');
+        return chart.matches('on', cx);
       });
       expect(isOn(), true);
       chart.send('toggle'); // on -> off

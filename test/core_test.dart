@@ -46,8 +46,8 @@ void main() {
       final ctx = Context();
       final c = Source<int>(ctx, 5);
       var fired = 0;
-      Effect(ctx, (_) {
-        c.value;
+      Effect(ctx, (cx) {
+        cx.get(c);
         fired++;
         return null;
       });
@@ -62,8 +62,8 @@ void main() {
       final ctx = Context();
       final c = Source<int>(ctx, 0);
       final seen = <int>[];
-      final effect = Effect(ctx, (_) {
-        seen.add(c.value);
+      final effect = Effect(ctx, (cx) {
+        seen.add(cx.get(c));
         return null;
       });
       c.value = 1;
@@ -79,7 +79,7 @@ void main() {
     test('a slot recomputes when a cell it reads changes', () {
       final ctx = Context();
       final a = Source<int>(ctx, 2);
-      final doubled = Slot<int>(ctx, (_) => a.value * 2);
+      final doubled = Slot<int>(ctx, (cx) => cx.get(a) * 2);
 
       expect(doubled(), 4);
       a.value = 10;
@@ -92,17 +92,17 @@ void main() {
       var leftCalls = 0;
       var rightCalls = 0;
       var joinCalls = 0;
-      final left = Slot<int>(ctx, (_) {
+      final left = Slot<int>(ctx, (cx) {
         leftCalls++;
-        return base.value + 1;
+        return cx.get(base) + 1;
       });
-      final right = Slot<int>(ctx, (_) {
+      final right = Slot<int>(ctx, (cx) {
         rightCalls++;
-        return base.value + 2;
+        return cx.get(base) + 2;
       });
-      final join = Slot<int>(ctx, (_) {
+      final join = Slot<int>(ctx, (cx) {
         joinCalls++;
-        return left() + right();
+        return cx.get(left) + cx.get(right);
       });
 
       expect(join(), 5); // (1+1)+(1+2)
@@ -123,7 +123,7 @@ void main() {
       final ctx = Context();
       final a = Source<int>(ctx, 0);
       final b = Source<int>(ctx, 0);
-      final s = Slot<int>(ctx, (_) => a.value + b.value);
+      final s = Slot<int>(ctx, (cx) => cx.get(a) + cx.get(b));
 
       s();
       // Toggle which cell changes; after several cycles, a single change must
@@ -145,9 +145,9 @@ void main() {
       final ctx = Context();
       final a = Source<int>(ctx, 3);
       var calls = 0;
-      final sig = computed<int>(ctx, (_) {
+      final sig = computed<int>(ctx, (cx) {
         calls++;
-        return a.value * 10;
+        return cx.get(a) * 10;
       }).eager();
       expect(calls, 1); // eager
       expect(sig.value, 30);
@@ -157,7 +157,7 @@ void main() {
     test('recomputes immediately when a dependency changes', () {
       final ctx = Context();
       final a = Source<int>(ctx, 1);
-      final sig = computed<int>(ctx, (_) => a.value * 2).eager();
+      final sig = computed<int>(ctx, (cx) => cx.get(a) * 2).eager();
       expect(sig.value, 2);
       a.value = 5;
       expect(sig.value, 10); // already updated before read
@@ -168,12 +168,12 @@ void main() {
       // Signal maps cell through a function whose output is stable for some inputs.
       final src = Source<int>(ctx, 0);
       var computeCalls = 0;
-      final sig = computed<int>(ctx, (_) {
+      final sig = computed<int>(ctx, (cx) {
         computeCalls++;
-        return src.value.isEven ? 1 : 1; // always 1
+        return cx.get(src).isEven ? 1 : 1; // always 1
       }).eager();
       expect(sig.value, 1);
-      final downstream = Slot<int>(ctx, (_) => sig.value + 100);
+      final downstream = Slot<int>(ctx, (cx) => cx.get(sig) + 100);
       expect(downstream(), 101);
       var downstreamCalls = 0;
       // attach a dependent counter via a downstream slot re-read
@@ -188,9 +188,9 @@ void main() {
       final ctx = Context();
       final a = Source<int>(ctx, 1);
       var calls = 0;
-      final sig = computed<int>(ctx, (_) {
+      final sig = computed<int>(ctx, (cx) {
         calls++;
-        return a.value;
+        return cx.get(a);
       }).eager();
       expect(sig.value, 1);
       final callsAfterConstruct = calls;
@@ -273,7 +273,7 @@ void main() {
     test('a slot that reads state invalidates on transition', () {
       final ctx = Context();
       final m = trafficLight(ctx);
-      final label = Slot<String>(ctx, (_) => 'light=${m.state}');
+      final label = Slot<String>(ctx, (cx) => 'light=${cx.get(m.cell)}');
       expect(label(), 'light=Red');
       m.send('advance');
       expect(label(), 'light=Green');

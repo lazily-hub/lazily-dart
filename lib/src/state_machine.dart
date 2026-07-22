@@ -67,10 +67,10 @@ class StateMachine<S, E> {
   void Function() onTransition(void Function(S oldState, S newState) handler) {
     late S prev;
     var seeded = false;
-    final effect = Effect(ctx, (_) {
+    final effect = Effect(ctx, (cx) {
       // Read unconditionally so the dependency edge is registered on the very
       // first run, which is the run that only seeds `prev`.
-      final current = _cell.value;
+      final current = cx.get(_cell);
       if (seeded && current != prev) {
         handler(prev, current);
       }

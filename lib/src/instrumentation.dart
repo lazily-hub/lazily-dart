@@ -56,7 +56,7 @@ List<BenchmarkResult> runBenchmarkSuite({int iterations = 10000}) {
       final ctx = Context();
       final a = Source<int>(ctx, 1);
       final b = Source<int>(ctx, 2);
-      final sum = Slot<int>(ctx, (_) => a.value + b.value);
+      final sum = Slot<int>(ctx, (cx) => cx.get(a) + cx.get(b));
       a.value = 10;
       sum();
     }, iterations: iterations),
@@ -64,16 +64,16 @@ List<BenchmarkResult> runBenchmarkSuite({int iterations = 10000}) {
       final ctx = Context();
       final src = Source<int>(ctx, 4);
       final parity =
-          computed<String>(ctx, (_) => src.value.isEven ? 'even' : 'odd');
+          computed<String>(ctx, (cx) => cx.get(src).isEven ? 'even' : 'odd');
       src.value = 6; // still even — the guard suppresses
       parity();
     }, iterations: iterations),
     benchmark('batch coalesce (10 cells)', () {
       final ctx = Context();
       final cells = [for (var i = 0; i < 10; i++) Source<int>(ctx, i)];
-      Effect(ctx, (_) {
+      Effect(ctx, (cx) {
         for (final c in cells) {
-          c.value;
+          cx.get(c);
         }
         return null;
       });

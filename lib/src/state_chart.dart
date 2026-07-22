@@ -388,18 +388,20 @@ class StateChart {
   List<String> lastActions() => List<String>.unmodifiable(_lastActions);
 
   /// The full active configuration (active leaves plus all active ancestors).
-  Configuration configuration() {
-    final stored = _config.value;
+  /// Pass the ambient [Compute] to subscribe the reader (value-threaded
+  /// tracking); a bare call outside a compute is an untracked read.
+  Configuration configuration([Compute? cx]) {
+    final stored = cx == null ? _config.value : cx.get(_config);
     return Configuration(stored.toSet());
   }
 
   /// Active atomic leaves, sorted (one per parallel region; one for single-region).
-  List<String> activeLeaves() =>
-      configuration().where((s) => _isLeaf(def.kind(s))).toList()..sort();
+  List<String> activeLeaves([Compute? cx]) =>
+      configuration(cx).where((s) => _isLeaf(def.kind(s))).toList()..sort();
 
   /// Hierarchical "state-in" predicate: `true` iff [id] is in the active
-  /// configuration. Reading inside a computation subscribes the reader.
-  bool matches(String id) => configuration().contains(id);
+  /// configuration. Pass the ambient [Compute] to subscribe the reader.
+  bool matches(String id, [Compute? cx]) => configuration(cx).contains(id);
 
   /// Send an event (run-to-completion). Returns `true` if any transition was
   /// taken, `false` if rejected (configuration unchanged, no actions fired).

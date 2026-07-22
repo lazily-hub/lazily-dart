@@ -84,8 +84,9 @@ class MergeCell<T> {
   final Source<T> cell;
   final MergePolicy<T> policy;
 
-  /// Read the current converged value (tracks a dependency in a computation).
-  T get() => cell.get();
+  /// Read the current converged value. Pass the ambient [Compute] to subscribe
+  /// the reader (value-threaded tracking); a bare `get()` is an untracked read.
+  T get([Compute? cx]) => cx == null ? cell.get() : cx.get(cell);
 
   /// Replace the value outright (the keep-latest write), bypassing the policy.
   void set(T value) => cell.set(value);

@@ -92,8 +92,8 @@ void main() {
       final ctx = Context();
       final mc = mergeCell(ctx, 10, max());
       var runs = 0;
-      Effect(ctx, (_) {
-        mc.get();
+      Effect(ctx, (cx) {
+        mc.get(cx);
         runs++;
         return null;
       });
@@ -123,8 +123,8 @@ void main() {
       final ctx = Context();
       final mc = mergeCell(ctx, scenario['initial'] as int, policy);
       var runs = 0;
-      Effect(ctx, (_) {
-        mc.get();
+      Effect(ctx, (cx) {
+        mc.get(cx);
         runs++;
         return null;
       });

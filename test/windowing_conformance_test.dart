@@ -28,7 +28,7 @@ int _sum(int a, int b) => a + b;
 
 /// Observe a cell through a slot; returns the slot primed (cached).
 Slot<Object?> _observe(Context ctx, Cell cell) {
-  final slot = Slot<Object?>(ctx, (_) => cell.value);
+  final slot = Slot<Object?>(ctx, (cx) => cx.get(cell));
   slot();
   return slot;
 }

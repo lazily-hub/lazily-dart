@@ -7,8 +7,8 @@ void main() {
       final ctx = Context();
       final a = Source<int>(ctx, 1);
       final log = <int>[];
-      Effect(ctx, (_) {
-        log.add(a.value);
+      Effect(ctx, (cx) {
+        log.add(cx.get(a));
         return null;
       });
       expect(log, [1]);
@@ -22,8 +22,8 @@ void main() {
       final ctx = Context();
       final a = Source<int>(ctx, 0);
       final cleanups = <int>[];
-      final effect = Effect(ctx, (_) {
-        final seen = a.value;
+      final effect = Effect(ctx, (cx) {
+        final seen = cx.get(a);
         return () => cleanups.add(seen);
       });
       a.value = 1;
@@ -39,8 +39,8 @@ void main() {
       final tracked = Source<int>(ctx, 10);
       final untracked = Source<int>(ctx, 100);
       var runs = 0;
-      Effect(ctx, (_) {
-        tracked.value;
+      Effect(ctx, (cx) {
+        cx.get(tracked);
         runs++;
         return null;
       });
@@ -54,8 +54,8 @@ void main() {
     test('isActive is false after dispose', () {
       final ctx = Context();
       final a = Source<int>(ctx, 0);
-      final effect = Effect(ctx, (_) {
-        a.value;
+      final effect = Effect(ctx, (cx) {
+        cx.get(a);
         return null;
       });
       expect(effect.isActive, isTrue);
@@ -69,10 +69,10 @@ void main() {
       final ctx = Context();
       final width = Source<int>(ctx, 4);
       final parity =
-          computed<String>(ctx, (_) => width.value.isEven ? 'even' : 'odd');
+          computed<String>(ctx, (cx) => cx.get(width).isEven ? 'even' : 'odd');
       var effectRuns = 0;
-      Effect(ctx, (_) {
-        parity();
+      Effect(ctx, (cx) {
+        cx.get(parity);
         effectRuns++;
         return null;
       });
@@ -90,7 +90,7 @@ void main() {
       final ctx = Context();
       final a = Source<int>(ctx, 2);
       final b = Source<int>(ctx, 3);
-      final sum = computed<int>(ctx, (_) => a.value + b.value);
+      final sum = computed<int>(ctx, (cx) => cx.get(a) + cx.get(b));
       expect(sum(), 5);
       a.value = 10;
       expect(sum(), 13);
@@ -99,8 +99,8 @@ void main() {
     test('cascades normally when value changes', () {
       final ctx = Context();
       final src = Source<int>(ctx, 1);
-      final doubled = computed<int>(ctx, (_) => src.value * 2);
-      final quadrupled = computed<int>(ctx, (_) => doubled() * 2);
+      final doubled = computed<int>(ctx, (cx) => cx.get(src) * 2);
+      final quadrupled = computed<int>(ctx, (cx) => cx.get(doubled) * 2);
       expect(quadrupled(), 4);
       src.value = 5;
       expect(quadrupled(), 20);
@@ -113,9 +113,9 @@ void main() {
       final a = Source<int>(ctx, 1);
       final b = Source<int>(ctx, 2);
       var runs = 0;
-      Effect(ctx, (_) {
-        a.value;
-        b.value;
+      Effect(ctx, (cx) {
+        cx.get(a);
+        cx.get(b);
         runs++;
         return null;
       });
@@ -131,8 +131,8 @@ void main() {
       final ctx = Context();
       final a = Source<int>(ctx, 0);
       var runs = 0;
-      Effect(ctx, (_) {
-        a.value;
+      Effect(ctx, (cx) {
+        cx.get(a);
         runs++;
         return null;
       });
@@ -162,8 +162,8 @@ void main() {
       final ctx = Context();
       final a = Source<int>(ctx, 1);
       var runs = 0;
-      Effect(ctx, (_) {
-        a.value;
+      Effect(ctx, (cx) {
+        cx.get(a);
         runs++;
         return null;
       });
@@ -176,8 +176,8 @@ void main() {
       final ctx = Context();
       final a = Source<int>(ctx, 5);
       var runs = 0;
-      Effect(ctx, (_) {
-        a.value;
+      Effect(ctx, (cx) {
+        cx.get(a);
         runs++;
         return null;
       });

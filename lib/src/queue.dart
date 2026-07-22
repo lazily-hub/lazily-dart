@@ -457,18 +457,19 @@ class QueueCell<T> {
   /// Reactive read of the current head value. `null` when the queue is empty.
   /// A reader is invalidated when the head value *changes* — every pop, and a
   /// push only when transitioning from empty.
-  T? head() {
-    final v = _headSlot();
+  T? head([Compute? cx]) {
+    final v = cx == null ? _headSlot() : cx.get(_headSlot);
     return identical(v, _noHead) ? null : v as T;
   }
 
   /// Reactive read of the number of buffered elements. Invalidated whenever
   /// the count changes (every successful push/pop).
-  int len() => _lenSlot();
+  int len([Compute? cx]) => cx == null ? _lenSlot() : cx.get(_lenSlot);
 
   /// Reactive emptiness check. Invalidated only on the empty ↔ non-empty
   /// transition.
-  bool isEmpty() => _isEmptySlot();
+  bool isEmpty([Compute? cx]) =>
+      cx == null ? _isEmptySlot() : cx.get(_isEmptySlot);
 
   /// Reactive fullness check (only meaningful when the backend is bounded).
   /// Invalidated on the full ↔ not-full transition — this is the backpressure
@@ -476,11 +477,13 @@ class QueueCell<T> {
   /// transitions full → not-full invalidates the producer's [isFull]
   /// subscription and the producer resumes. For an unbounded backend this is
   /// always `false` and never invalidates.
-  bool isFull() => _isFullSlot();
+  bool isFull([Compute? cx]) =>
+      cx == null ? _isFullSlot() : cx.get(_isFullSlot);
 
   /// Reactive read of the closed flag. Invalidated only on the open → closed
   /// transition.
-  bool isClosed() => _closedCell.value;
+  bool isClosed([Compute? cx]) =>
+      cx == null ? _closedCell.value : cx.get(_closedCell);
 
   // -- Non-reactive storage access ------------------------------------------
 

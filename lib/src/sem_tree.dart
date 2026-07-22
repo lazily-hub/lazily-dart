@@ -90,14 +90,14 @@ class SemTree<V, D> {
     node.childKeysCell = Source<List<String>>(_ctx, childOrder);
 
     // Register the computed AFTER childKeysCell is set, so it observes it.
-    node.slot = Computed<Object?>(_ctx, (_) {
-      final v = node.valueCell.value as V;
-      final keys = node.childKeysCell.value;
+    node.slot = Computed<Object?>(_ctx, (cx) {
+      final v = cx.get(node.valueCell) as V;
+      final keys = cx.get(node.childKeysCell);
       final ds = <D>[];
       for (final kid in keys) {
         final childSlot = node.childSlots[kid];
         if (childSlot != null) {
-          ds.add(childSlot() as D);
+          ds.add(cx.get(childSlot) as D);
         }
       }
       return _fold(v, ds) as Object?;

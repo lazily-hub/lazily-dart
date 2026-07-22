@@ -112,12 +112,12 @@ void _runStepsFixture(String name) {
     final currentKeys = map.keys()..clear();
     final valueReaders = <String, Slot<int?>>{};
     for (final k in currentKeys) {
-      final slot = Slot<int?>(ctx, (_) => map.read(k));
+      final slot = Slot<int?>(ctx, (cx) => map.read(k, cx));
       slot(); // prime
       valueReaders[k] = slot;
     }
-    final membershipReader = Slot<int>(ctx, (_) => map.len())..call(); // prime
-    final orderReader = Slot<List<String>>(ctx, (_) => map.keys())..call(); // prime
+    final membershipReader = Slot<int>(ctx, (cx) => map.len(cx))..call(); // prime
+    final orderReader = Slot<List<String>>(ctx, (cx) => map.keys(cx))..call(); // prime
 
     // Snapshot handles for the keys this step checks handle_stability on.
     final handleStableKeys = (expected['handle_stable'] as Map<String, dynamic>?)
@@ -262,7 +262,7 @@ void _runReconcileFixture(String name) {
       (expected['stable_keys_not_invalidated'] as List).cast<String>();
   final readers = <String, Slot<int?>>{};
   for (final k in stableKeys) {
-    final slot = Slot<int?>(ctx, (_) => map.read(k))..call();
+    final slot = Slot<int?>(ctx, (cx) => map.read(k, cx))..call();
     readers[k] = slot;
   }
   // A second reconcile against the same target is a no-op (stable entries
@@ -298,10 +298,10 @@ void main() {
       final map = CellMap<String, int>(ctx)
         ..set('a', 1)
         ..set('b', 2);
-      final ra = Slot<int?>(ctx, (_) => map.read('a'))..call();
-      final rb = Slot<int?>(ctx, (_) => map.read('b'))..call();
-      final len = Slot<int>(ctx, (_) => map.len())..call();
-      final keys = Slot<List<String>>(ctx, (_) => map.keys())..call();
+      final ra = Slot<int?>(ctx, (cx) => map.read('a', cx))..call();
+      final rb = Slot<int?>(ctx, (cx) => map.read('b', cx))..call();
+      final len = Slot<int>(ctx, (cx) => map.len(cx))..call();
+      final keys = Slot<List<String>>(ctx, (cx) => map.keys(cx))..call();
       map.set('a', 11);
       expect(_isWarm(ra, ctx), isFalse, reason: 'a invalidated');
       expect(_isWarm(rb, ctx), isTrue, reason: 'b untouched');
@@ -315,9 +315,9 @@ void main() {
         ..set('a', 1)
         ..set('b', 2)
         ..set('c', 3);
-      final len = Slot<int>(ctx, (_) => map.len())..call();
-      final keys = Slot<List<String>>(ctx, (_) => map.keys())..call();
-      final ra = Slot<int?>(ctx, (_) => map.read('a'))..call();
+      final len = Slot<int>(ctx, (cx) => map.len(cx))..call();
+      final keys = Slot<List<String>>(ctx, (cx) => map.keys(cx))..call();
+      final ra = Slot<int?>(ctx, (cx) => map.read('a', cx))..call();
       expect(map.moveTo('c', 0), isTrue);
       expect(map.keys(), equals(['c', 'a', 'b']));
       expect(_isWarm(len, ctx), isTrue, reason: 'membership untouched by move');
@@ -340,7 +340,7 @@ void main() {
       final map = CellMap<String, int>(ctx)
         ..set('a', 1)
         ..set('b', 2);
-      final keys = Slot<List<String>>(ctx, (_) => map.keys())..call();
+      final keys = Slot<List<String>>(ctx, (cx) => map.keys(cx))..call();
       expect(map.moveTo('a', 0), isTrue); // already at 0
       expect(_isWarm(keys, ctx), isTrue, reason: 'no-op move');
     });
@@ -352,7 +352,7 @@ void main() {
       final root = CellTree<String, int>(ctx, 'root', 0);
       root.insertChild('a', 1);
       root.insertChild('b', 2);
-      final childIds = Slot<List<String>>(ctx, (_) => root.childIds())..call();
+      final childIds = Slot<List<String>>(ctx, (cx) => root.childIds(cx))..call();
       expect(root.childIds(), equals(['a', 'b']));
       root.moveChildTo('b', 0);
       expect(root.childIds(), equals(['b', 'a']));

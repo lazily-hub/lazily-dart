@@ -102,9 +102,10 @@ class RelayCell<T> {
     if (policy.overflow.peek == Overflow.conflate && !mergePolicy.conflates) {
       throw RelayConfigException(RelayConfigError.conflateNotBounding);
     }
-    depth = Slot<int>(ctx, (_) => _pending.value);
-    isFull = Slot<bool>(ctx, (_) => _pending.value >= policy.highWater.value);
-    isEmpty = Slot<bool>(ctx, (_) => _head.value == null);
+    depth = Slot<int>(ctx, (cx) => cx.get(_pending));
+    isFull =
+        Slot<bool>(ctx, (cx) => cx.get(_pending) >= cx.get(policy.highWater));
+    isEmpty = Slot<bool>(ctx, (cx) => cx.get(_head) == null);
   }
 
   final Context ctx;

@@ -19,7 +19,7 @@ void main() {
       final derived = computedRippleWhen<(int, int)>(
         ctx,
         (c) {
-          final v = input.value;
+          final v = c.get(input);
           return (v, v ~/ 10); // (payload, bucket)
         },
         (old, neu) => old.$2 != neu.$2, // propagate when bucket changed
@@ -28,7 +28,7 @@ void main() {
       var recomputes = 0;
       final observer = computed<int>(ctx, (c) {
         recomputes += 1;
-        return derived.value.$1;
+        return c.get(derived).$1;
       });
 
       expect(observer.value, 0);
@@ -54,14 +54,14 @@ void main() {
       // when the count crosses a size-3 window boundary.
       final sampled = computedRippleWhen<int>(
         ctx,
-        (c) => input.value,
+        (c) => c.get(input),
         (old, neu) => neu ~/ 3 != old ~/ 3,
       );
 
       var seen = 0;
       final observer = computed<int>(ctx, (c) {
         seen += 1;
-        return sampled.value;
+        return c.get(sampled);
       });
 
       expect(observer.value, 0);
@@ -84,10 +84,10 @@ void main() {
       final input = Source<int>(ctx, 0);
 
       int min1(int v) => v < 1 ? v : 1;
-      final viaComputed = computed<int>(ctx, (c) => min1(input.value));
+      final viaComputed = computed<int>(ctx, (c) => min1(c.get(input)));
       final viaWhen = computedRippleWhen<int>(
         ctx,
-        (c) => min1(input.value),
+        (c) => min1(c.get(input)),
         (o, n) => o != n,
       );
 
@@ -95,11 +95,11 @@ void main() {
       var b = 0;
       final obsA = computed<int>(ctx, (c) {
         a += 1;
-        return viaComputed.value;
+        return c.get(viaComputed);
       });
       final obsB = computed<int>(ctx, (c) {
         b += 1;
-        return viaWhen.value;
+        return c.get(viaWhen);
       });
       expect(obsA.value, 0);
       expect(obsB.value, 0);
@@ -131,7 +131,7 @@ void main() {
       final passthrough = computedRippleWhen<int>(
         ctx,
         (c) {
-          input.value; // depend on input, but always yield the same value
+          c.get(input); // depend on input, but always yield the same value
           return 0;
         },
         (_, __) => true,
@@ -140,7 +140,7 @@ void main() {
       var recomputes = 0;
       final observer = computed<int>(ctx, (c) {
         recomputes += 1;
-        return passthrough.value;
+        return c.get(passthrough);
       });
 
       expect(observer.value, 0);

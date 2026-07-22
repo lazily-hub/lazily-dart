@@ -69,7 +69,7 @@ Map<String, dynamic> _checkValFixture(String name) {
   expect(fixture['model'], 'SlotMap', reason: 'fixture model');
   final spec = _parseVal(fixture);
   final expected = fixture['expected'] as Map<String, dynamic>;
-  final lookup = (String k) => spec.values[k]!;
+  final lookup = (Compute cx, String k) => spec.values[k]!;
 
   // default_mode_eager.
   expect(expected['default_mode'], 'eager');
@@ -103,7 +103,7 @@ void main() {
       final fixture = _checkValFixture('observational_transparency.json');
       final expected = fixture['expected'] as Map<String, dynamic>;
       final spec = _parseVal(fixture);
-      final lookup = (String k) => spec.values[k]!;
+      final lookup = (Compute cx, String k) => spec.values[k]!;
 
       // Replay the lazy read sequence on a fresh map; the lazy present set is
       // exactly the read keys (lazy_defers_slots).
@@ -119,7 +119,7 @@ void main() {
       final fixture = _checkValFixture('deferral_not_deallocation.json');
       final expected = fixture['expected'] as Map<String, dynamic>;
       final spec = _parseVal(fixture);
-      final lookup = (String k) => spec.values[k]!;
+      final lookup = (Compute cx, String k) => spec.values[k]!;
 
       final lazy = SlotMap<String, int>(Context());
 
@@ -177,7 +177,7 @@ void main() {
         eagerCells.entry(k, lookup(k));
       }
       final eagerSlots = SlotMap<String, int>(ctx)
-        ..materializeAll(slotKeys, lookup);
+        ..materializeAll(slotKeys, (_, k) => lookup(k));
       expect(eagerCells.entryKind, EntryKind.cell);
       expect(eagerSlots.entryKind, EntryKind.slot);
       final eagerPresent = _asSet(eagerCells.presentKeys())
@@ -197,9 +197,9 @@ void main() {
       // Reads (slot pulls) grow only the slot present set.
       for (final k in _strArray(fixture, 'reads')) {
         if (slotKeys.contains(k)) {
-          lazySlots.getOrInsertWith(k, lookup);
+          lazySlots.getOrInsertWith(k, (_, key) => lookup(key));
         } else {
-          lazyCells.getOrInsertWith(k, lookup);
+          lazyCells.getOrInsertWith(k, (_, key) => lookup(key));
         }
       }
       final lazyAfter = _asSet(lazyCells.presentKeys())
@@ -214,7 +214,7 @@ void main() {
           expect(lazyCells.get(e.key), e.value);
         } else {
           expect(eagerSlots.get(e.key), e.value);
-          expect(lazySlots.getOrInsertWith(e.key, lookup), e.value);
+          expect(lazySlots.getOrInsertWith(e.key, (_, key) => lookup(key)), e.value);
         }
       }
     });

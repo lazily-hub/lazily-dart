@@ -62,11 +62,11 @@ bool _isWarm(Slot<dynamic> reader, Context ctx) => ctx.contains(reader);
 /// Reader-kind probes — one [Slot] per reader kind, primed before each op.
 class _Readers<T> {
   _Readers(Context ctx, QueueCell<T> q)
-      : head = Slot<Object?>(ctx, (_) => q.head())..call(),
-        len = Slot<int>(ctx, (_) => q.len())..call(),
-        isEmpty = Slot<bool>(ctx, (_) => q.isEmpty())..call(),
-        isFull = Slot<bool>(ctx, (_) => q.isFull())..call(),
-        isClosed = Slot<bool>(ctx, (_) => q.isClosed())..call();
+      : head = Slot<Object?>(ctx, (cx) => q.head(cx))..call(),
+        len = Slot<int>(ctx, (cx) => q.len(cx))..call(),
+        isEmpty = Slot<bool>(ctx, (cx) => q.isEmpty(cx))..call(),
+        isFull = Slot<bool>(ctx, (cx) => q.isFull(cx))..call(),
+        isClosed = Slot<bool>(ctx, (cx) => q.isClosed(cx))..call();
 
   final Slot<Object?> head;
   final Slot<int> len;
@@ -407,8 +407,8 @@ void main() {
       final ctx = Context();
       final q = QueueCell<int>(ctx, _MinimalFifo<int>());
       final log = <int>[];
-      Effect(ctx, (_) {
-        log.add(q.len());
+      Effect(ctx, (cx) {
+        log.add(q.len(cx));
         return null;
       });
 

@@ -23,14 +23,14 @@ void main() {
     final a = Source<int>(ctx, 2);
 
     var slotFires = 0;
-    final dependent = Slot<int>(ctx, (_) {
+    final dependent = Slot<int>(ctx, (cx) {
       slotFires++;
-      return a.value;
+      return cx.get(a);
     });
     // The eager-push side of the graph must be equally undisturbed.
     var effectFires = 0;
-    Effect(ctx, (_) {
-      a.value;
+    Effect(ctx, (cx) {
+      cx.get(a);
       effectFires++;
       return null;
     });
@@ -56,8 +56,8 @@ void main() {
     final a = Source<int>(ctx, 1);
 
     // Two flavors of direct dependent: lazy slot, eager signal.
-    final lazy = Slot<int>(ctx, (_) => a.value + 1);
-    final eager = computed<int>(ctx, (_) => a.value * 10).eager();
+    final lazy = Slot<int>(ctx, (cx) => cx.get(a) + 1);
+    final eager = computed<int>(ctx, (cx) => cx.get(a) * 10).eager();
 
     expect(lazy(), 2); // materialize
     expect(eager.value, 10); // materialize
@@ -81,15 +81,15 @@ void main() {
     // A signal whose OUTPUT is stable even when its input flips: it derives
     // a constant `42` regardless of `toggle`. The memo guard must observe
     // equality and suppress downstream propagation.
-    final stable = computed<int>(ctx, (_) {
-      toggle.value; // register the edge, even though output is constant
+    final stable = computed<int>(ctx, (cx) {
+      cx.get(toggle); // register the edge, even though output is constant
       return 42;
     }).eager();
 
     var downstreamFires = 0;
-    final downstream = Slot<int>(ctx, (_) {
+    final downstream = Slot<int>(ctx, (cx) {
       downstreamFires++;
-      return stable.value;
+      return cx.get(stable);
     });
     expect(downstream(), 42); // materialize downstream
     final firesBefore = downstreamFires;
@@ -112,9 +112,9 @@ void main() {
   test('Lean recomputeSlot_different_invalidates_dependents: a strictly-different signal recompute invalidates every direct dependent', () {
     final ctx = Context();
     final src = Source<int>(ctx, 1);
-    final sig = computed<int>(ctx, (_) => src.value * 2).eager();
+    final sig = computed<int>(ctx, (cx) => cx.get(src) * 2).eager();
 
-    final lazyChild = Slot<int>(ctx, (_) => sig.value + 1);
+    final lazyChild = Slot<int>(ctx, (cx) => cx.get(sig) + 1);
     expect(lazyChild(), 3); // materialize
 
     src.value = 5; // sig recomputes 2 → 10: strictly different
@@ -132,7 +132,7 @@ void main() {
   test('Lean signal_materialized_after_recompute: after a dependency change the signal is already materialized (not lazy)', () {
     final ctx = Context();
     final a = Source<int>(ctx, 1);
-    final sig = computed<int>(ctx, (_) => a.value + 100).eager();
+    final sig = computed<int>(ctx, (cx) => cx.get(a) + 100).eager();
 
     expect(sig.value, 101); // materialize
 

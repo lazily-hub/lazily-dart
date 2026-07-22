@@ -101,9 +101,10 @@ abstract class ReactiveMap<K, V, H> {
   EntryKind get entryKind;
 
   /// Allocate the node for one entry, with [compute] producing its canonical
-  /// value. An input cell sets its value directly; a derived slot wraps
-  /// [compute] as its recomputation.
-  H _materializeHandle(V Function() compute);
+  /// value from the value-threaded [Compute] surface. An input cell seeds its
+  /// value once (untracked, via [Context.computeDetached]); a derived slot wraps
+  /// [compute] as its recomputation (tracked per recompute).
+  H _materializeHandle(V Function(Compute cx) compute);
 
   /// Read [handle]'s value through its owning context (subscribes the caller,
   /// as any cell/slot read does).
@@ -131,7 +132,7 @@ abstract class ReactiveMap<K, V, H> {
   /// Mint the entry node for [key] on first access (via [_materializeHandle]
   /// with [compute] as its value producer), caching the handle and bumping
   /// reactive membership. Re-minting an existing key returns the cached handle.
-  H _mintWith(K key, V Function() compute) {
+  H _mintWith(K key, V Function(Compute cx) compute) {
     final existing = _entries[key];
     if (existing != null) return existing;
     final handle = _materializeHandle(compute);
@@ -147,10 +148,10 @@ abstract class ReactiveMap<K, V, H> {
   ///
   /// Bumps reactive membership only on insert; an existing key returns its
   /// current value without re-running [factory].
-  V getOrInsertWith(K key, V Function(K key) factory) {
+  V getOrInsertWith(K key, V Function(Compute cx, K key) factory) {
     final existing = _entries[key];
     if (existing != null) return _observeHandle(existing);
-    return _observeHandle(_mintWith(key, () => factory(key)));
+    return _observeHandle(_mintWith(key, (cx) => factory(cx, key)));
   }
 
   /// The existing entry handle for [key], or `null`. Non-reactive: does not
@@ -174,9 +175,13 @@ abstract class ReactiveMap<K, V, H> {
   /// Reactive snapshot of the keys in their current order. Subscribes the
   /// caller to **order** changes (add/remove **and move/reorder**), not to
   /// per-entry value changes.
-  List<K> keys() {
-    // Subscribe to the order signal.
-    _orderSignal.value;
+  List<K> keys([Compute? cx]) {
+    // Subscribe to the order signal (value-threaded when a Compute is passed).
+    if (cx == null) {
+      _orderSignal.value;
+    } else {
+      cx.get(_orderSignal);
+    }
     return List<K>.of(_order);
   }
 
@@ -244,8 +249,12 @@ abstract class ReactiveMap<K, V, H> {
   }
 
   /// Reactive entry count. Subscribes the caller to membership changes only.
-  int len() {
-    _membership.value;
+  int len([Compute? cx]) {
+    if (cx == null) {
+      _membership.value;
+    } else {
+      cx.get(_membership);
+    }
     return _order.length;
   }
 
@@ -254,8 +263,12 @@ abstract class ReactiveMap<K, V, H> {
 
   /// Reactive membership test for [key]. Subscribes the caller to membership
   /// changes (add/remove of any key), not to value changes.
-  bool containsKey(K key) {
-    _membership.value;
+  bool containsKey(K key, [Compute? cx]) {
+    if (cx == null) {
+      _membership.value;
+    } else {
+      cx.get(_membership);
+    }
     return _entries.containsKey(key);
   }
 
@@ -276,7 +289,8 @@ class CellMap<K, V> extends ReactiveMap<K, V, Source<V>> {
 
   @override
   // An input has no derivation: materialize by setting its value directly.
-  Source<V> _materializeHandle(V Function() compute) => Source<V>(ctx, compute());
+  Source<V> _materializeHandle(V Function(Compute cx) compute) =>
+      Source<V>(ctx, ctx.computeDetached(compute));
 
   @override
   V _observeHandle(Source<V> handle) => handle.value;
@@ -290,7 +304,7 @@ class CellMap<K, V> extends ReactiveMap<K, V, Source<V>> {
   /// access. Adding a new key bumps reactive membership; re-fetching an existing
   /// key does not. Cell-only: eager value-minting has no derived-slot analog.
   Source<V> entryWith(K key, V Function() defaultValue) =>
-      _mintWith(key, defaultValue);
+      _mintWith(key, (_) => defaultValue());
 
   /// Return the value cell for [key], minting it with [defaultValue] on first
   /// access. Convenience wrapper over [entryWith].
@@ -305,10 +319,13 @@ class CellMap<K, V> extends ReactiveMap<K, V, Source<V>> {
   V? get(K key) => handle(key)?.peek;
 
   /// Read the value at [key] if present, subscribing the caller to that entry's
-  /// cell (reactive inside a Slot / Signal computation).
-  V? read(K key) {
+  /// cell (reactive inside a Slot / Computed computation). Pass the ambient
+  /// [Compute] to register the dependency edge (value-threaded tracking); a bare
+  /// `read(key)` outside a compute is a plain untracked read.
+  V? read(K key, [Compute? cx]) {
     final h = handle(key);
-    return h == null ? null : h.value;
+    if (h == null) return null;
+    return cx == null ? h.value : cx.get(h);
   }
 
   /// Set the value at [key], inserting a new entry (and bumping membership) if
@@ -393,8 +410,8 @@ class SlotMap<K, V> extends ReactiveMap<K, V, Slot<V>> {
 
   @override
   // A derived node: the same node an eager pre-mint would allocate.
-  Slot<V> _materializeHandle(V Function() compute) =>
-      Slot<V>(ctx, (_) => compute());
+  Slot<V> _materializeHandle(V Function(Compute cx) compute) =>
+      Slot<V>(ctx, compute);
 
   @override
   V _observeHandle(Slot<V> handle) => handle.call();
@@ -413,7 +430,7 @@ class SlotMap<K, V> extends ReactiveMap<K, V, Slot<V>> {
   /// via [factory], up front. Observationally identical to minting each key
   /// lazily on first read ([ReactiveMap.getOrInsertWith]) — it only changes
   /// *when* the nodes are allocated.
-  void materializeAll(Iterable<K> keys, V Function(K key) factory) {
+  void materializeAll(Iterable<K> keys, V Function(Compute cx, K key) factory) {
     for (final key in keys) {
       getOrInsertWith(key, factory);
     }
@@ -709,12 +726,13 @@ class CellTree<K, V> {
   /// Atomically move child [id] to just after [anchor].
   bool moveChildAfter(K id, K anchor) => children.moveAfter(id, anchor);
 
-  /// Reactive snapshot of this node's child ids in order.
-  List<K> childIds() => children.keys();
+  /// Reactive snapshot of this node's child ids in order. Pass the ambient
+  /// [Compute] to subscribe the reader (value-threaded tracking).
+  List<K> childIds([Compute? cx]) => children.keys(cx);
 
   /// Reactive child count for this node.
-  int childCount() => children.len();
+  int childCount([Compute? cx]) => children.len(cx);
 
   /// Reactive membership test for a child of this node.
-  bool hasChild(K id) => children.containsKey(id);
+  bool hasChild(K id, [Compute? cx]) => children.containsKey(id, cx);
 }
