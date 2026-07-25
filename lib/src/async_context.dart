@@ -141,7 +141,6 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
   AsyncSlotState _state = AsyncSlotState.empty;
   int _revision = 0; // bumped on every invalidation
   T? _value;
-  Object? _error;
   Completer<T>? _inFlight;
   // dependency node -> did we register in _ctx._dependents? Cleared on rerun.
   final Set<Object> _dependencies = {};
@@ -186,9 +185,12 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
         throw StateError('AsyncContext disposed');
       }
       if (_state == AsyncSlotState.resolved) return _value as T;
-      if (_state == AsyncSlotState.error) {
-        throw _error!;
-      }
+      // `error` falls through to the spawn path (Error -> Computing). A slot in
+      // `error` holds no cached result: the caller of the failed attempt already
+      // received its error, and replaying it here would make a transient failure
+      // permanent for the slot's lifetime with no read path able to recover it
+      // (docs/async.md § Async slot state machine;
+      // LazilyFormal.AsyncSlotState SlotEvent.retry).
       final existing = _inFlight;
       if (existing != null) {
         // Attach to the existing in-flight future for this revision.
@@ -253,7 +255,6 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
       return;
     }
     _value = value;
-    _error = null;
     _state = AsyncSlotState.resolved;
     _inFlight?.complete(value);
     _inFlight = null;
@@ -264,7 +265,9 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
       _failInFlight(const _Superseded());
       return;
     }
-    _error = e;
+    // The error is delivered to this attempt's waiters and deliberately not
+    // stored: a slot in `error` holds no cached result, so the next getAsync
+    // re-spawns (Error -> Computing) instead of replaying a stale failure.
     _state = AsyncSlotState.error;
     _inFlight?.completeError(e, st);
     _inFlight = null;

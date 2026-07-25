@@ -49,8 +49,45 @@ void main() {
         expect(e.message, 'boom');
       }
       expect(slot.state, AsyncSlotState.error);
-      // Retry: a getAsync after the failure spawns a fresh computation.
+      // The runtime keeps running after a failing slot.
       aRetrySlot(ctx);
+      await ctx.disposeAsync();
+    });
+
+    test('Error → Computing: the next getAsync re-spawns', () async {
+      final ctx = AsyncContext();
+      var calls = 0;
+      final slot = ctx.computedAsync((cc) async {
+        calls += 1;
+        if (calls == 1) throw StateError('boom');
+        return 7;
+      });
+      await expectLater(slot.getAsync(), throwsA(isA<StateError>()));
+      expect(slot.state, AsyncSlotState.error);
+      // A slot in `error` holds no cached result: the read re-spawns rather
+      // than replaying the stored error, so a transient failure is recoverable
+      // (docs/async.md § Async slot state machine; SlotEvent.retry).
+      expect(await slot.getAsync(), 7);
+      expect(calls, 2, reason: 'the retry must re-run the compute body');
+      expect(slot.state, AsyncSlotState.resolved);
+      await ctx.disposeAsync();
+    });
+
+    test('a persistently failing slot re-spawns on every read', () async {
+      final ctx = AsyncContext();
+      var calls = 0;
+      final slot = ctx.computedAsync((cc) async {
+        calls += 1;
+        throw StateError('boom');
+      });
+      for (var i = 0; i < 3; i++) {
+        await expectLater(slot.getAsync(), throwsA(isA<StateError>()));
+      }
+      // Asserted on the compute counter, not the thrown error: a binding that
+      // caches and replays the error also "throws boom" three times, but runs
+      // the body once.
+      expect(calls, 3,
+          reason: 'a cached error would report 1 compute, not one per read');
       await ctx.disposeAsync();
     });
   });
