@@ -38,6 +38,7 @@
 /// cross-checks.
 
 import 'core.dart';
+import 'keyed_order.dart';
 
 /// Which kind of reactive node a [ReactiveMap] entry is — the handle-kind axis
 /// the map abstracts over.
@@ -106,8 +107,9 @@ abstract class ReactiveMap<K, V, H> {
         _orderSignal = Source<int>(ctx, 0);
 
   final Context ctx;
-  final Map<K, H> _entries = {};
-  final List<K> _order = [];
+  /// Present set + key order + the move algebra. Graph-agnostic and shared with
+  /// the thread-safe and async flavors; see `keyed_order.dart`.
+  final KeyedOrder<K, H> _keyed = KeyedOrder<K, H>();
 
   /// Reactive *set-membership* signal: a monotonic version bumped only when the
   /// **set** of keys changes (add/remove).
@@ -158,13 +160,11 @@ abstract class ReactiveMap<K, V, H> {
   /// with [compute] as its value producer), caching the handle and bumping
   /// reactive membership. Re-minting an existing key returns the cached handle.
   H _mintWith(K key, V Function(Compute cx) compute) {
-    final existing = _entries[key];
-    if (existing != null) return existing;
-    final handle = _materializeHandle(compute);
-    _entries[key] = handle;
-    _order.add(key);
-    _bumpMembership();
-    return handle;
+    final warm = _keyed.get(key);
+    if (warm != null) return warm;
+    final (stored, mutation) = _keyed.insert(key, _materializeHandle(compute));
+    if (mutation.changed) _bumpMembership();
+    return stored;
   }
 
   /// Get the value at [key], minting the entry via [factory] first if absent —
@@ -174,14 +174,14 @@ abstract class ReactiveMap<K, V, H> {
   /// Bumps reactive membership only on insert; an existing key returns its
   /// current value without re-running [factory].
   V getOrInsertWith(K key, V Function(Compute cx, K key) factory) {
-    final existing = _entries[key];
+    final existing = _keyed.get(key);
     if (existing != null) return _observeHandle(existing);
     return _observeHandle(_mintWith(key, (cx) => factory(cx, key)));
   }
 
   /// The existing entry handle for [key], or `null`. Non-reactive: does not
   /// subscribe the caller to membership.
-  H? handle(K key) => _entries[key];
+  H? handle(K key) => _keyed.get(key);
 
   /// Remove [key]'s entry. Bumps reactive membership and clears the removed
   /// entry's dependents. Returns whether the key was present.
@@ -189,10 +189,9 @@ abstract class ReactiveMap<K, V, H> {
   /// The orphaned node stops driving any dependents; the runtime exposes no
   /// node-recycle yet (mirrors `lazily-rs`).
   bool remove(K key) {
-    final removed = _entries.remove(key);
-    if (removed == null) return false;
-    _order.remove(key);
-    _clearHandle(removed);
+    final (removed, mutation) = _keyed.remove(key);
+    if (!mutation.changed) return false;
+    _clearHandle(removed as H);
     _bumpMembership();
     return true;
   }
@@ -207,28 +206,23 @@ abstract class ReactiveMap<K, V, H> {
     } else {
       cx.get(_orderSignal);
     }
-    return List<K>.of(_order);
+    return _keyed.keys();
   }
 
   /// The currently-materialized (present) keys, in first-materialization order.
   /// Non-reactive; the present set only grows (deferral, not de-allocation).
-  List<K> presentKeys() => List<K>.of(_order);
+  List<K> presentKeys() => _keyed.keys();
 
   /// Number of currently-materialized (present) entries. Non-reactive.
-  int presentCount() => _order.length;
+  int presentCount() => _keyed.length;
 
   /// Whether [key] is currently materialized (present in the allocated set).
   /// Non-reactive.
-  bool isPresent(K key) => _entries.containsKey(key);
+  bool isPresent(K key) => _keyed.contains(key);
 
   /// Current 0-based position of [key] in the order, or `null` if absent.
   /// Non-reactive.
-  int? position(K key) {
-    for (var i = 0; i < _order.length; i++) {
-      if (_order[i] == key) return i;
-    }
-    return null;
-  }
+  int? position(K key) => _keyed.position(key);
 
   /// Atomically move [key] to [index] in the order (`#lzcellmove`).
   ///
@@ -240,37 +234,22 @@ abstract class ReactiveMap<K, V, H> {
   ///
   /// [index] is clamped to `[0, len)`. A no-op move (already at position) bumps
   /// nothing. Returns whether [key] was present.
-  bool moveTo(K key, int index) {
-    final from = position(key);
-    if (from == null) return false;
-    final to = index.clamp(0, _order.length - 1);
-    if (from == to) return true;
-    _order.removeAt(from);
-    _order.insert(to, key);
-    _bumpOrder();
-    return true;
-  }
+  bool moveTo(K key, int index) => _applyMove(_keyed.moveTo(key, index));
 
   /// Atomically move [key] to just before [anchor] (`#lzcellmove`). Returns
   /// whether the move could be expressed.
-  bool moveBefore(K key, K anchor) {
-    final anchorIdx = position(anchor);
-    if (anchorIdx == null) return false;
-    final from = position(key);
-    if (from == null) return false;
-    // Removing `key` first shifts `anchor` left by one when key precedes it.
-    final target = from < anchorIdx ? anchorIdx - 1 : anchorIdx;
-    return moveTo(key, target);
-  }
+  bool moveBefore(K key, K anchor) =>
+      _applyMove(_keyed.moveBefore(key, anchor));
 
   /// Atomically move [key] to just after [anchor] (`#lzcellmove`).
-  bool moveAfter(K key, K anchor) {
-    final anchorIdx = position(anchor);
-    if (anchorIdx == null) return false;
-    final from = position(key);
-    if (from == null) return false;
-    final target = from <= anchorIdx ? anchorIdx : anchorIdx + 1;
-    return moveTo(key, target);
+  bool moveAfter(K key, K anchor) => _applyMove(_keyed.moveAfter(key, anchor));
+
+  /// Bump the order signal only when the order actually changed. A no-op move
+  /// still reports success to the caller but must invalidate no reader.
+  bool _applyMove(MapMove outcome) {
+    if (!outcome.applied) return false;
+    if (outcome.changed) _bumpOrder();
+    return true;
   }
 
   /// Reactive entry count. Subscribes the caller to membership changes only.
@@ -280,7 +259,7 @@ abstract class ReactiveMap<K, V, H> {
     } else {
       cx.get(_membership);
     }
-    return _order.length;
+    return _keyed.length;
   }
 
   /// Reactive emptiness check. Subscribes the caller to membership changes.
@@ -294,11 +273,11 @@ abstract class ReactiveMap<K, V, H> {
     } else {
       cx.get(_membership);
     }
-    return _entries.containsKey(key);
+    return _keyed.contains(key);
   }
 
   /// Non-reactive count. Does not subscribe the caller to anything.
-  int get lenUntracked => _order.length;
+  int get lenUntracked => _keyed.length;
 }
 
 /// A keyed **input-cell** collection: every entry is a settable [Cell] (the
@@ -372,7 +351,7 @@ class SourceMap<K, V> extends ReactiveMap<K, V, Source<V>> {
   /// (false if it already existed; in that case the value is updated in place
   /// and only the entry's value readers invalidate).
   bool insert(K key, V value, {InsertAt at = InsertAt.end, K? anchor}) {
-    if (_entries.containsKey(key)) {
+    if (_keyed.contains(key)) {
       set(key, value);
       return false;
     }
@@ -398,7 +377,7 @@ class SourceMap<K, V> extends ReactiveMap<K, V, Source<V>> {
   /// cell handles and stay cached.
   void reconcile(List<K> targetOrder, Map<K, V> targetValues) {
     final prior = [
-      for (final k in _order) MapEntry(k, get(k) as V),
+      for (final k in _keyed.keys()) MapEntry(k, get(k) as V),
     ];
     final target = [
       for (final k in targetOrder) MapEntry(k, targetValues[k] as V),

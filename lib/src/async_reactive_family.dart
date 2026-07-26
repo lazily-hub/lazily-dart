@@ -33,15 +33,23 @@ library;
 
 import 'collections.dart';
 import 'core.dart';
+import 'keyed_order.dart';
 
 /// One allocated (present) async map entry: [resolved] tracks the async
 /// resolution axis, [value] caches its canonical value once resolved. A pending
 /// entry's [value] is `null` and unspecified.
 class _AsyncEntry<V> {
-  _AsyncEntry(this.resolved, this.value);
+  _AsyncEntry(this.resolved, this.cell);
 
   bool resolved;
-  V? value;
+
+  /// The entry's node on the owning graph. Entries used to be plain cached
+  /// values, so a per-entry read registered no edge and a write invalidated
+  /// nobody. The resolution axis is orthogonal: [resolved] still tracks
+  /// pending-vs-resolved, while the cell carries the value and its dependents.
+  final Source<V?> cell;
+
+  V? get value => cell.value;
 }
 
 /// The async keyed reactive map (`#reactivemap`): keys `K` map to per-entry
@@ -53,12 +61,21 @@ class _AsyncEntry<V> {
 /// [isResolved] / membership / present-set — lives here. See the library doc
 /// for the eventual-transparency law.
 abstract class AsyncReactiveMap<K, V> {
-  AsyncReactiveMap(this._ctx);
+  AsyncReactiveMap(this._ctx)
+      : _membership = Source<int>(_ctx, 0),
+        _orderSignal = Source<int>(_ctx, 0);
 
-  // Retained for structural parity with ReactiveMap; the value axis is served
-  // from the guarded cache below.
-  // ignore: unused_field
   final Context _ctx;
+
+  /// Reactive *set-membership* signal, minted on THIS flavor's graph. A shared
+  /// graph-agnostic core cannot supply reactivity.
+  final Source<int> _membership;
+
+  /// Reactive *order* signal: bumped on add/remove **and on move/reorder**.
+  final Source<int> _orderSignal;
+
+  int _membershipVersion = 0;
+  int _orderVersion = 0;
 
   /// Reentrancy depth of the run-to-completion guard.
   int _depth = 0;
@@ -66,12 +83,10 @@ abstract class AsyncReactiveMap<K, V> {
   /// Current reentrancy depth (`> 0` while inside a guarded section).
   int get depth => _depth;
 
-  /// Present (allocated) entries. Grows on materialize, never shrinks.
+  /// Present set + key order + the move algebra, shared with the other two
+  /// flavors. Graph-agnostic; the reactivity above is this flavor's own.
   /// Resolution only ever flips `false → true` (`resolve_monotone`).
-  final Map<K, _AsyncEntry<V>> _materialized = {};
-
-  /// First-materialization order of the present set (grows only).
-  final List<K> _order = [];
+  final KeyedOrder<K, _AsyncEntry<V>> _keyed = KeyedOrder<K, _AsyncEntry<V>>();
 
   /// This map's entry kind ([EntryKind.source] for an [AsyncSourceMap],
   /// [EntryKind.computed] for an [AsyncComputedMap]).
@@ -90,38 +105,129 @@ abstract class AsyncReactiveMap<K, V> {
   /// given initial resolution state. A warm key returns its existing entry
   /// unchanged — the present set only grows.
   _AsyncEntry<V> _ensure(K key, {required bool resolved, V? value}) {
-    final existing = _materialized[key];
+    final existing = _keyed.get(key);
     if (existing != null) return existing;
-    final entry = _AsyncEntry<V>(resolved, value);
-    _materialized[key] = entry;
-    _order.add(key);
-    return entry;
+    final entry = _AsyncEntry<V>(resolved, Source<V?>(_ctx, value));
+    final (stored, mutation) = _keyed.insert(key, entry);
+    if (mutation.changed) _bumpMembership();
+    return stored;
+  }
+
+  void _bumpOrder() {
+    _orderVersion += 1;
+    _orderSignal.value = _orderVersion;
+  }
+
+  void _bumpMembership() {
+    _membershipVersion += 1;
+    _membership.value = _membershipVersion;
+    _bumpOrder();
+  }
+
+  bool _applyMove(MapMove outcome) {
+    if (!outcome.applied) return false;
+    if (outcome.changed) _bumpOrder();
+    return true;
   }
 
   /// A non-blocking read: `(value, true)` once resolved, `(null, false)` while
   /// pending or absent (`observe_pending_is_none`). Non-minting.
-  (V?, bool) observe(K key) => _guarded(() {
-        final entry = _materialized[key];
-        if (entry != null && entry.resolved) return (entry.value, true);
+  (V?, bool) observe(K key, [Compute? cx]) => _guarded(() {
+        final entry = _keyed.get(key);
+        if (entry != null && entry.resolved) {
+          return (cx == null ? entry.value : cx.get(entry.cell), true);
+        }
         return (null, false);
       });
 
+  /// The existing entry node for [key], or `null`. Non-minting.
+  Source<V?>? handle(K key) => _guarded(() => _keyed.get(key)?.cell);
+
   /// Whether [key] is currently allocated (present). Non-reactive.
-  bool isPresent(K key) => _guarded(() => _materialized.containsKey(key));
+  bool isPresent(K key) => _guarded(() => _keyed.contains(key));
 
   /// Whether [key] is allocated AND resolved (a non-blocking [observe] would
   /// return a value).
   bool isResolved(K key) => _guarded(() {
-        final entry = _materialized[key];
+        final entry = _keyed.get(key);
         return entry != null && entry.resolved;
       });
 
   /// A stable snapshot of the currently-allocated keys, in first-materialization
   /// order (a copy).
-  List<K> presentKeys() => _guarded(() => List<K>.of(_order));
+  List<K> presentKeys() => _guarded(() => _keyed.keys());
 
   /// The number of currently-allocated entries.
-  int presentCount() => _guarded(() => _order.length);
+  int presentCount() => _guarded(() => _keyed.length);
+
+  // --- Core surface: ordering, atomic move, reactive membership ---
+  //
+  // Ordering is not async-coloured: the move algebra touches no entry handle and
+  // awaits nothing, so the async map carries the same Core surface as the other
+  // two flavors.
+
+  /// Reactive snapshot of the keys in their current order. Subscribes the caller
+  /// to **order** changes (add/remove **and move/reorder**).
+  List<K> keys([Compute? cx]) {
+    if (cx == null) {
+      _orderSignal.value;
+    } else {
+      cx.get(_orderSignal);
+    }
+    return presentKeys();
+  }
+
+  /// Reactive entry count. Subscribes the caller to membership changes only.
+  int len([Compute? cx]) {
+    if (cx == null) {
+      _membership.value;
+    } else {
+      cx.get(_membership);
+    }
+    return presentCount();
+  }
+
+  /// Reactive emptiness check.
+  bool get isEmpty => len() == 0;
+
+  /// Reactive membership test for [key].
+  bool containsKey(K key, [Compute? cx]) {
+    if (cx == null) {
+      _membership.value;
+    } else {
+      cx.get(_membership);
+    }
+    return isPresent(key);
+  }
+
+  /// Non-reactive count.
+  int get lenUntracked => presentCount();
+
+  /// Current 0-based position of [key] in the order, or `null`. Non-reactive.
+  int? position(K key) => _guarded(() => _keyed.position(key));
+
+  /// Atomically move [key] to [index] (`#lzcellmove`). The entry keeps its node,
+  /// its dependents, and its resolution state; only the order signal is bumped.
+  bool moveTo(K key, int index) =>
+      _applyMove(_guarded(() => _keyed.moveTo(key, index)));
+
+  /// Atomically move [key] to just before [anchor] (`#lzcellmove`).
+  bool moveBefore(K key, K anchor) =>
+      _applyMove(_guarded(() => _keyed.moveBefore(key, anchor)));
+
+  /// Atomically move [key] to just after [anchor] (`#lzcellmove`).
+  bool moveAfter(K key, K anchor) =>
+      _applyMove(_guarded(() => _keyed.moveAfter(key, anchor)));
+
+  /// Remove [key]'s entry, clearing the removed node's dependents so no reader
+  /// is left on a stale resolution, and bump reactive membership.
+  bool remove(K key) {
+    final (removed, mutation) = _guarded(() => _keyed.remove(key));
+    if (!mutation.changed) return false;
+    removed!.cell.invalidate();
+    _bumpMembership();
+    return true;
+  }
 }
 
 /// An async **input-cell** map: every entry is an always-resolved input. Adds
@@ -137,7 +243,9 @@ class AsyncSourceMap<K, V> extends AsyncReactiveMap<K, V> {
   /// [AsyncComputedMap] slot is not.
   bool set(K key, V value) => _guarded(() {
         final entry = _ensure(key, resolved: true, value: value);
-        entry.value = value;
+        // Overwrite in place: the entry keeps its node, membership and order are
+        // untouched, and only this entry's readers see a change.
+        entry.cell.value = value;
         entry.resolved = true;
         return true;
       });
@@ -178,7 +286,9 @@ class AsyncComputedMap<K, V> extends AsyncReactiveMap<K, V> {
   V drive(K key, V Function(K key) factory) => _guarded(() {
         final entry = _ensure(key, resolved: false);
         if (!entry.resolved) {
-          entry.value = factory(key);
+          // Resolution keeps the entry's node: driving a pending slot is not a
+          // re-mint, so its dependents survive.
+          entry.cell.value = factory(key);
           entry.resolved = true;
         }
         return entry.value as V;

@@ -44,6 +44,7 @@ library;
 
 import 'collections.dart';
 import 'core.dart';
+import 'keyed_order.dart';
 
 /// The run-to-completion keyed reactive map (`#reactivemap`): keys `K` map to
 /// per-entry cached values, allocated on access, with every present-set mutation
@@ -54,11 +55,10 @@ import 'core.dart';
 /// The shared surface — [getOrInsertWith] / [observe] / membership / present-set
 /// — lives here.
 abstract class ThreadSafeReactiveMap<K, V> {
-  ThreadSafeReactiveMap(this._ctx);
+  ThreadSafeReactiveMap(this._ctx)
+      : _membership = Source<int>(_ctx, 0),
+        _orderSignal = Source<int>(_ctx, 0);
 
-  // Retained for structural parity with ReactiveMap and future graph
-  // integration; the value axis is served from the guarded cache below.
-  // ignore: unused_field
   final Context _ctx;
 
   /// Reentrancy depth of the run-to-completion guard framing present-set
@@ -68,12 +68,24 @@ abstract class ThreadSafeReactiveMap<K, V> {
   /// Current reentrancy depth (`> 0` while inside a guarded section).
   int get depth => _depth;
 
-  /// Present (materialized) entries and each entry's cached canonical value.
-  /// Grows on materialize, never shrinks.
-  final Map<K, V> _materialized = {};
+  /// Present set + key order + the move algebra, shared with the other two
+  /// flavors. Graph-agnostic; the reactivity below is this flavor's own.
+  ///
+  /// Entries are real [Source] nodes on the owning [Context]. Before the
+  /// Core-surface work this map stored plain values in a `Map<K, V>` and its
+  /// `_ctx` was annotated `// ignore: unused_field` — dead. A "thread-safe map"
+  /// with no reactive nodes is a cache wearing the reactive family's name.
+  final KeyedOrder<K, Source<V>> _keyed = KeyedOrder<K, Source<V>>();
 
-  /// First-materialization order of the present set (grows only).
-  final List<K> _order = [];
+  /// Reactive *set-membership* signal, minted on THIS flavor's graph. A shared
+  /// graph-agnostic core cannot supply reactivity.
+  final Source<int> _membership;
+
+  /// Reactive *order* signal: bumped on add/remove **and on move/reorder**.
+  final Source<int> _orderSignal;
+
+  int _membershipVersion = 0;
+  int _orderVersion = 0;
 
   /// This map's entry kind ([EntryKind.source] for a [ThreadSafeSourceMap],
   /// [EntryKind.computed] for a [ThreadSafeComputedMap]).
@@ -89,43 +101,136 @@ abstract class ThreadSafeReactiveMap<K, V> {
     }
   }
 
-  /// Allocate [key]'s value on first access via [factory] and cache it,
-  /// recording first-materialization order. A warm key is a no-op — the present
-  /// set only grows.
-  V _mint(K key, V Function(K key) factory) {
-    final existing = _materialized[key];
-    if (existing != null || _materialized.containsKey(key)) {
-      return _materialized[key] as V;
-    }
-    final value = factory(key);
-    _materialized[key] = value;
-    _order.add(key);
-    return value;
+  void _bumpOrder() {
+    _orderVersion += 1;
+    _orderSignal.value = _orderVersion;
   }
 
-  /// Get [key]'s value, minting it via [factory] on first access (the lazy
-  /// pull) under the guard. A warm key returns its cached value without
-  /// re-running [factory].
-  V getOrInsertWith(K key, V Function(K key) factory) =>
-      _guarded(() => _mint(key, factory));
+  void _bumpMembership() {
+    _membershipVersion += 1;
+    _membership.value = _membershipVersion;
+    _bumpOrder();
+  }
 
-  /// Non-blocking observe of an existing entry: its cached value, or `null` if
-  /// [key] is not materialized. Non-minting.
-  V? observe(K key) => _guarded(() => _materialized[key]);
+  bool _applyMove(MapMove outcome) {
+    if (!outcome.applied) return false;
+    if (outcome.changed) _bumpOrder();
+    return true;
+  }
 
-  /// The existing entry handle for [key] — the cached value, or `null`.
-  /// Non-minting. (Value-cache flavor: the handle *is* the value.)
-  V? handle(K key) => observe(key);
+  /// Allocate [key]'s node on first access via [factory] and cache the handle,
+  /// recording order. A warm key keeps its existing node (cell-identity).
+  Source<V> _mintHandle(K key, V Function(K key) factory) {
+    final warm = _keyed.get(key);
+    if (warm != null) return warm;
+    final minted = Source<V>(_ctx, factory(key));
+    final (stored, mutation) = _keyed.insert(key, minted);
+    if (mutation.changed) _bumpMembership();
+    return stored;
+  }
+
+  /// Get [key]'s value, minting the entry via [factory] on first access (the
+  /// lazy pull). A warm key returns its current value without re-running
+  /// [factory]. Pass [cx] to value-thread the per-entry read.
+  V getOrInsertWith(K key, V Function(K key) factory, [Compute? cx]) =>
+      _guarded(() {
+        final handle = _mintHandle(key, factory);
+        return cx == null ? handle.value : cx.get(handle);
+      });
+
+  /// Non-blocking observe of an existing entry, or `null` if [key] is not
+  /// materialized. Non-minting. Pass [cx] to value-thread the edge.
+  V? observe(K key, [Compute? cx]) => _guarded(() {
+        final handle = _keyed.get(key);
+        if (handle == null) return null;
+        return cx == null ? handle.value : cx.get(handle);
+      });
+
+  /// The existing entry node for [key], or `null`. Non-minting.
+  Source<V>? handle(K key) => _guarded(() => _keyed.get(key));
 
   /// Whether [key] is currently materialized. Non-reactive.
-  bool isPresent(K key) => _guarded(() => _materialized.containsKey(key));
+  bool isPresent(K key) => _guarded(() => _keyed.contains(key));
 
-  /// A stable snapshot of the currently-materialized keys, in
-  /// first-materialization order (a copy — the present set only grows).
-  List<K> presentKeys() => _guarded(() => List<K>.of(_order));
+  /// A stable snapshot of the currently-materialized keys, in current order.
+  /// Non-reactive — see [keys] for the tracked read.
+  List<K> presentKeys() => _guarded(() => _keyed.keys());
 
   /// The number of currently-materialized entries.
-  int presentCount() => _guarded(() => _order.length);
+  int presentCount() => _guarded(() => _keyed.length);
+
+  // --- Core surface: ordering, atomic move, reactive membership ---
+  //
+  // These bind every flavor. The move algebra touches no entry handle and awaits
+  // nothing, so it is neither thread- nor async-coloured.
+
+  /// Reactive snapshot of the keys in their current order. Subscribes the caller
+  /// to **order** changes (add/remove **and move/reorder**), not to per-entry
+  /// value changes. Pass [cx] to value-thread the edge.
+  List<K> keys([Compute? cx]) {
+    if (cx == null) {
+      _orderSignal.value;
+    } else {
+      cx.get(_orderSignal);
+    }
+    return presentKeys();
+  }
+
+  /// Reactive entry count. Subscribes the caller to membership changes only.
+  int len([Compute? cx]) {
+    if (cx == null) {
+      _membership.value;
+    } else {
+      cx.get(_membership);
+    }
+    return presentCount();
+  }
+
+  /// Reactive emptiness check.
+  bool get isEmpty => len() == 0;
+
+  /// Reactive membership test for [key]. Subscribes the caller to membership
+  /// changes (add/remove of any key), not to value changes.
+  bool containsKey(K key, [Compute? cx]) {
+    if (cx == null) {
+      _membership.value;
+    } else {
+      cx.get(_membership);
+    }
+    return isPresent(key);
+  }
+
+  /// Non-reactive count.
+  int get lenUntracked => presentCount();
+
+  /// Current 0-based position of [key] in the order, or `null`. Non-reactive.
+  int? position(K key) => _guarded(() => _keyed.position(key));
+
+  /// Atomically move [key] to [index] (`#lzcellmove`). The entry keeps the
+  /// **same** node, its dependents, and its lineage — unlike a remove + re-mint,
+  /// which re-allocates and bumps membership twice. Only the order signal is
+  /// bumped, so [keys] readers recompute while [len] readers stay cached.
+  /// [index] is clamped to `[0, len)`.
+  bool moveTo(K key, int index) =>
+      _applyMove(_guarded(() => _keyed.moveTo(key, index)));
+
+  /// Atomically move [key] to just before [anchor] (`#lzcellmove`).
+  bool moveBefore(K key, K anchor) =>
+      _applyMove(_guarded(() => _keyed.moveBefore(key, anchor)));
+
+  /// Atomically move [key] to just after [anchor] (`#lzcellmove`).
+  bool moveAfter(K key, K anchor) =>
+      _applyMove(_guarded(() => _keyed.moveAfter(key, anchor)));
+
+  /// Remove [key]'s entry, clearing the removed node's dependents so no reader
+  /// is left on a stale value, and bump reactive membership.
+  bool remove(K key) {
+    final (removed, mutation) = _guarded(() => _keyed.remove(key));
+    if (!mutation.changed) return false;
+    removed!.invalidate();
+    _bumpMembership();
+    return true;
+  }
 }
 
 /// A thread-safe **input-cell** map: every entry is an always-materialized,
@@ -140,8 +245,14 @@ class ThreadSafeSourceMap<K, V> extends ThreadSafeReactiveMap<K, V> {
   /// Updating an existing entry overwrites in place (no re-order). Cell-only: an
   /// input is settable; a derived [ThreadSafeComputedMap] slot is not.
   bool set(K key, V value) => _guarded(() {
-        _mint(key, (_) => value);
-        _materialized[key] = value; // overwrite in place; no re-order.
+        final warm = _keyed.get(key);
+        if (warm != null) {
+          // Overwrite in place: the entry keeps its node, membership and order
+          // are untouched, and only this entry's readers see a change.
+          warm.value = value;
+          return true;
+        }
+        _mintHandle(key, (_) => value);
         return true;
       });
 
@@ -167,7 +278,7 @@ class ThreadSafeComputedMap<K, V> extends ThreadSafeReactiveMap<K, V> {
   void materializeAll(Iterable<K> keys, V Function(K key) factory) =>
       _guarded(() {
         for (final key in keys) {
-          _mint(key, factory);
+          _mintHandle(key, factory);
         }
       });
 }
