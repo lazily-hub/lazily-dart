@@ -1383,7 +1383,7 @@ Computed<T> computedRippleWhen<T>(
 /// escapes.
 typedef EffectRun = void Function()? Function(Compute cx);
 
-/// A side-effect observer that reruns whenever a tracked dependency changes.
+/// A side-effecting graph node that reruns whenever a tracked dependency changes.
 ///
 /// [Effect] is the eager-push primitive for side effects (logging, DOM writes,
 /// I/O). It registers dependencies dynamically: any [Source], [Slot], or
@@ -1415,7 +1415,7 @@ class Effect extends _ReactiveNode {
   void Function()? _cleanup;
   bool _running = false;
 
-  /// Remove the eager observer. Unsubscribes from all dependencies, then
+  /// Dispose the Effect. Unsubscribes from all dependencies, then
   /// invokes the last cleanup. Idempotent.
   ///
   /// Routes through the shared [_disposeNode] so an effect tears down by

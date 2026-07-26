@@ -10,7 +10,7 @@ import 'core.dart';
 /// This is the native Dart counterpart of [`lazily-formal`][formal]'s
 /// `LazilyFormal.StateChart` and lazily-rs's / lazily-kt's state charts. It is
 /// **compute, not protocol**: it is never serialized as a distinct wire kind.
-/// The active configuration lives in a [Cell], so any [Slot]/[Signal]/observer
+/// The active configuration lives in a [Cell], so any [Slot]/[Signal]/[Effect]
 /// reading [configuration], [activeLeaves], or [matches] is invalidated on a
 /// real transition; a no-op (configuration unchanged) is suppressed by the
 /// cell's structural-equality guard.
