@@ -46,11 +46,36 @@ import 'core.dart';
 /// `Materialization` module.
 enum EntryKind {
   /// An **input** cell ([Cell]) — always materialized on access.
-  cell,
+  source,
 
   /// A **derived** slot ([Slot]) — materialized eagerly (pre-mint) or lazily on
   /// first read.
-  slot,
+  computed;
+
+  /// Former name of [EntryKind.source], kept so existing callers still compile.
+  ///
+  /// Enum values cannot be typedef'd, so the back-compat alias is a static
+  /// const member rather than a deprecated value — the enum still has exactly
+  /// two values and stays exhaustive in switches.
+  @Deprecated('renamed to EntryKind.source')
+  static const cell = EntryKind.source;
+
+  /// Former name of [EntryKind.computed], kept so existing callers still
+  /// compile.
+  @Deprecated('renamed to EntryKind.computed')
+  static const slot = EntryKind.computed;
+
+  /// The **wire** spelling of this kind: `"cell"` / `"slot"`.
+  ///
+  /// The v2 rename is a Dart-side rename only. The conformance fixtures in
+  /// `lazily-spec` and the nine binding runners that replay them still speak
+  /// `"cell"` / `"slot"`, so serialization must NOT go through [name] — which
+  /// now yields `"source"` / `"computed"`. Anything crossing the wire uses this
+  /// getter instead.
+  String get wireName => switch (this) {
+        EntryKind.source => 'cell',
+        EntryKind.computed => 'slot',
+      };
 }
 
 /// A keyed reactive collection generic over the entry handle kind `H`: a map of
@@ -96,8 +121,8 @@ abstract class ReactiveMap<K, V, H> {
 
   // --- MapHandle abstraction (supplied per specialization) ---
 
-  /// This map's entry kind ([EntryKind.cell] for a [SourceMap], [EntryKind.slot]
-  /// for a [ComputedMap]).
+  /// This map's entry kind ([EntryKind.source] for a [SourceMap],
+  /// [EntryKind.computed] for a [ComputedMap]).
   EntryKind get entryKind;
 
   /// Allocate the node for one entry, with [compute] producing its canonical
@@ -285,7 +310,7 @@ class SourceMap<K, V> extends ReactiveMap<K, V, Source<V>> {
   SourceMap(super.ctx);
 
   @override
-  EntryKind get entryKind => EntryKind.cell;
+  EntryKind get entryKind => EntryKind.source;
 
   @override
   // An input has no derivation: materialize by setting its value directly.
@@ -406,7 +431,7 @@ class ComputedMap<K, V> extends ReactiveMap<K, V, Slot<V>> {
   ComputedMap(super.ctx);
 
   @override
-  EntryKind get entryKind => EntryKind.slot;
+  EntryKind get entryKind => EntryKind.computed;
 
   @override
   // A derived node: the same node an eager pre-mint would allocate.

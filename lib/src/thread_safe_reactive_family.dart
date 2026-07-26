@@ -75,8 +75,8 @@ abstract class ThreadSafeReactiveMap<K, V> {
   /// First-materialization order of the present set (grows only).
   final List<K> _order = [];
 
-  /// This map's entry kind ([EntryKind.cell] for a [ThreadSafeSourceMap],
-  /// [EntryKind.slot] for a [ThreadSafeComputedMap]).
+  /// This map's entry kind ([EntryKind.source] for a [ThreadSafeSourceMap],
+  /// [EntryKind.computed] for a [ThreadSafeComputedMap]).
   EntryKind get entryKind;
 
   /// Run [fn] under the reentrant guard.
@@ -134,7 +134,7 @@ class ThreadSafeSourceMap<K, V> extends ThreadSafeReactiveMap<K, V> {
   ThreadSafeSourceMap(super.ctx);
 
   @override
-  EntryKind get entryKind => EntryKind.cell;
+  EntryKind get entryKind => EntryKind.source;
 
   /// Set [key]'s value, inserting a new input cell if absent, and return `true`.
   /// Updating an existing entry overwrites in place (no re-order). Cell-only: an
@@ -159,7 +159,7 @@ class ThreadSafeComputedMap<K, V> extends ThreadSafeReactiveMap<K, V> {
   ThreadSafeComputedMap(super.ctx);
 
   @override
-  EntryKind get entryKind => EntryKind.slot;
+  EntryKind get entryKind => EntryKind.computed;
 
   /// **Eager materialization**: pre-mint a derived slot for every key in [keys]
   /// via [factory], up front. Observationally identical to minting each key

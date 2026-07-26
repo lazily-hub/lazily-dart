@@ -41,6 +41,29 @@ void main() {
         isA<ThreadSafeComputedMap<String, int>>());
   });
 
+  test('deprecated EntryKind.cell / EntryKind.slot aliases resolve', () {
+    // Enum values cannot be typedef'd, so these are static const members on the
+    // enum rather than deprecated values — the enum itself still has exactly
+    // two values.
+    expect(EntryKind.cell, EntryKind.source);
+    expect(EntryKind.slot, EntryKind.computed);
+    expect(EntryKind.values, [EntryKind.source, EntryKind.computed]);
+  });
+
+  test('EntryKind wire spelling is unchanged by the v2 rename', () {
+    // The rename is Dart-side only. `lazily-spec` fixtures and the nine binding
+    // runners that replay them still speak `cell` / `slot`, so anything that
+    // serializes an EntryKind must go through `wireName`, NOT `name`. This test
+    // is the pin: it fails if the wire words ever follow the Dart words.
+    expect(EntryKind.source.wireName, 'cell');
+    expect(EntryKind.computed.wireName, 'slot');
+    expect(EntryKind.values.map((k) => k.wireName), ['cell', 'slot']);
+
+    // And the trap this guards, stated explicitly: `.name` is NOT the wire form.
+    expect(EntryKind.source.name, 'source');
+    expect(EntryKind.computed.name, 'computed');
+  });
+
   test('deprecated CellTree alias constructs the renamed type', () {
     final ctx = Context();
 

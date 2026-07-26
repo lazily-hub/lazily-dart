@@ -47,7 +47,7 @@ void main() {
       // cell_resolved_at_build
       final ctx = Context();
       final fam = AsyncSourceMap<int, int>(ctx)..materializeAll({1: 5, 2: 10});
-      expect(fam.entryKind, EntryKind.cell);
+      expect(fam.entryKind, EntryKind.source);
       expect(fam.isResolved(1), isTrue);
       final (value, resolved) = fam.observe(1);
       expect(resolved, isTrue);

@@ -14,7 +14,7 @@ void main() {
       final ctx = Context();
       final fam = ThreadSafeComputedMap<int, int>(ctx)
         ..materializeAll([0, 1, 2], (k) => k * 3);
-      expect(fam.entryKind, EntryKind.slot);
+      expect(fam.entryKind, EntryKind.computed);
       expect(fam.presentCount(), 3);
       expect(fam.presentKeys(), [0, 1, 2]);
       for (final k in [0, 1, 2]) {
@@ -38,7 +38,7 @@ void main() {
       final ctx = Context();
       final cells = ThreadSafeSourceMap<int, int>(ctx)
         ..materializeAll({0: 0, 1: 1});
-      expect(cells.entryKind, EntryKind.cell);
+      expect(cells.entryKind, EntryKind.source);
       expect(cells.presentCount(), 2);
     });
   });

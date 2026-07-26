@@ -56,6 +56,22 @@ List<String> _strArray(Map<String, dynamic> m, String key) =>
 /// lazily-spec predating the rename, so both are accepted.
 const _computedMapModels = {'ComputedMap', 'SlotMap'};
 
+/// Parse a fixture entry's `kind` word into the runner's [EntryKind].
+///
+/// Accepts BOTH spellings of the entry-kind axis for the same reason
+/// [_computedMapModels] accepts both model spellings: the canonical fixture
+/// still says `cell` / `slot`, and will later be flipped to the v2 kernel's
+/// `source` / `computed`. A runner pinned to either spelling alone breaks on
+/// one side of that flip.
+///
+/// Anything else is a hard error — never a silent default, and never a skip
+/// that would let a malformed fixture report green.
+EntryKind _parseEntryKind(String raw) => switch (raw) {
+      'cell' || 'source' => EntryKind.source,
+      'slot' || 'computed' => EntryKind.computed,
+      _ => throw ArgumentError.value(raw, 'kind', 'unknown entry kind'),
+    };
+
 /// A `spec.val` fixture: ordered keys → canonical value.
 ({List<String> keys, Map<String, int> values}) _parseVal(
     Map<String, dynamic> fixture) {
@@ -87,7 +103,7 @@ Map<String, dynamic> _checkValFixture(String name) {
 
   // eager: pre-mint the whole keyset.
   final eager = ComputedMap<String, int>(ctx)..materializeAll(spec.keys, lookup);
-  expect(eager.entryKind, EntryKind.slot);
+  expect(eager.entryKind, EntryKind.computed);
   expect(eager.presentCount(), spec.keys.length, reason: 'eager_materializes_all');
   expect(_asSet(eager.presentKeys()), _asSet(_strArray(expected, 'eager_present')));
 
@@ -151,6 +167,29 @@ void main() {
           reason: 'lazy present set must be a subset of eager present set');
     });
 
+    test('entry-kind parsing accepts both fixture spellings', () {
+      // Current canonical spelling.
+      expect(_parseEntryKind('cell'), EntryKind.source);
+      expect(_parseEntryKind('slot'), EntryKind.computed);
+      // v2 kernel spelling the fixture will later be flipped to.
+      expect(_parseEntryKind('source'), EntryKind.source);
+      expect(_parseEntryKind('computed'), EntryKind.computed);
+      // Anything else is a hard error, not a default or a skip.
+      expect(() => _parseEntryKind('Cell'), throwsArgumentError);
+      expect(() => _parseEntryKind('signal'), throwsArgumentError);
+      expect(() => _parseEntryKind(''), throwsArgumentError);
+
+      // The fixture actually on disk parses — whichever spelling it carries.
+      final entries = (_load('entry_kind_orthogonal_to_mode.json')['spec']
+          as Map<String, dynamic>)['entries'] as Map<String, dynamic>;
+      expect(entries, isNotEmpty);
+      final kinds = entries.values
+          .map((e) => _parseEntryKind((e as Map<String, dynamic>)['kind'] as String))
+          .toSet();
+      expect(kinds, {EntryKind.source, EntryKind.computed},
+          reason: 'the mixed-kind fixture must carry both entry kinds');
+    });
+
     test('entry_kind_orthogonal_to_mode replays identically', () {
       final fixture = _load('entry_kind_orthogonal_to_mode.json');
       expect(_computedMapModels, contains(fixture['model']));
@@ -167,13 +206,11 @@ void main() {
       for (final e in entries.entries) {
         final entry = e.value as Map<String, dynamic>;
         vals[e.key] = entry['val'] as int;
-        switch (entry['kind'] as String) {
-          case 'cell':
+        switch (_parseEntryKind(entry['kind'] as String)) {
+          case EntryKind.source:
             cellKeys.add(e.key);
-          case 'slot':
+          case EntryKind.computed:
             slotKeys.add(e.key);
-          case final other:
-            fail('unknown entry kind $other');
         }
       }
       final lookup = (String k) => vals[k]!;
@@ -187,8 +224,8 @@ void main() {
       }
       final eagerSlots = ComputedMap<String, int>(ctx)
         ..materializeAll(slotKeys, (_, k) => lookup(k));
-      expect(eagerCells.entryKind, EntryKind.cell);
-      expect(eagerSlots.entryKind, EntryKind.slot);
+      expect(eagerCells.entryKind, EntryKind.source);
+      expect(eagerSlots.entryKind, EntryKind.computed);
       final eagerPresent = _asSet(eagerCells.presentKeys())
         ..addAll(eagerSlots.presentKeys());
       expect(eagerPresent, _asSet(_strArray(expected, 'eager_present')));

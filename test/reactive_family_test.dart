@@ -16,7 +16,7 @@ void main() {
       expect(identical(a1, a2), isTrue);
       expect(a1.get(), 1);
       expect(map.lenUntracked, 1);
-      expect(map.entryKind, EntryKind.cell);
+      expect(map.entryKind, EntryKind.source);
     });
 
     test('getOrInsertWith mints once then returns existing', () {
@@ -62,7 +62,7 @@ void main() {
       // Same key -> same derived slot (value preserved, factory not re-run).
       expect(fam.get(7), 14);
       expect(fam.getOrInsertWith(7, (_, k) => k * 999), 14);
-      expect(fam.entryKind, EntryKind.slot);
+      expect(fam.entryKind, EntryKind.computed);
     });
 
     test('materializeAll is eager (pre-mint)', () {

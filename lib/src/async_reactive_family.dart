@@ -73,8 +73,8 @@ abstract class AsyncReactiveMap<K, V> {
   /// First-materialization order of the present set (grows only).
   final List<K> _order = [];
 
-  /// This map's entry kind ([EntryKind.cell] for an [AsyncSourceMap],
-  /// [EntryKind.slot] for an [AsyncComputedMap]).
+  /// This map's entry kind ([EntryKind.source] for an [AsyncSourceMap],
+  /// [EntryKind.computed] for an [AsyncComputedMap]).
   EntryKind get entryKind;
 
   T _guarded<T>(T Function() fn) {
@@ -130,7 +130,7 @@ class AsyncSourceMap<K, V> extends AsyncReactiveMap<K, V> {
   AsyncSourceMap(super.ctx);
 
   @override
-  EntryKind get entryKind => EntryKind.cell;
+  EntryKind get entryKind => EntryKind.source;
 
   /// Set [key]'s value (an input cell — always resolved), allocating it if
   /// absent, and return `true`. Cell-only: an input is settable; a derived
@@ -156,7 +156,7 @@ class AsyncComputedMap<K, V> extends AsyncReactiveMap<K, V> {
   AsyncComputedMap(super.ctx);
 
   @override
-  EntryKind get entryKind => EntryKind.slot;
+  EntryKind get entryKind => EntryKind.computed;
 
   /// Allocate a **pending** derived slot for [key] if absent (present, but
   /// unresolved until [drive]n) — the lazy pull's first half. A warm key is a
