@@ -346,10 +346,10 @@ void main() {
     });
   });
 
-  group('CellTree', () {
+  group('SourceTree', () {
     test('per-level membership/order reactivity is inherited', () {
       final ctx = Context();
-      final root = CellTree<String, int>(ctx, 'root', 0);
+      final root = SourceTree<String, int>(ctx, 'root', 0);
       root.insertChild('a', 1);
       root.insertChild('b', 2);
       final childIds = Slot<List<String>>(ctx, (cx) => root.childIds(cx))..call();

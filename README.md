@@ -242,7 +242,7 @@ notes and platform carve-outs lives in
 | Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Harel state charts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Keyed reactive maps (`ReactiveMap`: `SourceMap` / `ComputedMap`) + `CellTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyed reactive maps (`ReactiveMap`: `SourceMap` / `ComputedMap`) + `SourceTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Memoized semantic tree (`SemTree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
@@ -327,7 +327,7 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 | Layer | Where |
 |-------|-------|
 | Reactive core — Cell kernel v2 (`Source`/`Cell` / `Computed`+`computed`/`.eager()`/`.lazy()` / `Effect` / `Slot` (unguarded) / `batch`; `Signal` back-compat alias) | `package:lazily/lazily.dart` |
-| Keyed cell collections (`ReactiveMap` / `SourceMap` / `ComputedMap` / `CellTree` / reconciliation) | `package:lazily/lazily.dart` |
+| Keyed cell collections (`ReactiveMap` / `SourceMap` / `ComputedMap` / `SourceTree` / reconciliation) | `package:lazily/lazily.dart` |
 | Flat state machine + Harel state charts | `package:lazily/lazily.dart` |
 | TextCrdt (char CRDT) + delta sync | `package:lazily/lazily.dart` |
 | SeqCrdt (move-aware sequence CRDT) + Hlc + LwwRegister | `package:lazily/lazily.dart` |
@@ -396,7 +396,7 @@ diffs two keyed sequences by stable key and emits the minimal
 `{insert, remove, move, update}` op set, holding the longest-increasing
 subsequence fixed so keys already in relative order do not move.
 
-`CellTree<K, V>` is the ordered keyed tree — each node is
+`SourceTree<K, V>` is the ordered keyed tree — each node is
 `(stable id, value cell, ordered keyed child collection)`, inheriting per-level
 reactivity and the atomic-move guarantee.
 

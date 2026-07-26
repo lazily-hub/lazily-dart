@@ -1,5 +1,5 @@
 /// Keyed cell collections — the unified `ReactiveMap<K, V, H>` primitive and
-/// its `SourceMap` / `ComputedMap` specializations, plus `CellTree` and keyed
+/// its `SourceMap` / `ComputedMap` specializations, plus `SourceTree` and keyed
 /// reconciliation (cell-model.md § Keyed cell collections, `#reactivemap`).
 ///
 /// There is **one** keyed primitive, generic over the entry's handle kind `H`
@@ -689,17 +689,17 @@ List<int> _longestIncreasingSubsequence(List<int> seq) {
 /// The tree is still a composition of cells — not a new cell kind — so per-cell
 /// merge applies node-by-node.
 ///
-/// Mirrors `lazily-rs/src/cell_tree.rs` (recursive) and `lazily-js::CellTree`
+/// Mirrors `lazily-rs/src/cell_tree.rs` (recursive) and `lazily-js::SourceTree`
 /// (path-based). This Dart port is recursive like Rust.
-class CellTree<K, V> {
-  CellTree(this.ctx, this.id, V initialValue)
+class SourceTree<K, V> {
+  SourceTree(this.ctx, this.id, V initialValue)
       : value = Source<V>(ctx, initialValue),
-        children = SourceMap<K, CellTree<K, V>>(ctx);
+        children = SourceMap<K, SourceTree<K, V>>(ctx);
 
   final Context ctx;
   final K id;
   final Source<V> value;
-  final SourceMap<K, CellTree<K, V>> children;
+  final SourceMap<K, SourceTree<K, V>> children;
 
   /// Read this node's value (reactive).
   V get() => value.value;
@@ -714,19 +714,19 @@ class CellTree<K, V> {
 
   /// Insert a fresh child [id] with [value], returning the child node. If the
   /// child already exists, its value is updated and the existing node returned.
-  CellTree<K, V> insertChild(K id, V value) {
+  SourceTree<K, V> insertChild(K id, V value) {
     final existing = children.cell(id);
     if (existing != null) {
       existing.peek.set(value);
       return existing.peek;
     }
-    final child = CellTree<K, V>(ctx, id, value);
+    final child = SourceTree<K, V>(ctx, id, value);
     children.set(id, child);
     return child;
   }
 
   /// The child node for [id], or `null`. Non-reactive.
-  CellTree<K, V>? child(K id) => children.get(id);
+  SourceTree<K, V>? child(K id) => children.get(id);
 
   /// Remove the child [id]. Returns whether it was present.
   bool removeChild(K id) => children.remove(id);
@@ -750,3 +750,10 @@ class CellTree<K, V> {
   /// Reactive membership test for a child of this node.
   bool hasChild(K id, [Compute? cx]) => children.containsKey(id, cx);
 }
+
+/// Former name of [SourceTree], kept so existing callers still compile.
+///
+/// The v2 kernel renamed the node kinds to `Source` / `Computed`; the keyed
+/// collections follow.
+@Deprecated('renamed to SourceTree')
+typedef CellTree<K, V> = SourceTree<K, V>;

@@ -2,11 +2,12 @@
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
-/// Back-compat guard for the v2 keyed-map rename.
+/// Back-compat guard for the v2 keyed-collection rename.
 ///
 /// The v2 kernel renamed the node kinds to `Source` / `Computed`, so the keyed
 /// collections became `SourceMap` / `ComputedMap` (and their `Async` /
-/// `ThreadSafe` specializations). The old `CellMap` / `SlotMap` spellings are
+/// `ThreadSafe` specializations) and the ordered keyed tree became
+/// `SourceTree`. The old `CellMap` / `SlotMap` / `CellTree` spellings are
 /// deprecated typedefs, not deletions — callers on the previous names must keep
 /// compiling AND keep constructing the same runtime type. Asserting `isA<...>`
 /// on a real instance is the positive check: a typedef that resolved to the
@@ -38,5 +39,18 @@ void main() {
         isA<ThreadSafeSourceMap<String, int>>());
     expect(ThreadSafeSlotMap<String, int>(ctx),
         isA<ThreadSafeComputedMap<String, int>>());
+  });
+
+  test('deprecated CellTree alias constructs the renamed type', () {
+    final ctx = Context();
+
+    final root = CellTree<String, int>(ctx, 'root', 0);
+    expect(root, isA<SourceTree<String, int>>());
+
+    final child = root.insertChild('a', 1);
+    expect(child, isA<SourceTree<String, int>>());
+    root.insertChild('b', 2);
+    expect(root.childIds(), equals(['a', 'b']));
+    expect(root.child('a')?.get(), 1);
   });
 }
