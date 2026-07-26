@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Cross-language conformance tests for membership + failure detection
 /// (`#lzmemb`, `lazily-spec/conformance/membership/`). Each op drives the SWIM
 /// state machine; the derived alive `PeerSet` is projected onto a reactive
@@ -19,8 +21,8 @@ final _specDir = Directory('../lazily-spec/conformance/membership');
 
 Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').readAsStringSync()
-      : File('test/conformance/membership/$name').readAsStringSync();
+      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
+      : File('test/conformance/membership/$name').specReadAsStringSync();
   return jsonDecode(src) as Map<String, dynamic>;
 }
 

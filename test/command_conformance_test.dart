@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/ipc.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Replay the shared `lazily-spec/conformance/message-passing` fixtures through
 /// the Dart [CommandProjection] reducer and RPC facade, mirroring the Kotlin
 /// [CommandConformanceTest] so both bindings agree fixture-by-fixture.
@@ -36,7 +38,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _load(String name) =>
-    jsonDecode(File(_fixturePath(name)).readAsStringSync()) as Map<String, dynamic>;
+    jsonDecode(File(_fixturePath(name)).specReadAsStringSync()) as Map<String, dynamic>;
 
 List<Map<String, dynamic>> _frames(Map<String, dynamic> obj) =>
     (obj['frames'] as List).cast<Map<String, dynamic>>();

@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Replays the canonical `lazily-spec/conformance/lossless-tree/` compute
 /// fixtures against the native [LosslessTreeCrdt] — the same
 /// `{scenarios: [{seed, steps, expect}]}` shape and the same `label`→id
@@ -38,7 +40,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _loadFixture(String name) =>
-    jsonDecode(File(_fixturePath(name)).readAsStringSync()) as Map<String, dynamic>;
+    jsonDecode(File(_fixturePath(name)).specReadAsStringSync()) as Map<String, dynamic>;
 
 class _World {
   final Map<String, LosslessTreeCrdt> replicas = {};

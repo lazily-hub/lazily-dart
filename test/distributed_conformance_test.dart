@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'package:lazily/ipc.dart';
 
+import 'conformance_manifest.dart';
+
 /// Replay the distributed + receipts + signaling conformance fixtures.
 
 Map<String, dynamic> _loadFixture(List<String> segments) {
@@ -13,7 +15,7 @@ Map<String, dynamic> _loadFixture(List<String> segments) {
   for (final path in candidates) {
     final f = File(path);
     if (f.existsSync()) {
-      return jsonDecode(f.readAsStringSync()) as Map<String, dynamic>;
+      return jsonDecode(f.specReadAsStringSync()) as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: ${segments.join('/')}');

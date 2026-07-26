@@ -6,6 +6,8 @@ import 'package:lazily/lazily.dart';
 // import the source module directly so this harness stays independent.
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Cross-language conformance tests for the rate-shaping source operators
 /// (`#lzrateshape`, `lazily-spec/conformance/rateshape/`). Each operator
 /// projects its emitted value onto a reactive [Cell]; a [Slot] wrapping that
@@ -20,8 +22,8 @@ final _specDir = Directory('../lazily-spec/conformance/rateshape');
 
 Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').readAsStringSync()
-      : File('test/conformance/rateshape/$name').readAsStringSync();
+      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
+      : File('test/conformance/rateshape/$name').specReadAsStringSync();
   return jsonDecode(src) as Map<String, dynamic>;
 }
 

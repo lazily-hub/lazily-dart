@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Cross-language conformance tests for the full Harel state-chart spec
 /// (`lazily-spec/docs/state-charts.md`), replaying the canonical fixtures every
 /// binding replays. Each test loads a chart, asserts `initial_active` (and
@@ -19,10 +21,10 @@ final _specDir = Directory('../lazily-spec/conformance/statechart');
 Map<String, dynamic> _loadFixture(String name) {
   final specPath = _specDir.resolveSymbolicLinksSync() + '/$name';
   final src = File(specPath).existsSync()
-      ? File(specPath).readAsStringSync()
+      ? File(specPath).specReadAsStringSync()
       : (() {
           final resource = 'test/conformance/statechart/$name';
-          return File(resource).readAsStringSync();
+          return File(resource).specReadAsStringSync();
         })();
   return jsonDecode(src) as Map<String, dynamic>;
 }

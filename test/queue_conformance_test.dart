@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Reactive queue conformance (lazily-spec/conformance/collections/).
 ///
 /// Replays the canonical `queuecell_*.json` fixtures every binding replays,
@@ -36,7 +38,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _loadFixture(String name) =>
-    jsonDecode(File(_fixturePath(name)).readAsStringSync()) as Map<String, dynamic>;
+    jsonDecode(File(_fixturePath(name)).specReadAsStringSync()) as Map<String, dynamic>;
 
 /// Build a QueueCell from the fixture's `initial` block.
 QueueCell<String> _buildInitial(

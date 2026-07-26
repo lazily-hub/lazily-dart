@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'package:lazily/lazily.dart';
 
+import 'conformance_manifest.dart';
+
 /// Replay the lazily-spec collection conformance fixtures:
 /// - textcrdt_convergence.json
 /// - textcrdt_delta_sync.json
@@ -21,7 +23,7 @@ Map<String, dynamic> _loadFixture(String name) {
   for (final path in candidates) {
     final f = File(path);
     if (f.existsSync()) {
-      return jsonDecode(f.readAsStringSync()) as Map<String, dynamic>;
+      return jsonDecode(f.specReadAsStringSync()) as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: $name');

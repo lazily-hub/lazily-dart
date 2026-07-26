@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Cross-language conformance tests for stream windowing (`#lzwindow`,
 /// `lazily-spec/conformance/windowing/`). Each window projects the last emitted
 /// aggregate onto a reactive [Cell]; a [Slot] wrapping that cell lets us observe
@@ -19,8 +21,8 @@ final _specDir = Directory('../lazily-spec/conformance/windowing');
 
 Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').readAsStringSync()
-      : File('test/conformance/windowing/$name').readAsStringSync();
+      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
+      : File('test/conformance/windowing/$name').specReadAsStringSync();
   return jsonDecode(src) as Map<String, dynamic>;
 }
 

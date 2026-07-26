@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// The queue-family flavor ledger — enforced against the source, not a comment.
 ///
 /// `queue_conformance_test.dart` replays the canonical `queuecell_*.json` corpus
@@ -41,7 +43,7 @@ String _sources() {
   final buffer = StringBuffer();
   for (final entity in Directory('lib').listSync(recursive: true)) {
     if (entity is File && entity.path.endsWith('.dart')) {
-      buffer.write(entity.readAsStringSync());
+      buffer.write(entity.specReadAsStringSync());
     }
   }
   return buffer.toString();
@@ -109,7 +111,7 @@ void main() {
       final file = File('${dir.path}/$name');
       expect(file.existsSync(), isTrue,
           reason: '$name: declared queue fixture is missing');
-      final fixture = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      final fixture = jsonDecode(file.specReadAsStringSync()) as Map<String, dynamic>;
       fixturesRead += 1;
 
       final steps = (fixture['steps'] as List?) ?? const [];

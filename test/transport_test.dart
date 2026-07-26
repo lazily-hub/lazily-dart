@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/ipc.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Cross-process zero-copy transport (`#lzzcpy`) — pluggable blob backends.
 /// Mirrors the Rust tests in `lazily-rs/src/transport.rs` and pins the
 /// `lazily-formal/LazilyFormal/ZeroCopyTransport.lean` laws (resolve_write,
@@ -213,7 +215,7 @@ void main() {
       ].firstWhere((p) => File(p).existsSync(),
           orElse: () => throw StateError('fixture not found'));
       final fixture =
-          jsonDecode(File(path).readAsStringSync()) as Map<String, dynamic>;
+          jsonDecode(File(path).specReadAsStringSync()) as Map<String, dynamic>;
       final wire = fixture['wire'] as Map<String, dynamic>;
       final msg = IpcMessage.fromWire(wire);
 

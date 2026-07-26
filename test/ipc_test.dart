@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:lazily/ipc.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Locate a conformance fixture: SIBLING-FIRST (`#lzspecconf`) — the canonical
 /// `../lazily-spec/conformance/` checkout wins whenever present, falling back to
 /// the committed mirror under `test/conformance/` only for a checkout without
@@ -22,7 +24,7 @@ String _fixturePath(String name) {
 
 Map<String, Object?> _loadFixture(String name) {
   final fixture =
-      jsonDecode(File(_fixturePath(name)).readAsStringSync()) as Map<String, Object?>;
+      jsonDecode(File(_fixturePath(name)).specReadAsStringSync()) as Map<String, Object?>;
   expect(fixture['protocol_version'], 1, reason: '$name protocol_version');
   return fixture;
 }

@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'package:lazily/lazily.dart';
 
+import 'conformance_manifest.dart';
+
 /// Cross-language conformance for the reactive-graph corpus
 /// (`#lzspecconf`, `#lzspecedgeindex`) — `lazily-spec/conformance/reactive-graph/*.json`.
 ///
@@ -1041,7 +1043,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   var totalChecks = 0;
 
   for (final name in expectedFixtures.toList()..sort()) {
-    final fx = (jsonDecode(File('$specDir/$name').readAsStringSync()) as Map)
+    final fx = (jsonDecode(File('$specDir/$name').specReadAsStringSync()) as Map)
         .cast<String, dynamic>();
     final unsupported = _opsOf(fx).difference(supportedOps).toList()..sort();
     // A parked fixture is skipped before the op filter (it uses only supported

@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Keyed cell collections conformance (lazily-spec/conformance/collections/).
 ///
 /// Replays the canonical fixtures every binding replays, asserting the
@@ -36,7 +38,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _loadFixture(String name) =>
-    jsonDecode(File(_fixturePath(name)).readAsStringSync()) as Map<String, dynamic>;
+    jsonDecode(File(_fixturePath(name)).specReadAsStringSync()) as Map<String, dynamic>;
 
 /// Whether a [Slot]'s cache is still warm (not invalidated) — mirrors
 /// `ctx.is_set(reader)` in lazily-rs.

@@ -10,6 +10,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Sibling-first (`#lzspecconf`), and a hard failure when the fixture is in
 /// neither place. This previously returned null and the caller returned early
 /// as a "CI baseline" — a fixture-backed test that quietly becomes a no-op is
@@ -20,7 +22,7 @@ String _fixture(String name) {
     '../lazily-spec/conformance/collections/$name',
     'test/conformance/collections/$name',
   ]) {
-    if (File(path).existsSync()) return File(path).readAsStringSync();
+    if (File(path).existsSync()) return File(path).specReadAsStringSync();
   }
   throw StateError('fixture not found: $name');
 }

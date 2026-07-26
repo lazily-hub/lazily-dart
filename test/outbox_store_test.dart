@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:lazily/ipc.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Sibling-first (`#lzspecconf`) — this read the local mirror unconditionally,
 /// so the canonical fixture was never consulted even when checked out.
 Map<String, dynamic> _fixture() {
@@ -12,7 +14,7 @@ Map<String, dynamic> _fixture() {
   for (final path in ['../lazily-spec/conformance/$name', 'test/conformance/$name']) {
     final file = File(path);
     if (file.existsSync()) {
-      return jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      return jsonDecode(file.specReadAsStringSync()) as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: $name');

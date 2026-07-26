@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:lazily/ipc.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Reliable-sync conformance (`#lzsync`, lazily-spec/conformance/reliable-sync/).
 ///
 /// Replays the canonical fixtures against the native [ResyncCoordinator] /
@@ -33,7 +35,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _load(String name) =>
-    jsonDecode(File(_fixturePath(name)).readAsStringSync())
+    jsonDecode(File(_fixturePath(name)).specReadAsStringSync())
         as Map<String, dynamic>;
 
 Map<String, dynamic> _scenario(Map<String, dynamic> fx, String name) =>
@@ -66,7 +68,7 @@ class _FileOutbox implements DurableOutbox {
   int _ackedThrough = 0;
 
   List<OutboxFrame> _readAll() => File(path)
-      .readAsStringSync()
+      .specReadAsStringSync()
       .split('\n')
       .where((l) => l.trim().isNotEmpty)
       .map((l) {

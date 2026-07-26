@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Cross-language conformance tests for the temporal source primitives
 /// (`#lztime`, `lazily-spec/conformance/temporal/`). Each source projects its
 /// fire edge onto a reactive [Cell]; a [Slot] wrapping that cell lets us observe
@@ -18,8 +20,8 @@ final _specDir = Directory('../lazily-spec/conformance/temporal');
 
 Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').readAsStringSync()
-      : File('test/conformance/temporal/$name').readAsStringSync();
+      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
+      : File('test/conformance/temporal/$name').specReadAsStringSync();
   return jsonDecode(src) as Map<String, dynamic>;
 }
 

@@ -5,6 +5,8 @@ import 'package:lazily/ipc.dart';
 import 'package:lazily/src/distributed.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Reactive family-granularity sync conformance (`#lzfamilysync`,
 /// lazily-spec/conformance/familysync/).
 ///
@@ -37,7 +39,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _load(String name) =>
-    jsonDecode(File(_fixturePath(name)).readAsStringSync())
+    jsonDecode(File(_fixturePath(name)).specReadAsStringSync())
         as Map<String, dynamic>;
 
 /// The suffix after the last `/` of a full family key path.

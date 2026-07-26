@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// The keyed-collection ordering contract replayed against **all three**
 /// execution flavors.
 ///
@@ -199,7 +201,7 @@ void _replay(_Flavor flavor, String fixtureName) {
   expect(path, isNotNull,
       reason: 'canonical collections fixture missing: $fixtureName');
   final fixture =
-      jsonDecode(File(path!).readAsStringSync()) as Map<String, dynamic>;
+      jsonDecode(File(path!).specReadAsStringSync()) as Map<String, dynamic>;
   String where(int i) => '${flavor.name} $fixtureName step $i';
 
   final initial = fixture['initial'] as Map<String, dynamic>?;

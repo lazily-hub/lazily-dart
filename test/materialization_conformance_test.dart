@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// `ComputedMap` materialization conformance (`#reactivemap`,
 /// lazily-spec/conformance/materialization/).
 ///
@@ -40,7 +42,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _load(String name) =>
-    jsonDecode(File(_fixturePath(name)).readAsStringSync())
+    jsonDecode(File(_fixturePath(name)).specReadAsStringSync())
         as Map<String, dynamic>;
 
 Set<String> _asSet(Iterable<String> keys) => keys.toSet();
