@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.26.0
+
+### Changed
+
+- **Renamed the keyed maps to `SourceMap` / `ComputedMap`**, finishing the v2 kernel
+  migration: the node kinds became `Source` and `Computed`, and the map names now say which
+  kind of entry they hold instead of the pre-v2 `Cell` / `Slot` vocabulary.
+  `CellMap` -> `SourceMap`, `SlotMap` -> `ComputedMap`, and the `ThreadSafe*` / `Async*`
+  variants alongside them.
+
+### Deprecated
+
+- The old names are kept as deprecated aliases of the new ones, so existing callers still
+  compile. Conformance runners accept both the old and new `model` spellings in a fixture;
+  the corpus emits only the new. Fixture FILE names are unchanged.
+
 ## 0.25.0 - 2026-07-22
 
 ### Changed
