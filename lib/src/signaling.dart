@@ -30,6 +30,35 @@ enum SignalingErrorCode {
 sealed class ClientMessage {
   Map<String, dynamic> toWire();
   String get type;
+
+  static ClientMessage fromWire(Map<String, dynamic> wire) {
+    final type = wire['type'];
+    switch (type) {
+      case 'join':
+        _requireOnly(wire, {'type', 'peer', 'capabilities'});
+        return ClientJoin(
+          wire['peer'] as int,
+          (wire['capabilities'] as List?)?.cast<String>(),
+        );
+      case 'offer':
+        _requireOnly(wire, {'type', 'to', 'sdp'});
+        return ClientOffer(wire['to'] as int, wire['sdp'] as String);
+      case 'answer':
+        _requireOnly(wire, {'type', 'to', 'sdp'});
+        return ClientAnswer(wire['to'] as int, wire['sdp'] as String);
+      case 'ice':
+        _requireOnly(wire, {'type', 'to', 'candidate'});
+        return ClientIce(wire['to'] as int, wire['candidate'] as String);
+      case 'relay':
+        _requireOnly(wire, {'type', 'to', 'payload'});
+        return ClientRelay(wire['to'] as int, wire['payload'] as Object);
+      case 'leave':
+        _requireOnly(wire, {'type'});
+        return ClientLeave();
+      default:
+        throw FormatException('unknown ClientMessage type: $type');
+    }
+  }
 }
 
 class ClientJoin extends ClientMessage {
@@ -55,8 +84,7 @@ class ClientOffer extends ClientMessage {
   @override
   String get type => 'offer';
   @override
-  Map<String, dynamic> toWire() =>
-      {'type': 'offer', 'to': to, 'sdp': sdp};
+  Map<String, dynamic> toWire() => {'type': 'offer', 'to': to, 'sdp': sdp};
 }
 
 class ClientAnswer extends ClientMessage {
@@ -66,8 +94,7 @@ class ClientAnswer extends ClientMessage {
   @override
   String get type => 'answer';
   @override
-  Map<String, dynamic> toWire() =>
-      {'type': 'answer', 'to': to, 'sdp': sdp};
+  Map<String, dynamic> toWire() => {'type': 'answer', 'to': to, 'sdp': sdp};
 }
 
 class ClientIce extends ClientMessage {
@@ -106,10 +133,51 @@ class ClientLeave extends ClientMessage {
 sealed class ServerMessage {
   Map<String, dynamic> toWire();
   String get type;
+
+  static ServerMessage fromWire(Map<String, dynamic> wire) {
+    final type = wire['type'];
+    switch (type) {
+      case 'welcome':
+        _requireOnly(wire, {'type', 'peer', 'peers'});
+        return ServerWelcome(
+          wire['peer'] as int,
+          (wire['peers'] as List).cast<int>(),
+        );
+      case 'peer-joined':
+        _requireOnly(wire, {'type', 'peer'});
+        return ServerPeerJoined(wire['peer'] as int);
+      case 'peer-left':
+        _requireOnly(wire, {'type', 'peer'});
+        return ServerPeerLeft(wire['peer'] as int);
+      case 'offer':
+        _requireOnly(wire, {'type', 'from', 'sdp'});
+        return ServerOffer(wire['from'] as int, wire['sdp'] as String);
+      case 'answer':
+        _requireOnly(wire, {'type', 'from', 'sdp'});
+        return ServerAnswer(wire['from'] as int, wire['sdp'] as String);
+      case 'ice':
+        _requireOnly(wire, {'type', 'from', 'candidate'});
+        return ServerIce(wire['from'] as int, wire['candidate'] as String);
+      case 'relay':
+        _requireOnly(wire, {'type', 'from', 'payload'});
+        return ServerRelay(wire['from'] as int, wire['payload'] as Object);
+      case 'error':
+        _requireOnly(wire, {'type', 'code', 'message'});
+        return ServerError(wire['code'] as String, wire['message'] as String);
+      default:
+        throw FormatException('unknown ServerMessage type: $type');
+    }
+  }
 }
 
 class ServerWelcome extends ServerMessage {
-  ServerWelcome(this.peer, [List<int>? peers]) : peers = peers ?? const [];
+  ServerWelcome(this.peer, [List<int>? peers]) : peers = peers ?? const [] {
+    if (this.peers.contains(peer)) {
+      throw const FormatException(
+        'welcome roster must exclude the joining peer',
+      );
+    }
+  }
   final int peer;
   final List<int> peers;
 
@@ -126,8 +194,7 @@ class ServerPeerJoined extends ServerMessage {
   @override
   String get type => 'peer-joined';
   @override
-  Map<String, dynamic> toWire() =>
-      {'type': 'peer-joined', 'peer': peer};
+  Map<String, dynamic> toWire() => {'type': 'peer-joined', 'peer': peer};
 }
 
 class ServerPeerLeft extends ServerMessage {
@@ -136,8 +203,7 @@ class ServerPeerLeft extends ServerMessage {
   @override
   String get type => 'peer-left';
   @override
-  Map<String, dynamic> toWire() =>
-      {'type': 'peer-left', 'peer': peer};
+  Map<String, dynamic> toWire() => {'type': 'peer-left', 'peer': peer};
 }
 
 class ServerOffer extends ServerMessage {
@@ -147,8 +213,7 @@ class ServerOffer extends ServerMessage {
   @override
   String get type => 'offer';
   @override
-  Map<String, dynamic> toWire() =>
-      {'type': 'offer', 'from': from, 'sdp': sdp};
+  Map<String, dynamic> toWire() => {'type': 'offer', 'from': from, 'sdp': sdp};
 }
 
 class ServerAnswer extends ServerMessage {
@@ -158,8 +223,7 @@ class ServerAnswer extends ServerMessage {
   @override
   String get type => 'answer';
   @override
-  Map<String, dynamic> toWire() =>
-      {'type': 'answer', 'from': from, 'sdp': sdp};
+  Map<String, dynamic> toWire() => {'type': 'answer', 'from': from, 'sdp': sdp};
 }
 
 class ServerIce extends ServerMessage {
@@ -205,6 +269,13 @@ class RoutedFrame {
   final ServerMessage message;
 }
 
+void _requireOnly(Map<String, dynamic> wire, Set<String> allowed) {
+  final unexpected = wire.keys.where((key) => !allowed.contains(key)).toList();
+  if (unexpected.isNotEmpty) {
+    throw FormatException('unexpected signaling field(s): $unexpected');
+  }
+}
+
 /// A signaling room. Transport-agnostic — the caller drives `receive` /
 /// `disconnect` and delivers the emitted [RoutedFrame]s over the transport.
 class SignalingRoom {
@@ -223,8 +294,8 @@ class SignalingRoom {
     out.add(RoutedFrame(connId, msg));
   }
 
-  void _error(
-      List<RoutedFrame> out, Object connId, SignalingErrorCode code, String msg) {
+  void _error(List<RoutedFrame> out, Object connId, SignalingErrorCode code,
+      String msg) {
     _emit(out, connId, ServerError(code.wire, msg));
   }
 
@@ -237,8 +308,8 @@ class SignalingRoom {
       case ClientLeave():
         _leave(out, connId);
       case ClientOffer(:final to):
-        _forward(out, connId, to, 'offer',
-            (from) => ServerOffer(from, message.sdp));
+        _forward(
+            out, connId, to, 'offer', (from) => ServerOffer(from, message.sdp));
       case ClientAnswer(:final to):
         _forward(out, connId, to, 'answer',
             (from) => ServerAnswer(from, message.sdp));
@@ -296,7 +367,8 @@ class SignalingRoom {
       ServerMessage Function(int from) build) {
     final from = _connToPeer[connId];
     if (from == null) {
-      _error(out, connId, SignalingErrorCode.notJoined, 'join before signaling');
+      _error(
+          out, connId, SignalingErrorCode.notJoined, 'join before signaling');
       return;
     }
     if (_mode == SignalingMode.allowlist) {

@@ -45,6 +45,33 @@ void main() {
       _playSignalingSession(fixture);
     });
   });
+
+  group('Signaling frame rejection', () {
+    final frames = _loadFixture(['signaling', 'frames.json']);
+    test('round trip positives and reject malformed frames', () {
+      for (final entry
+          in (frames['frames'] as List).cast<Map<String, dynamic>>()) {
+        final wire =
+            (entry['wire'] as Map<String, dynamic>).cast<String, dynamic>();
+        final Map<String, dynamic> actual = entry['direction'] == 'client'
+            ? ClientMessage.fromWire(wire).toWire()
+            : ServerMessage.fromWire(wire).toWire();
+        expect(actual, wire, reason: entry['label'] as String);
+      }
+      for (final entry
+          in (frames['rejects'] as List).cast<Map<String, dynamic>>()) {
+        final wire =
+            (entry['wire'] as Map<String, dynamic>).cast<String, dynamic>();
+        expect(
+          () => entry['direction'] == 'client'
+              ? ClientMessage.fromWire(wire)
+              : ServerMessage.fromWire(wire),
+          throwsA(anything),
+          reason: entry['label'] as String,
+        );
+      }
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -55,7 +82,8 @@ void _playAntiEntropy(Map<String, dynamic> scenario) {
   final runtime = CrdtPlaneRuntime(1);
   final opsData = (scenario['ops'] as List).cast<Map<String, dynamic>>();
   final ops = opsData.map((m) {
-    final stampMap = (m['stamp'] as Map<String, dynamic>).cast<String, dynamic>();
+    final stampMap =
+        (m['stamp'] as Map<String, dynamic>).cast<String, dynamic>();
     return CrdtOp(
       node: m['node'] as int,
       key: m['key'] != null ? NodeKey.fromWire(m['key']) : null,
@@ -108,8 +136,8 @@ void _playAntiEntropy(Map<String, dynamic> scenario) {
 
 void _playCausalReceipts(Map<String, dynamic> fixture) {
   final assertions = fixture['assertions'] as Map<String, dynamic>;
-  final wireReceipts =
-      (fixture['wire'] as Map<String, dynamic>)['CausalReceipts'] as Map<String, dynamic>;
+  final wireReceipts = (fixture['wire']
+      as Map<String, dynamic>)['CausalReceipts'] as Map<String, dynamic>;
   final receiptsList =
       (wireReceipts['receipts'] as List).cast<Map<String, dynamic>>();
 
@@ -125,8 +153,7 @@ void _playCausalReceipts(Map<String, dynamic> fixture) {
     projection.observe(assertions['current_generation'] as int, receipt);
   }
 
-  expect(projection.currentGeneration,
-      assertions['current_generation'] as int,
+  expect(projection.currentGeneration, assertions['current_generation'] as int,
       reason: 'current_generation');
 
   final terminal = projection.terminalFor(assertions['causation_id'] as String);
@@ -134,8 +161,7 @@ void _playCausalReceipts(Map<String, dynamic> fixture) {
   expect(terminal!.outcome.wire, assertions['terminal_outcome'] as String,
       reason: 'terminal_outcome');
 
-  final staleIds =
-      (assertions['stale_receipt_ids'] as List).cast<String>();
+  final staleIds = (assertions['stale_receipt_ids'] as List).cast<String>();
   for (final id in staleIds) {
     expect(projection.containsReceipt(id), isTrue,
         reason: 'stale receipt $id is known');
@@ -157,30 +183,17 @@ void _playSignalingSession(Map<String, dynamic> fixture) {
   final room = SignalingRoom();
 
   for (final step in (fixture['steps'] as List).cast<Map<String, dynamic>>()) {
-    final input = (step['input'] as Map<String, dynamic>).cast<String, dynamic>();
+    final input =
+        (step['input'] as Map<String, dynamic>).cast<String, dynamic>();
     final connId = input['conn'] as String;
-    final recv = (input['recv'] as Map<String, dynamic>).cast<String, dynamic>();
+    final recv =
+        (input['recv'] as Map<String, dynamic>).cast<String, dynamic>();
     final type = recv['type'] as String;
 
-    ClientMessage msg;
-    switch (type) {
-      case 'join':
-        msg = ClientJoin(recv['peer'] as int);
-      case 'leave':
-        msg = ClientLeave();
-      case 'offer':
-        msg = ClientOffer(recv['to'] as int, recv['sdp'] as String);
-      case 'answer':
-        msg = ClientAnswer(recv['to'] as int, recv['sdp'] as String);
-      case 'ice':
-        msg = ClientIce(recv['to'] as int, recv['candidate'] as String);
-      default:
-        throw StateError('unknown client type $type');
-    }
+    final msg = ClientMessage.fromWire(recv);
 
     final frames = room.receive(connId, msg);
-    final expected =
-        (step['expect'] as List).cast<Map<String, dynamic>>();
+    final expected = (step['expect'] as List).cast<Map<String, dynamic>>();
 
     expect(frames.length, expected.length,
         reason: 'frame count for step $type');
@@ -188,7 +201,8 @@ void _playSignalingSession(Map<String, dynamic> fixture) {
     for (var i = 0; i < expected.length; i++) {
       final exp = expected[i];
       final targetConn = exp['to'] as String;
-      final expFrame = (exp['frame'] as Map<String, dynamic>).cast<String, dynamic>();
+      final expFrame =
+          (exp['frame'] as Map<String, dynamic>).cast<String, dynamic>();
 
       expect(i < frames.length, isTrue, reason: 'frame $i exists');
       expect(frames[i].connId, targetConn, reason: 'frame[$i] target');
@@ -199,5 +213,18 @@ void _playSignalingSession(Map<String, dynamic> fixture) {
             reason: 'frame[$i].${entry.key}');
       }
     }
+  }
+
+  for (final reject
+      in (fixture['rejects'] as List).cast<Map<String, dynamic>>()) {
+    final input =
+        (reject['input'] as Map<String, dynamic>).cast<String, dynamic>();
+    final recv =
+        (input['recv'] as Map<String, dynamic>).cast<String, dynamic>();
+    expect(
+      () => ClientMessage.fromWire(recv),
+      throwsA(anything),
+      reason: reject['label'] as String,
+    );
   }
 }
