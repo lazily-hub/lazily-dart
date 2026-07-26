@@ -4,11 +4,11 @@ import 'dart:io';
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
-/// `SlotMap` materialization conformance (`#reactivemap`,
+/// `ComputedMap` materialization conformance (`#reactivemap`,
 /// lazily-spec/conformance/materialization/).
 ///
-/// Replays the shared cross-language fixtures against the Dart [SlotMap] (and,
-/// for mixed-kind fixtures, [CellMap]) specializations of [ReactiveMap] — the
+/// Replays the shared cross-language fixtures against the Dart [ComputedMap] (and,
+/// for mixed-kind fixtures, [SourceMap]) specializations of [ReactiveMap] — the
 /// same fixtures `lazily-rs/tests/materialization_conformance.rs` runs. Each
 /// fixture names the `lazily-formal` `Materialization` theorem it pins:
 /// `observe_canonical` / `eager_lazy_observationally_equivalent`,
@@ -17,10 +17,10 @@ import 'package:test/test.dart';
 /// `materialize_preserves_observe`.
 ///
 /// There is no eager/lazy mode flag: **eager** = pre-mint loop
-/// ([SlotMap.materializeAll]); **lazy** = mint-on-access
+/// ([ComputedMap.materializeAll]); **lazy** = mint-on-access
 /// ([ReactiveMap.getOrInsertWith]). A single `ReactiveMap<K,V,H>` fixes one
-/// handle kind, so a mixed-kind fixture is modelled by a [CellMap] over the cell
-/// entries and a [SlotMap] over the slot entries, sharing one logical key space.
+/// handle kind, so a mixed-kind fixture is modelled by a [SourceMap] over the cell
+/// entries and a [ComputedMap] over the slot entries, sharing one logical key space.
 final _localDir = Directory('test/conformance/materialization');
 final _specDir = Directory('../lazily-spec/conformance/materialization');
 
@@ -48,6 +48,14 @@ Set<String> _asSet(Iterable<String> keys) => keys.toSet();
 List<String> _strArray(Map<String, dynamic> m, String key) =>
     (m[key] as List).cast<String>();
 
+/// Accepted spellings of a derived-slot keyed-map fixture's `model` field.
+///
+/// The canonical corpus renamed `SlotMap` → `ComputedMap` (and `CellMap` →
+/// `SourceMap`) alongside the v2 kernel's `Source` / `Computed` node kinds. A
+/// runner that pinned the new spelling alone would fail against any checkout of
+/// lazily-spec predating the rename, so both are accepted.
+const _computedMapModels = {'ComputedMap', 'SlotMap'};
+
 /// A `spec.val` fixture: ordered keys → canonical value.
 ({List<String> keys, Map<String, int> values}) _parseVal(
     Map<String, dynamic> fixture) {
@@ -66,7 +74,8 @@ List<String> _strArray(Map<String, dynamic> m, String key) =>
 /// eager materializes all up front, observationally-transparent reads.
 Map<String, dynamic> _checkValFixture(String name) {
   final fixture = _load(name);
-  expect(fixture['model'], 'SlotMap', reason: 'fixture model');
+  expect(_computedMapModels, contains(fixture['model']),
+      reason: 'fixture model');
   final spec = _parseVal(fixture);
   final expected = fixture['expected'] as Map<String, dynamic>;
   final lookup = (Compute cx, String k) => spec.values[k]!;
@@ -77,13 +86,13 @@ Map<String, dynamic> _checkValFixture(String name) {
   final ctx = Context();
 
   // eager: pre-mint the whole keyset.
-  final eager = SlotMap<String, int>(ctx)..materializeAll(spec.keys, lookup);
+  final eager = ComputedMap<String, int>(ctx)..materializeAll(spec.keys, lookup);
   expect(eager.entryKind, EntryKind.slot);
   expect(eager.presentCount(), spec.keys.length, reason: 'eager_materializes_all');
   expect(_asSet(eager.presentKeys()), _asSet(_strArray(expected, 'eager_present')));
 
   // lazy: empty, mint-on-access.
-  final lazy = SlotMap<String, int>(ctx);
+  final lazy = ComputedMap<String, int>(ctx);
   expect(lazy.presentCount(), 0, reason: 'lazy defers every derived slot');
 
   // observe_canonical / eager_lazy_observationally_equivalent.
@@ -98,7 +107,7 @@ Map<String, dynamic> _checkValFixture(String name) {
 }
 
 void main() {
-  group('SlotMap materialization conformance (#reactivemap)', () {
+  group('ComputedMap materialization conformance (#reactivemap)', () {
     test('observational_transparency replays identically', () {
       final fixture = _checkValFixture('observational_transparency.json');
       final expected = fixture['expected'] as Map<String, dynamic>;
@@ -107,7 +116,7 @@ void main() {
 
       // Replay the lazy read sequence on a fresh map; the lazy present set is
       // exactly the read keys (lazy_defers_slots).
-      final lazy = SlotMap<String, int>(Context());
+      final lazy = ComputedMap<String, int>(Context());
       for (final k in _strArray(fixture, 'reads')) {
         lazy.getOrInsertWith(k, lookup);
       }
@@ -121,7 +130,7 @@ void main() {
       final spec = _parseVal(fixture);
       final lookup = (Compute cx, String k) => spec.values[k]!;
 
-      final lazy = SlotMap<String, int>(Context());
+      final lazy = ComputedMap<String, int>(Context());
 
       // present_after_each_read: cumulative present-set size, monotone and
       // unchanged by a re-read (materialize_present_monotone).
@@ -144,7 +153,7 @@ void main() {
 
     test('entry_kind_orthogonal_to_mode replays identically', () {
       final fixture = _load('entry_kind_orthogonal_to_mode.json');
-      expect(fixture['model'], 'SlotMap');
+      expect(_computedMapModels, contains(fixture['model']));
       final expected = fixture['expected'] as Map<String, dynamic>;
       expect(expected['default_mode'], 'eager');
 
@@ -172,11 +181,11 @@ void main() {
       final ctx = Context();
 
       // Eager build: every entry present (cells + slots).
-      final eagerCells = CellMap<String, int>(ctx);
+      final eagerCells = SourceMap<String, int>(ctx);
       for (final k in cellKeys) {
         eagerCells.entry(k, lookup(k));
       }
-      final eagerSlots = SlotMap<String, int>(ctx)
+      final eagerSlots = ComputedMap<String, int>(ctx)
         ..materializeAll(slotKeys, (_, k) => lookup(k));
       expect(eagerCells.entryKind, EntryKind.cell);
       expect(eagerSlots.entryKind, EntryKind.slot);
@@ -185,11 +194,11 @@ void main() {
       expect(eagerPresent, _asSet(_strArray(expected, 'eager_present')));
 
       // Lazy build: cells present at build (always materialized), slots deferred.
-      final lazyCells = CellMap<String, int>(ctx);
+      final lazyCells = SourceMap<String, int>(ctx);
       for (final k in cellKeys) {
         lazyCells.entry(k, lookup(k));
       }
-      final lazySlots = SlotMap<String, int>(ctx);
+      final lazySlots = ComputedMap<String, int>(ctx);
       expect(lazySlots.presentKeys(), isEmpty, reason: 'slots deferred at build');
       expect(_asSet(lazyCells.presentKeys()),
           _asSet(_strArray(expected, 'lazy_present_at_build')));

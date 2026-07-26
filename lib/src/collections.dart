@@ -1,24 +1,24 @@
 /// Keyed cell collections — the unified `ReactiveMap<K, V, H>` primitive and
-/// its `CellMap` / `SlotMap` specializations, plus `CellTree` and keyed
+/// its `SourceMap` / `ComputedMap` specializations, plus `CellTree` and keyed
 /// reconciliation (cell-model.md § Keyed cell collections, `#reactivemap`).
 ///
 /// There is **one** keyed primitive, generic over the entry's handle kind `H`
 /// (the *MapHandle* abstraction, supplied per specialization):
 ///
-/// - **[CellMap]** = `ReactiveMap<K, V, Cell<V>>` — **input-cell** entries.
-///   Adds cell-only [CellMap.set] plus eager value-minting ([CellMap.entry] /
-///   [CellMap.entryWith]).
-/// - **[SlotMap]** = `ReactiveMap<K, V, Slot<V>>` — **derived-slot** entries.
+/// - **[SourceMap]** = `ReactiveMap<K, V, Cell<V>>` — **input-cell** entries.
+///   Adds cell-only [SourceMap.set] plus eager value-minting ([SourceMap.entry] /
+///   [SourceMap.entryWith]).
+/// - **[ComputedMap]** = `ReactiveMap<K, V, Slot<V>>` — **derived-slot** entries.
 ///   [ReactiveMap.getOrInsertWith] mints a slot on first access (**lazy
-///   materialization**); [SlotMap.materializeAll] pre-mints the keyset
-///   (**eager**). A slot's value is derived, so `SlotMap` has **no `set`**.
+///   materialization**); [ComputedMap.materializeAll] pre-mints the keyset
+///   (**eager**). A slot's value is derived, so `ComputedMap` has **no `set`**.
 ///   There is **no eager/lazy mode flag** — eager = pre-mint loop, lazy =
 ///   mint-on-access.
 ///
 /// The shared surface — `getOrInsertWith` / `remove` / `move*` / membership /
 /// order / `keys` / `len` / `containsKey` — lives on the generic [ReactiveMap];
-/// `set` and eager value-minting are the [CellMap]-only specialization, and the
-/// pre-mint eager helper is the [SlotMap]-only specialization.
+/// `set` and eager value-minting are the [SourceMap]-only specialization, and the
+/// pre-mint eager helper is the [ComputedMap]-only specialization.
 ///
 /// A *keyed cell collection* is a **composition of cells**, not a new cell
 /// kind. It maps keys `K` to per-entry reactive nodes and adds dedicated
@@ -33,7 +33,7 @@
 /// Required of every lazily binding by the conformance matrix; validated
 /// against the canonical fixtures in `lazily-spec/conformance/collections/` and
 /// `lazily-spec/conformance/materialization/`. Mirrors
-/// `lazily-rs/src/cell_family.rs` (`ReactiveMap`/`CellMap`/`SlotMap`) and
+/// `lazily-rs/src/cell_family.rs` (`ReactiveMap`/`SourceMap`/`ComputedMap`) and
 /// `lazily-rs/src/reconcile.rs` (LIS), with `lazily-kt` and `lazily-js` as
 /// cross-checks.
 
@@ -71,8 +71,8 @@ enum EntryKind {
 /// bumps only the order signal once and keeps the moved entry's same handle,
 /// dependents, and lineage (it is not a remove + re-mint).
 ///
-/// The two specializations a binding exposes are [CellMap] (input cells) and
-/// [SlotMap] (derived slots). Subclasses supply the handle-kind operations
+/// The two specializations a binding exposes are [SourceMap] (input cells) and
+/// [ComputedMap] (derived slots). Subclasses supply the handle-kind operations
 /// ([_materializeHandle] / [_observeHandle] / [_clearHandle] / [entryKind]) —
 /// the Dart form of the `MapHandle` trait.
 abstract class ReactiveMap<K, V, H> {
@@ -96,8 +96,8 @@ abstract class ReactiveMap<K, V, H> {
 
   // --- MapHandle abstraction (supplied per specialization) ---
 
-  /// This map's entry kind ([EntryKind.cell] for a [CellMap], [EntryKind.slot]
-  /// for a [SlotMap]).
+  /// This map's entry kind ([EntryKind.cell] for a [SourceMap], [EntryKind.slot]
+  /// for a [ComputedMap]).
   EntryKind get entryKind;
 
   /// Allocate the node for one entry, with [compute] producing its canonical
@@ -143,8 +143,8 @@ abstract class ReactiveMap<K, V, H> {
   }
 
   /// Get the value at [key], minting the entry via [factory] first if absent —
-  /// the mint-on-access recipe. For a [SlotMap] this is the **lazy
-  /// materialization** pull; for a [CellMap] it seeds an input cell.
+  /// the mint-on-access recipe. For a [ComputedMap] this is the **lazy
+  /// materialization** pull; for a [SourceMap] it seeds an input cell.
   ///
   /// Bumps reactive membership only on insert; an existing key returns its
   /// current value without re-running [factory].
@@ -277,12 +277,12 @@ abstract class ReactiveMap<K, V, H> {
 }
 
 /// A keyed **input-cell** collection: every entry is a settable [Cell] (the
-/// [CellMap] specialization of [ReactiveMap], `H = Cell<V>`).
+/// [SourceMap] specialization of [ReactiveMap], `H = Cell<V>`).
 ///
 /// Adds cell-only [set] and eager value-minting ([entry] / [entryWith]) on top
-/// of the shared reactive keyed surface. Mirrors `lazily-rs::CellMap`.
-class CellMap<K, V> extends ReactiveMap<K, V, Source<V>> {
-  CellMap(super.ctx);
+/// of the shared reactive keyed surface. Mirrors `lazily-rs::SourceMap`.
+class SourceMap<K, V> extends ReactiveMap<K, V, Source<V>> {
+  SourceMap(super.ctx);
 
   @override
   EntryKind get entryKind => EntryKind.cell;
@@ -332,7 +332,7 @@ class CellMap<K, V> extends ReactiveMap<K, V, Source<V>> {
   /// it does not exist yet. Updating an existing entry leaves membership
   /// untouched and invalidates only that entry's dependents.
   ///
-  /// Cell-only: an input is settable; a derived [SlotMap] slot is not.
+  /// Cell-only: an input is settable; a derived [ComputedMap] slot is not.
   void set(K key, V value) {
     final h = handle(key);
     if (h != null) {
@@ -395,15 +395,15 @@ class CellMap<K, V> extends ReactiveMap<K, V, Source<V>> {
 }
 
 /// A keyed **derived-slot** collection: every entry is a [Slot] whose value is
-/// derived (the [SlotMap] specialization of [ReactiveMap], `H = Slot<V>`).
+/// derived (the [ComputedMap] specialization of [ReactiveMap], `H = Slot<V>`).
 ///
 /// [ReactiveMap.getOrInsertWith] mints a slot on first access (**lazy
 /// materialization**); [materializeAll] pre-mints the keyset (**eager**). A
-/// slot's value is derived, so `SlotMap` has **no `set`**. There is **no
+/// slot's value is derived, so `ComputedMap` has **no `set`**. There is **no
 /// eager/lazy mode flag** — eager is the pre-mint loop, lazy is mint-on-access.
-/// Mirrors `lazily-rs::SlotMap`.
-class SlotMap<K, V> extends ReactiveMap<K, V, Slot<V>> {
-  SlotMap(super.ctx);
+/// Mirrors `lazily-rs::ComputedMap`.
+class ComputedMap<K, V> extends ReactiveMap<K, V, Slot<V>> {
+  ComputedMap(super.ctx);
 
   @override
   EntryKind get entryKind => EntryKind.slot;
@@ -437,11 +437,25 @@ class SlotMap<K, V> extends ReactiveMap<K, V, Slot<V>> {
   }
 }
 
-/// Position specifier for [CellMap.insert] (mirrors `lazily-kt::InsertAt`).
+/// Former name of [SourceMap], kept so existing callers still compile.
+///
+/// The v2 kernel renamed the node kinds to `Source` / `Computed`; the keyed
+/// collections follow.
+@Deprecated('renamed to SourceMap')
+typedef CellMap<K, V> = SourceMap<K, V>;
+
+/// Former name of [ComputedMap], kept so existing callers still compile.
+///
+/// The v2 kernel renamed the node kinds to `Source` / `Computed`; the keyed
+/// collections follow.
+@Deprecated('renamed to ComputedMap')
+typedef SlotMap<K, V> = ComputedMap<K, V>;
+
+/// Position specifier for [SourceMap.insert] (mirrors `lazily-kt::InsertAt`).
 enum InsertAt {
   /// Append at the end (default).
   end,
-  /// At an absolute index (use [CellMap.moveTo] after insert to position).
+  /// At an absolute index (use [SourceMap.moveTo] after insert to position).
   at,
   /// Just before [anchor].
   before,
@@ -670,7 +684,7 @@ List<int> _longestIncreasingSubsequence(List<int> seq) {
 /// An ordered keyed tree (cell-model.md § Ordered keyed tree).
 ///
 /// Each node is `(stable id, value cell, ordered keyed child collection)`. A
-/// node's children are a [CellMap] keyed by child id, so per-level
+/// node's children are a [SourceMap] keyed by child id, so per-level
 /// membership/order reactivity and the atomic-move guarantee are inherited.
 /// The tree is still a composition of cells — not a new cell kind — so per-cell
 /// merge applies node-by-node.
@@ -680,12 +694,12 @@ List<int> _longestIncreasingSubsequence(List<int> seq) {
 class CellTree<K, V> {
   CellTree(this.ctx, this.id, V initialValue)
       : value = Source<V>(ctx, initialValue),
-        children = CellMap<K, CellTree<K, V>>(ctx);
+        children = SourceMap<K, CellTree<K, V>>(ctx);
 
   final Context ctx;
   final K id;
   final Source<V> value;
-  final CellMap<K, CellTree<K, V>> children;
+  final SourceMap<K, CellTree<K, V>> children;
 
   /// Read this node's value (reactive).
   V get() => value.value;

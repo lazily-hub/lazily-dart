@@ -7,7 +7,7 @@
 ///    `observe_pending_is_none`, `cell_resolved_at_build`, `resolve_monotone`,
 ///    `resolve_preserves_observe`).
 /// Rust reference: `lazily-rs/src/async_reactive_family.rs`
-///   (`AsyncReactiveMap` / `AsyncCellMap` / `AsyncSlotMap`).
+///   (`AsyncReactiveMap` / `AsyncSourceMap` / `AsyncComputedMap`).
 ///
 /// Keys `K` map to per-entry async reactive nodes. Like the thread-safe flavor
 /// it frames its state behind a reentrant run-to-completion guard (Dart isolates
@@ -18,7 +18,7 @@
 ///
 /// Async adds a **resolution axis** orthogonal to the present-set (allocation)
 /// axis of the single-threaded map: a derived (slot) entry is *pending* until it
-/// is driven to resolution ([AsyncSlotMap.drive], the analog of
+/// is driven to resolution ([AsyncComputedMap.drive], the analog of
 /// `AsyncContext.getAsync`), then *resolved*. Input (cell) entries are resolved
 /// at allocation (`cell_resolved_at_build`). A non-blocking read therefore
 /// returns `(value, resolved)`: `(null, false)` while pending
@@ -47,9 +47,9 @@ class _AsyncEntry<V> {
 /// The async keyed reactive map (`#reactivemap`): keys `K` map to per-entry
 /// async reactive nodes, each carrying a resolution flag.
 ///
-/// The two specializations are [AsyncCellMap] (input cells — resolved at
-/// allocation, adds [AsyncCellMap.set]) and [AsyncSlotMap] (derived slots —
-/// pending until [AsyncSlotMap.drive]n). The shared surface — [observe] /
+/// The two specializations are [AsyncSourceMap] (input cells — resolved at
+/// allocation, adds [AsyncSourceMap.set]) and [AsyncComputedMap] (derived slots —
+/// pending until [AsyncComputedMap.drive]n). The shared surface — [observe] /
 /// [isResolved] / membership / present-set — lives here. See the library doc
 /// for the eventual-transparency law.
 abstract class AsyncReactiveMap<K, V> {
@@ -73,8 +73,8 @@ abstract class AsyncReactiveMap<K, V> {
   /// First-materialization order of the present set (grows only).
   final List<K> _order = [];
 
-  /// This map's entry kind ([EntryKind.cell] for an [AsyncCellMap],
-  /// [EntryKind.slot] for an [AsyncSlotMap]).
+  /// This map's entry kind ([EntryKind.cell] for an [AsyncSourceMap],
+  /// [EntryKind.slot] for an [AsyncComputedMap]).
   EntryKind get entryKind;
 
   T _guarded<T>(T Function() fn) {
@@ -126,15 +126,15 @@ abstract class AsyncReactiveMap<K, V> {
 
 /// An async **input-cell** map: every entry is an always-resolved input. Adds
 /// cell-only [set]. `H = AsyncCell` (elided — value cache).
-class AsyncCellMap<K, V> extends AsyncReactiveMap<K, V> {
-  AsyncCellMap(super.ctx);
+class AsyncSourceMap<K, V> extends AsyncReactiveMap<K, V> {
+  AsyncSourceMap(super.ctx);
 
   @override
   EntryKind get entryKind => EntryKind.cell;
 
   /// Set [key]'s value (an input cell — always resolved), allocating it if
   /// absent, and return `true`. Cell-only: an input is settable; a derived
-  /// [AsyncSlotMap] slot is not.
+  /// [AsyncComputedMap] slot is not.
   bool set(K key, V value) => _guarded(() {
         final entry = _ensure(key, resolved: true, value: value);
         entry.value = value;
@@ -152,8 +152,8 @@ class AsyncCellMap<K, V> extends AsyncReactiveMap<K, V> {
 /// An async **derived-slot** map: entries are minted lazily on [touch] (pending)
 /// or eagerly via [materializeAll], and resolved via [drive]. No `set`.
 /// `H = AsyncSlot` (elided — value cache).
-class AsyncSlotMap<K, V> extends AsyncReactiveMap<K, V> {
-  AsyncSlotMap(super.ctx);
+class AsyncComputedMap<K, V> extends AsyncReactiveMap<K, V> {
+  AsyncComputedMap(super.ctx);
 
   @override
   EntryKind get entryKind => EntryKind.slot;
@@ -184,3 +184,11 @@ class AsyncSlotMap<K, V> extends AsyncReactiveMap<K, V> {
         return entry.value as V;
       });
 }
+
+/// Former name of [AsyncSourceMap], kept so existing callers still compile.
+@Deprecated('renamed to AsyncSourceMap')
+typedef AsyncCellMap<K, V> = AsyncSourceMap<K, V>;
+
+/// Former name of [AsyncComputedMap], kept so existing callers still compile.
+@Deprecated('renamed to AsyncComputedMap')
+typedef AsyncSlotMap<K, V> = AsyncComputedMap<K, V>;

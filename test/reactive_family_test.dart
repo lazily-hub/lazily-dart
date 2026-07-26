@@ -2,14 +2,14 @@ import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
 /// Unit tests for the unified keyed reactive map ([ReactiveMap]) and its
-/// [CellMap] / [SlotMap] specializations (`#reactivemap`). Mirrors the Rust unit
+/// [SourceMap] / [ComputedMap] specializations (`#reactivemap`). Mirrors the Rust unit
 /// tests in `lazily-rs/src/cell_family.rs`. (Reactive membership/order/move
 /// independence is covered by `collections_conformance_test.dart`.)
 void main() {
-  group('CellMap specialization', () {
+  group('SourceMap specialization', () {
     test('entry caches one cell per key', () {
       final ctx = Context();
-      final map = CellMap<String, int>(ctx);
+      final map = SourceMap<String, int>(ctx);
       final a1 = map.entry('a', 1);
       final a2 = map.entry('a', 999);
       // Same key -> same cell; the second default is ignored.
@@ -21,7 +21,7 @@ void main() {
 
     test('getOrInsertWith mints once then returns existing', () {
       final ctx = Context();
-      final map = CellMap<String, int>(ctx);
+      final map = SourceMap<String, int>(ctx);
       var calls = 0;
       expect(map.getOrInsertWith('a', (_, __) {
         calls++;
@@ -41,7 +41,7 @@ void main() {
 
     test('set drives dependents through the map', () {
       final ctx = Context();
-      final map = CellMap<String, int>(ctx);
+      final map = SourceMap<String, int>(ctx);
       map.entry('x', 1);
       final doubled = Slot<int>(ctx, (cx) => map.read('x', cx)! * 2);
       expect(doubled(), 2);
@@ -50,10 +50,10 @@ void main() {
     });
   });
 
-  group('SlotMap specialization', () {
+  group('ComputedMap specialization', () {
     test('mints lazily and caches', () {
       final ctx = Context();
-      final fam = SlotMap<int, int>(ctx);
+      final fam = ComputedMap<int, int>(ctx);
       // Nothing present until first access.
       expect(fam.presentCount(), 0);
       expect(fam.getOrInsertWith(7, (_, k) => k * 2), 14);
@@ -67,7 +67,7 @@ void main() {
 
     test('materializeAll is eager (pre-mint)', () {
       final ctx = Context();
-      final fam = SlotMap<int, int>(ctx)..materializeAll([0, 1, 2, 5, 9], (_, k) => k * 3);
+      final fam = ComputedMap<int, int>(ctx)..materializeAll([0, 1, 2, 5, 9], (_, k) => k * 3);
       expect(fam.presentCount(), 5);
       for (final k in [0, 1, 2, 5, 9]) {
         expect(fam.isPresent(k), isTrue);
@@ -77,7 +77,7 @@ void main() {
 
     test('present set is monotone across lazy reads', () {
       final ctx = Context();
-      final fam = SlotMap<int, int>(ctx);
+      final fam = ComputedMap<int, int>(ctx);
       final sizes = <int>[];
       for (final k in [2, 4, 2, 5]) {
         fam.getOrInsertWith(k, (_, k) => k * 2);
@@ -91,7 +91,7 @@ void main() {
     test('a derived slot recomputes when an upstream cell changes', () {
       final ctx = Context();
       final base = Source<int>(ctx, 2);
-      final fam = SlotMap<int, int>(ctx);
+      final fam = ComputedMap<int, int>(ctx);
       expect(fam.getOrInsertWith(3, (cx, k) => cx.get(base) * k), 6);
       base.value = 10;
       expect(fam.get(3), 30);
@@ -99,7 +99,7 @@ void main() {
 
     test('remove clears a slot and bumps membership', () {
       final ctx = Context();
-      final fam = SlotMap<int, int>(ctx)..materializeAll([1, 2], (_, k) => k);
+      final fam = ComputedMap<int, int>(ctx)..materializeAll([1, 2], (_, k) => k);
       expect(fam.remove(1), isTrue);
       expect(fam.isPresent(1), isFalse);
       expect(fam.remove(1), isFalse);
@@ -108,10 +108,10 @@ void main() {
   });
 
   group('eager and lazy observe identically', () {
-    test('SlotMap eager (materializeAll) == lazy (getOrInsertWith)', () {
+    test('ComputedMap eager (materializeAll) == lazy (getOrInsertWith)', () {
       final ctx = Context();
-      final eager = SlotMap<int, int>(ctx)..materializeAll([0, 1, 2, 5, 9], (_, k) => k * 3);
-      final lazy = SlotMap<int, int>(ctx);
+      final eager = ComputedMap<int, int>(ctx)..materializeAll([0, 1, 2, 5, 9], (_, k) => k * 3);
+      final lazy = ComputedMap<int, int>(ctx);
       for (final k in [0, 1, 2, 5, 9]) {
         expect(lazy.getOrInsertWith(k, (_, k) => k * 3), eager.get(k));
       }

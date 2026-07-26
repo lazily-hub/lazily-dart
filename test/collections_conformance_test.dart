@@ -42,7 +42,7 @@ Map<String, dynamic> _loadFixture(String name) =>
 /// `ctx.is_set(reader)` in lazily-rs.
 bool _isWarm(Slot<dynamic> reader, Context ctx) => ctx.contains(reader);
 
-void _seedInitial(Context ctx, CellMap<String, int> map, Map<String, dynamic> initial) {
+void _seedInitial(Context ctx, SourceMap<String, int> map, Map<String, dynamic> initial) {
   final order = (initial['order'] as List).cast<String>();
   final values = (initial['values'] as Map).cast<String, dynamic>();
   for (final k in order) {
@@ -51,7 +51,7 @@ void _seedInitial(Context ctx, CellMap<String, int> map, Map<String, dynamic> in
 }
 
 /// Apply a fixture step op to the live map.
-void _applyOp(Context ctx, CellMap<String, int> map, Map<String, dynamic> op) {
+void _applyOp(Context ctx, SourceMap<String, int> map, Map<String, dynamic> op) {
   switch (op['type'] as String) {
     case 'set_value':
       map.set(op['key'] as String, op['value'] as int);
@@ -97,7 +97,7 @@ List<String> _asOrder(Object? v) {
 void _runStepsFixture(String name) {
   final fixture = _loadFixture(name);
   final ctx = Context();
-  final map = CellMap<String, int>(ctx);
+  final map = SourceMap<String, int>(ctx);
   _seedInitial(ctx, map, fixture['initial'] as Map<String, dynamic>);
 
   final steps = (fixture['steps'] as List).cast<Map<String, dynamic>>();
@@ -245,7 +245,7 @@ void _runReconcileFixture(String name) {
   // Convergence: applying the minimal op set to a live map reproduces
   // result_order.
   final ctx = Context();
-  final map = CellMap<String, int>(ctx);
+  final map = SourceMap<String, int>(ctx);
   for (final e in prior) {
     map.set(e.key, e.value);
   }
@@ -278,7 +278,7 @@ void _runReconcileFixture(String name) {
 }
 
 void main() {
-  // The 3 fixtures lazily-rs runs (the family's CellMap conformance scope).
+  // The 3 fixtures lazily-rs runs (the family's SourceMap conformance scope).
   test('conformance cellmap_independence replays identically', () {
     _runStepsFixture('cellmap_independence.json');
   });
@@ -292,10 +292,10 @@ void main() {
   });
 
   // Live-graph sanity tests for the independence wiring.
-  group('CellMap independence', () {
+  group('SourceMap independence', () {
     test('a value write invalidates only that entry value reader', () {
       final ctx = Context();
-      final map = CellMap<String, int>(ctx)
+      final map = SourceMap<String, int>(ctx)
         ..set('a', 1)
         ..set('b', 2);
       final ra = Slot<int?>(ctx, (cx) => map.read('a', cx))..call();
@@ -311,7 +311,7 @@ void main() {
 
     test('a pure atomic move invalidates only order readers', () {
       final ctx = Context();
-      final map = CellMap<String, int>(ctx)
+      final map = SourceMap<String, int>(ctx)
         ..set('a', 1)
         ..set('b', 2)
         ..set('c', 3);
@@ -327,7 +327,7 @@ void main() {
 
     test('handle is stable across an atomic move', () {
       final ctx = Context();
-      final map = CellMap<String, int>(ctx)
+      final map = SourceMap<String, int>(ctx)
         ..set('a', 1)
         ..set('b', 2);
       final before = map.cell('b');
@@ -337,7 +337,7 @@ void main() {
 
     test('no-op move does not invalidate', () {
       final ctx = Context();
-      final map = CellMap<String, int>(ctx)
+      final map = SourceMap<String, int>(ctx)
         ..set('a', 1)
         ..set('b', 2);
       final keys = Slot<List<String>>(ctx, (cx) => map.keys(cx))..call();

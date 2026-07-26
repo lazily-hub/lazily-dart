@@ -11,7 +11,7 @@
 ///
 /// See `package:lazily/lazily.dart` for the reactive family
 /// (`Slot` / `Cell` / `Signal` / `StateMachine` / `StateChart` /
-/// `CellMap` / `CellTree` / `TextCrdt` / `SeqCrdt` / `SemTree`).
+/// `SourceMap` / `CellTree` / `TextCrdt` / `SeqCrdt` / `SemTree`).
 library lazily.ipc;
 
 export 'src/causal_receipts.dart';

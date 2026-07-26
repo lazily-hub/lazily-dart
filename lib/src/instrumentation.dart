@@ -83,9 +83,9 @@ List<BenchmarkResult> runBenchmarkSuite({int iterations = 10000}) {
         }
       });
     }, iterations: iterations),
-    benchmark('CellMap insert + read', () {
+    benchmark('SourceMap insert + read', () {
       final ctx = Context();
-      final map = CellMap<String, int>(ctx);
+      final map = SourceMap<String, int>(ctx);
       for (var i = 0; i < 10; i++) {
         map.set('k$i', i);
       }

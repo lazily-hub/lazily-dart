@@ -234,15 +234,15 @@ notes and platform carve-outs lives in
 | Feature | Rust | Python | Kotlin | JS | Dart | Zig | Go | C++ | C# |
 | --------- | :----: | :------: | :------: | :--: | :----: | :---: | :--: | :---: | :--: |
 | Reactive graph — two cell kinds (nodes `SourceCell` / `ComputedCell`; handles `Source<T, M>` / `Computed<T>`) + `Effect` sink + eager `Computed` (`computed().eager()`) / all cells guarded / batch | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Keyed-map materialization (`SlotMap`) — mint-on-access derived slots: transparency + deferral (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Thread-safe keyed map (`ThreadSafeSlotMap`) — `Send + Sync` + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Async keyed map (`AsyncSlotMap`) — eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyed-map materialization (`ComputedMap`) — mint-on-access derived slots: transparency + deferral (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Thread-safe keyed map (`ThreadSafeComputedMap`) — `Send + Sync` + materialization confluence (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Async keyed map (`AsyncComputedMap`) — eventual transparency (`#lzmatmode`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Keyed-map sync — membership propagation + materialize-on-ingest + derived-aggregate transparency (`#lzfamilysync`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Thread-safe context (lock-backed) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Async reactive context | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Flat state machine | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Harel state charts | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Keyed reactive maps (`ReactiveMap`: `CellMap` / `SlotMap`) + `CellTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Keyed reactive maps (`ReactiveMap`: `SourceMap` / `ComputedMap`) + `CellTree` + reconcile | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Memoized semantic tree (`SemTree`) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Stable-id alignment (manufactured identity) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Reactive queue (`QueueCell` SPSC/MPSC + `QueueStorage` adapter) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | — |
@@ -289,7 +289,7 @@ Wall-clock benchmarks live in [`BENCHMARKS.md`](BENCHMARKS.md), with two
 runnable programs:
 
 - **Micro-benchmarks** — the in-library `runBenchmarkSuite` reactive-core,
-  collection, and CRDT paths (`Source`/`Slot`/`Computed`/`batch`/`CellMap`/
+  collection, and CRDT paths (`Source`/`Slot`/`Computed`/`batch`/`SourceMap`/
   `TextCrdt`/`SeqCrdt`). The reactive-core steady state is sub-microsecond per op.
 - **Scale** — a spreadsheet-shaped graph (`N` input cells + `N` formula slots,
   `formula[i] = input[i] + input[i-1]`) replicating the lazily-rs `scale` group
@@ -327,7 +327,7 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 | Layer | Where |
 |-------|-------|
 | Reactive core — Cell kernel v2 (`Source`/`Cell` / `Computed`+`computed`/`.eager()`/`.lazy()` / `Effect` / `Slot` (unguarded) / `batch`; `Signal` back-compat alias) | `package:lazily/lazily.dart` |
-| Keyed cell collections (`ReactiveMap` / `CellMap` / `SlotMap` / `CellTree` / reconciliation) | `package:lazily/lazily.dart` |
+| Keyed cell collections (`ReactiveMap` / `SourceMap` / `ComputedMap` / `CellTree` / reconciliation) | `package:lazily/lazily.dart` |
 | Flat state machine + Harel state charts | `package:lazily/lazily.dart` |
 | TextCrdt (char CRDT) + delta sync | `package:lazily/lazily.dart` |
 | SeqCrdt (move-aware sequence CRDT) + Hlc + LwwRegister | `package:lazily/lazily.dart` |
@@ -336,9 +336,9 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 | SemTree (memoized semantic tree) | `package:lazily/lazily.dart` |
 | Stable-id alignment | `package:lazily/lazily.dart` |
 | Async reactive context | `package:lazily/async_context.dart` |
-| Keyed reactive map materialization (`SlotMap` lazy `getOrInsertWith` / eager `materializeAll`, `#reactivemap`) | `package:lazily/lazily.dart` |
-| Thread-safe context + reactive map (`ThreadSafeContext` / `ThreadSafeReactiveMap` / `ThreadSafeCellMap` / `ThreadSafeSlotMap`) | `package:lazily/lazily.dart` |
-| Async reactive map (`AsyncReactiveMap` / `AsyncCellMap` / `AsyncSlotMap`) | `package:lazily/lazily.dart` |
+| Keyed reactive map materialization (`ComputedMap` lazy `getOrInsertWith` / eager `materializeAll`, `#reactivemap`) | `package:lazily/lazily.dart` |
+| Thread-safe context + reactive map (`ThreadSafeContext` / `ThreadSafeReactiveMap` / `ThreadSafeSourceMap` / `ThreadSafeComputedMap`) | `package:lazily/lazily.dart` |
+| Async reactive map (`AsyncReactiveMap` / `AsyncSourceMap` / `AsyncComputedMap`) | `package:lazily/lazily.dart` |
 | Reactive family sync (`#lzfamilysync`, materialize-on-ingest) | `package:lazily/ipc.dart` |
 | IPC (`Snapshot` + `Delta` + `CrdtSync`) | `package:lazily/ipc.dart` |
 | Distributed CRDT plane (`CrdtPlaneRuntime` / anti-entropy) | `package:lazily/ipc.dart` |
@@ -358,17 +358,17 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 There is **one** keyed primitive, `ReactiveMap<K, V, H>`, generic over the
 entry's handle kind `H`, with two specializations (`#reactivemap`):
 
-- `CellMap<K, V>` = `ReactiveMap<K, V, Cell<V>>` — **input-cell** entries; adds
+- `SourceMap<K, V>` = `ReactiveMap<K, V, Cell<V>>` — **input-cell** entries; adds
   cell-only `set` plus eager value-minting (`entry` / `entryWith`).
-- `SlotMap<K, V>` = `ReactiveMap<K, V, Slot<V>>` — **derived-slot** entries;
+- `ComputedMap<K, V>` = `ReactiveMap<K, V, Slot<V>>` — **derived-slot** entries;
   `getOrInsertWith` mints a slot on first access (**lazy materialization**),
   `materializeAll` pre-mints the keyset (**eager**). A slot's value is derived,
-  so `SlotMap` has **no `set`**, and there is **no eager/lazy mode flag**.
+  so `ComputedMap` has **no `set`**, and there is **no eager/lazy mode flag**.
 
 The shared surface (`getOrInsertWith` / `remove` / `move*` / membership / order /
 `keys` / `len` / `containsKey`) lives on `ReactiveMap`.
 
-`CellMap<K, V>` is a **composition of cells**, not a new cell kind. Each entry
+`SourceMap<K, V>` is a **composition of cells**, not a new cell kind. Each entry
 is an ordinary `Cell`; a dedicated membership cell tracks the key set, and a
 dedicated order cell tracks the ordered key list, so the three reactivity
 planes are independent:
@@ -380,7 +380,7 @@ planes are independent:
 
 ```dart
 final ctx = Context();
-final scores = CellMap<String, int>(ctx)
+final scores = SourceMap<String, int>(ctx)
   ..set('alice', 10)
   ..set('bob', 20);
 

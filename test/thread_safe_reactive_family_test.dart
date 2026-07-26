@@ -2,17 +2,17 @@ import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
 /// Unit tests for the thread-safe keyed reactive map ([ThreadSafeReactiveMap])
-/// and its [ThreadSafeCellMap] / [ThreadSafeSlotMap] specializations
+/// and its [ThreadSafeSourceMap] / [ThreadSafeComputedMap] specializations
 /// (`#reactivemap`, thread-safe). Mirrors the Rust unit tests in
 /// `lazily-rs/src/thread_safe_reactive_family.rs` and the Lean `Materialization`
-/// confluence pair. Eager = pre-mint loop ([ThreadSafeSlotMap.materializeAll]);
+/// confluence pair. Eager = pre-mint loop ([ThreadSafeComputedMap.materializeAll]);
 /// lazy = mint-on-access ([ThreadSafeReactiveMap.getOrInsertWith]) — no mode
 /// flag.
 void main() {
-  group('ThreadSafeSlotMap eager/lazy contract', () {
+  group('ThreadSafeComputedMap eager/lazy contract', () {
     test('eager materializes every declared slot at build', () {
       final ctx = Context();
-      final fam = ThreadSafeSlotMap<int, int>(ctx)
+      final fam = ThreadSafeComputedMap<int, int>(ctx)
         ..materializeAll([0, 1, 2], (k) => k * 3);
       expect(fam.entryKind, EntryKind.slot);
       expect(fam.presentCount(), 3);
@@ -24,7 +24,7 @@ void main() {
 
     test('lazy defers each slot to first read', () {
       final ctx = Context();
-      final fam = ThreadSafeSlotMap<int, int>(ctx);
+      final fam = ThreadSafeComputedMap<int, int>(ctx);
       expect(fam.presentCount(), 0);
       expect(fam.isPresent(1), isFalse);
 
@@ -36,29 +36,29 @@ void main() {
 
     test('cell entries are materialized eagerly', () {
       final ctx = Context();
-      final cells = ThreadSafeCellMap<int, int>(ctx)
+      final cells = ThreadSafeSourceMap<int, int>(ctx)
         ..materializeAll({0: 0, 1: 1});
       expect(cells.entryKind, EntryKind.cell);
       expect(cells.presentCount(), 2);
     });
   });
 
-  group('ThreadSafeSlotMap transparency', () {
+  group('ThreadSafeComputedMap transparency', () {
     test('observe returns an identical value under eager and lazy', () {
       final ctx = Context();
-      final eager = ThreadSafeSlotMap<int, int>(ctx)
+      final eager = ThreadSafeComputedMap<int, int>(ctx)
         ..materializeAll([1, 2, 3], (k) => k * 10);
-      final lazy = ThreadSafeSlotMap<int, int>(ctx);
+      final lazy = ThreadSafeComputedMap<int, int>(ctx);
       for (final k in [1, 2, 3]) {
         expect(lazy.getOrInsertWith(k, (k) => k * 10), eager.observe(k));
       }
     });
   });
 
-  group('ThreadSafeSlotMap present-set monotonicity', () {
+  group('ThreadSafeComputedMap present-set monotonicity', () {
     test('the materialized set only grows', () {
       final ctx = Context();
-      final fam = ThreadSafeSlotMap<int, int>(ctx);
+      final fam = ThreadSafeComputedMap<int, int>(ctx);
       expect(fam.presentCount(), 0);
       fam.getOrInsertWith(5, (k) => k);
       expect(fam.presentCount(), 1);
@@ -70,12 +70,12 @@ void main() {
     });
   });
 
-  group('ThreadSafeSlotMap confluence', () {
+  group('ThreadSafeComputedMap confluence', () {
     test('materializing in different orders → identical present set + values',
         () {
       final ctx = Context();
-      final famA = ThreadSafeSlotMap<int, int>(ctx);
-      final famB = ThreadSafeSlotMap<int, int>(ctx);
+      final famA = ThreadSafeComputedMap<int, int>(ctx);
+      final famB = ThreadSafeComputedMap<int, int>(ctx);
 
       // materialize_present_comm / materialize_observe_comm: order does not
       // change the present set or the observed values.
@@ -96,10 +96,10 @@ void main() {
     });
   });
 
-  group('ThreadSafeCellMap set', () {
+  group('ThreadSafeSourceMap set', () {
     test('set overwrites and returns true', () {
       final ctx = Context();
-      final cells = ThreadSafeCellMap<int, int>(ctx)..set(1, 1);
+      final cells = ThreadSafeSourceMap<int, int>(ctx)..set(1, 1);
       expect(cells.observe(1), 1);
       expect(cells.set(1, 42), isTrue);
       expect(cells.observe(1), 42);

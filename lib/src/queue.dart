@@ -493,7 +493,7 @@ class QueueCell<T> {
   /// Snapshot the buffered elements in FIFO order. Non-reactive — for
   /// debugging, snapshot/serde, and conformance-fixture verification. There
   /// is no reactive random-access `queue[N]` reader; per-position reactivity
-  /// is the domain of [CellMap], not [QueueCell].
+  /// is the domain of [SourceMap], not [QueueCell].
   ///
   /// Only [VecDequeStorage]-backed queues support this method; custom backends
   /// should expose their own snapshot via the public [storage] property.

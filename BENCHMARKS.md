@@ -58,7 +58,7 @@ scope + node allocation, not just the isolated operation — this matches the
 | `Slot recompute` | 0.1064 | 9,395,847 | Two cells + a dependent `Slot`; edit one cell, re-pull the slot (edge re-tracking + recompute). |
 | `Memo equality guard (cache hit)` | 0.0708 | 14,116,318 | `Memo` recompute that yields an equal value, suppressing the downstream cascade. |
 | `batch coalesce (10 cells)` | 1.2626 | 792,016 | 10 cell writes inside one `batch`, coalesced into a single invalidation pass, driving one `Effect`. |
-| `CellMap insert + read` | 1.4205 | 703,977 | 10 keyed `CellMap` inserts + one read on the keyed collection. |
+| `SourceMap insert + read` | 1.4205 | 703,977 | 10 keyed `SourceMap` inserts + one read on the keyed collection. |
 | `TextCrdt insert 100 chars` | 570.17 | 1,754 | Build a `TextCrdt` of 100 characters (Fugue/RGA ordering rebuilt per insert). |
 | `SeqCrdt insert 100 elements` | 138.81 | 7,204 | Build a move-aware `SeqCrdt` of 100 elements (fractional-index positions + LWW registers). |
 | `Position.compareTo ordering (300)` | 79.32 | 12,608 | Isolated `SeqCrdt.order()` sort over 300 fractional-index positions (`#lzdartuint8list`). Fixture built once; measures the `Position.compareTo` sort path, not the O(N²) insert scan. |

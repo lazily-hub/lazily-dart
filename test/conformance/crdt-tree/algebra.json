@@ -14,7 +14,19 @@
       "merge_orders": [["a", "b", "c"], ["c", "a", "b"], ["b", "b", "c", "a"]],
       "expect": { "texts_equal": true, "version_vectors_equal": true }
     },
-    { "name": "empty frontier snapshot preserves lineage", "seed": { "peer": 7, "text": "snapshot\n" }, "snapshot": "delta_since({})", "restore_peer": 8, "then_concurrent_edit": true, "expect": { "restored_text_equal": true, "op_ids_equal": true, "later_merge_duplicates": 0 } },
-    { "name": "own frontier emits an empty delta", "seed": { "peer": 9, "text": "steady\n" }, "frontier": "version_vector()", "expect": { "delta": [], "apply_changed": false } }
+    {
+      "name": "empty frontier snapshot preserves lineage",
+      "seed": { "peer": 7, "text": "snapshot\n" },
+      "snapshot": "delta_since({})",
+      "restore_peer": 8,
+      "then_concurrent_edit": true,
+      "expect": { "restored_text_equal": true, "op_ids_equal": true, "later_merge_duplicates": 0 }
+    },
+    {
+      "name": "own frontier emits an empty delta",
+      "seed": { "peer": 9, "text": "steady\n" },
+      "frontier": "version_vector()",
+      "expect": { "delta": [], "apply_changed": false }
+    }
   ]
 }

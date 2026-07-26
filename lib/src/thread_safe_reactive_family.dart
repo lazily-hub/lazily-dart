@@ -7,7 +7,7 @@
 ///    pair; `materialize_present_monotone`; `cell_entries_materialized_in_every_mode`;
 ///    `slot_entries_deferred_under_lazy`; `eager_lazy_observationally_equivalent`).
 /// Rust reference: `lazily-rs/src/thread_safe_reactive_family.rs`
-///   (`ThreadSafeReactiveMap` / `ThreadSafeCellMap` / `ThreadSafeSlotMap`).
+///   (`ThreadSafeReactiveMap` / `ThreadSafeSourceMap` / `ThreadSafeComputedMap`).
 ///
 /// Where [ReactiveMap] (`collections.dart`) is a keyed reactive map over the
 /// (unsynchronized) reactive graph, this flavor guards its present-set state —
@@ -24,12 +24,12 @@
 /// mutations that Go serializes with a `sync.Mutex`. Dart is single-isolate, so
 /// this flavor is a value-cache model — there are no distinct thread-safe handle
 /// types, so `H` is elided; the two specializations differ only by entry kind
-/// and the cell-only [ThreadSafeCellMap.set] / slot-only
-/// [ThreadSafeSlotMap.materializeAll] surface.
+/// and the cell-only [ThreadSafeSourceMap.set] / slot-only
+/// [ThreadSafeComputedMap.materializeAll] surface.
 ///
 /// It obeys the same laws as the single-threaded map:
 ///   - **Eager/lazy contract**: eager pre-mints every key
-///     ([ThreadSafeSlotMap.materializeAll]); lazy defers each derived slot to
+///     ([ThreadSafeComputedMap.materializeAll]); lazy defers each derived slot to
 ///     first read ([getOrInsertWith]). Input cells are always materialized
 ///     (`cell_entries_materialized_in_every_mode` / `slot_entries_deferred_under_lazy`).
 ///   - **Observational transparency**: [observe] returns an identical value
@@ -49,8 +49,8 @@ import 'core.dart';
 /// per-entry cached values, allocated on access, with every present-set mutation
 /// framed by a reentrant guard.
 ///
-/// The two specializations are [ThreadSafeCellMap] (input cells, adds [set]) and
-/// [ThreadSafeSlotMap] (derived slots, adds [ThreadSafeSlotMap.materializeAll]).
+/// The two specializations are [ThreadSafeSourceMap] (input cells, adds [set]) and
+/// [ThreadSafeComputedMap] (derived slots, adds [ThreadSafeComputedMap.materializeAll]).
 /// The shared surface — [getOrInsertWith] / [observe] / membership / present-set
 /// — lives here.
 abstract class ThreadSafeReactiveMap<K, V> {
@@ -75,8 +75,8 @@ abstract class ThreadSafeReactiveMap<K, V> {
   /// First-materialization order of the present set (grows only).
   final List<K> _order = [];
 
-  /// This map's entry kind ([EntryKind.cell] for a [ThreadSafeCellMap],
-  /// [EntryKind.slot] for a [ThreadSafeSlotMap]).
+  /// This map's entry kind ([EntryKind.cell] for a [ThreadSafeSourceMap],
+  /// [EntryKind.slot] for a [ThreadSafeComputedMap]).
   EntryKind get entryKind;
 
   /// Run [fn] under the reentrant guard.
@@ -130,15 +130,15 @@ abstract class ThreadSafeReactiveMap<K, V> {
 
 /// A thread-safe **input-cell** map: every entry is an always-materialized,
 /// settable input. Adds cell-only [set]. `H = Cell` (elided — value cache).
-class ThreadSafeCellMap<K, V> extends ThreadSafeReactiveMap<K, V> {
-  ThreadSafeCellMap(super.ctx);
+class ThreadSafeSourceMap<K, V> extends ThreadSafeReactiveMap<K, V> {
+  ThreadSafeSourceMap(super.ctx);
 
   @override
   EntryKind get entryKind => EntryKind.cell;
 
   /// Set [key]'s value, inserting a new input cell if absent, and return `true`.
   /// Updating an existing entry overwrites in place (no re-order). Cell-only: an
-  /// input is settable; a derived [ThreadSafeSlotMap] slot is not.
+  /// input is settable; a derived [ThreadSafeComputedMap] slot is not.
   bool set(K key, V value) => _guarded(() {
         _mint(key, (_) => value);
         _materialized[key] = value; // overwrite in place; no re-order.
@@ -155,8 +155,8 @@ class ThreadSafeCellMap<K, V> extends ThreadSafeReactiveMap<K, V> {
 /// A thread-safe **derived-slot** map: entries are derived values minted lazily
 /// on access ([getOrInsertWith]) or eagerly via [materializeAll]. No `set`.
 /// `H = Slot` (elided — value cache).
-class ThreadSafeSlotMap<K, V> extends ThreadSafeReactiveMap<K, V> {
-  ThreadSafeSlotMap(super.ctx);
+class ThreadSafeComputedMap<K, V> extends ThreadSafeReactiveMap<K, V> {
+  ThreadSafeComputedMap(super.ctx);
 
   @override
   EntryKind get entryKind => EntryKind.slot;
@@ -171,3 +171,12 @@ class ThreadSafeSlotMap<K, V> extends ThreadSafeReactiveMap<K, V> {
         }
       });
 }
+
+/// Former name of [ThreadSafeSourceMap], kept so existing callers still compile.
+@Deprecated('renamed to ThreadSafeSourceMap')
+typedef ThreadSafeCellMap<K, V> = ThreadSafeSourceMap<K, V>;
+
+/// Former name of [ThreadSafeComputedMap], kept so existing callers still
+/// compile.
+@Deprecated('renamed to ThreadSafeComputedMap')
+typedef ThreadSafeSlotMap<K, V> = ThreadSafeComputedMap<K, V>;

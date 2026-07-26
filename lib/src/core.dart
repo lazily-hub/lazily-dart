@@ -287,7 +287,7 @@ class Context implements ComputeOps {
   /// The value-threaded surface a compute/effect closure expects requires a
   /// [Compute]; this hands a detached one to a factory whose result is a
   /// *snapshot*, not a live derivation — e.g. seeding the initial value of a
-  /// source-cell entry ([CellMap]) from a `V Function(Compute cx, K key)`
+  /// source-cell entry ([SourceMap]) from a `V Function(Compute cx, K key)`
   /// factory. Reads through the handed [Compute] are untracked (the same
   /// discipline as [runUntracked]), so no edge survives the call.
   T computeDetached<T>(T Function(Compute cx) body) {
@@ -966,7 +966,7 @@ class Slot<T> extends _ReactiveNode implements ComputeReadable<T> {
   T? get peek => _cacheGen == ctx._generation ? _cachedValue : null;
 
   /// Detach this slot from the graph: evict its cached value and invalidate its
-  /// dependents. Used by [SlotMap] when an entry is removed — the orphaned slot
+  /// dependents. Used by [ComputedMap] when an entry is removed — the orphaned slot
   /// stops driving its dependents (mirrors `SlotHandle::clear` in lazily-rs).
   void clearDependents() {
     _invalidate();
