@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.27.1
+
+### Changed
+
+- **Coverage table sync only.** `lazily-rs` shipped the thread-safe and async
+  flavors of the queue family (`QueueCell`, `TopicCell`, `WorkQueueCell`), so
+  six rows of the shared conformance table flipped for the Rust column and
+  `make coverage-sync` regenerated the copy embedded in this README. No Dart
+  behaviour changed — those flavors remain unbound here.
+
 ## 0.27.0
 
 ### Added
