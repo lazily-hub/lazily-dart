@@ -7,7 +7,7 @@
 # `conformance-coverage` runs AFTER `test`, not before: the guard now reads the
 # runtime manifest the suite writes, so ordering it first would only ever see the
 # previous run's evidence, or none at all.
-check: analyze test conformance-coverage formal-check
+check: analyze test test-interop-peer conformance-coverage formal-check
 	@echo "lazily-dart: check OK"
 
 analyze:
@@ -21,6 +21,9 @@ test:
 	@mkdir -p build && : > build/conformance-fixtures-loaded.txt \
 		&& rm -f build/conformance-fixtures-loaded.txt.lock
 	LAZILY_CONFORMANCE_MANIFEST=$(CURDIR)/build/conformance-fixtures-loaded.txt dart test
+
+test-interop-peer:
+	dart run bin/interop_peer.dart --self-check
 
 # Conformance-coverage guard (#lazilyupgradeconformance). Runtime: fails when a
 # canonical fixture was never OPENED by the suite. Naming is not replaying — see
