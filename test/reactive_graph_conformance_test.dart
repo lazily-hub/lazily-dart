@@ -75,6 +75,7 @@ const expectedFixtures = {
   'read_after_dispose_is_an_error.json',
   'recycled_id_inherits_nothing.json',
   'dispose_signal_reverts_to_lazy.json',
+  'failed_compute_is_never_cached.json',
   'scope_teardown_equals_fold_of_disposals.json',
   'scoping_bounds_teardown_not_visibility.json',
   'signal_materializes_once_per_batch.json',
@@ -118,6 +119,18 @@ const parkedFixtures = {
 };
 
 /// Ops this package can model. Anything else in a fixture skips it, by name.
+/// The failure a `fail_next`-armed compute body throws.
+///
+/// A runner-owned sentinel, not a library error: the contract under test is
+/// that the library does not CACHE it, so what it is matters less than that the
+/// same body throws it once per armed run and the node still re-runs afterwards.
+class ComputeFailed implements Exception {
+  ComputeFailed(this.id);
+  final String id;
+  @override
+  String toString() => 'reactive-graph: compute_failed (fail_next) for $id';
+}
+
 const supportedOps = {
   'batch',
   'begin_scope',
@@ -137,6 +150,9 @@ const supportedOps = {
   'drive',
   'effect',
   'end_scope',
+  // Arms the next N computes of an existing node to throw, so a fixture can
+  // assert on `computes_of` that a failed compute is never cached.
+  'fail_next',
   'fanout',
   'read',
   'set_cell',
@@ -186,6 +202,11 @@ enum _Kind { cell, slot, effect }
 /// addressed by fixture id anyway.
 abstract class _Model {
   String get name;
+
+  /// Arm the next [count] computes of an existing node to throw, so a fixture
+  /// can assert on `computes_of` that a failed compute is never cached. Creates
+  /// nothing and touches no dependency set.
+  void failNext(String id, int count);
 
   /// Effect names, in the order their bodies ran.
   List<String> get runLog;
@@ -274,6 +295,22 @@ class _SyncModel implements _Model {
   @override
   final Map<String, int> computes = {};
 
+  /// How many upcoming compute bodies must fail, per node id (`fail_next`).
+  final Map<String, int> _armed = {};
+
+  void failNext(String id, int count) {
+    _armed[id] = (_armed[id] ?? 0) + (count > 0 ? count : 1);
+  }
+
+  /// Consume one arming. Called AFTER the compute counter ticks, so an armed
+  /// run is counted exactly like a successful one.
+  bool _takeArmed(String id) {
+    final n = _armed[id] ?? 0;
+    if (n <= 0) return false;
+    _armed[id] = n - 1;
+    return true;
+  }
+
   @override
   String get name => 'Context';
 
@@ -289,6 +326,7 @@ class _SyncModel implements _Model {
   num Function(Compute) _body(String id, List<String> reads, num offset) =>
       (cx) {
         computes[id] = (computes[id] ?? 0) + 1;
+        if (_takeArmed(id)) throw ComputeFailed(id);
         var sum = offset;
         for (final r in reads) {
           sum += _readNodeTracked(cx, r);
@@ -438,6 +476,22 @@ class _AsyncModel implements _Model {
   @override
   final Map<String, int> computes = {};
 
+  /// How many upcoming compute bodies must fail, per node id (`fail_next`).
+  final Map<String, int> _armed = {};
+
+  void failNext(String id, int count) {
+    _armed[id] = (_armed[id] ?? 0) + (count > 0 ? count : 1);
+  }
+
+  /// Consume one arming. Called AFTER the compute counter ticks, so an armed
+  /// run is counted exactly like a successful one.
+  bool _takeArmed(String id) {
+    final n = _armed[id] ?? 0;
+    if (n <= 0) return false;
+    _armed[id] = n - 1;
+    return true;
+  }
+
   @override
   String get name => 'AsyncContext';
 
@@ -454,6 +508,7 @@ class _AsyncModel implements _Model {
           String id, List<String> reads, num offset) =>
       (cc) async {
         computes[id] = (computes[id] ?? 0) + 1;
+        if (_takeArmed(id)) throw ComputeFailed(id);
         var sum = offset;
         for (final r in reads) {
           sum += await _readNode(cc, r);
@@ -674,6 +729,11 @@ Future<_Report> _replay(
       return (await model.read(id), false);
     } on DisposedNodeError {
       return (null, true);
+    } on ComputeFailed {
+      // Both are "this op failed", but they are different contracts: disposal
+      // is permanent, a `fail_next` compute failure is recoverable — the next
+      // read re-runs the body. Nothing is latched here for either.
+      return (null, true);
     }
   }
 
@@ -712,6 +772,8 @@ Future<_Report> _replay(
           (op['reads'] as List).cast<String>(),
           scope,
         );
+      case 'fail_next':
+        model.failNext(op['id'] as String, (op['count'] as int?) ?? 1);
       case 'read':
         final (value, err) = await readId(op['id'] as String);
         opValue = value;
@@ -821,13 +883,11 @@ Future<_Report> _replay(
             check('computes_of.$id', model.computes[id] ?? 0, m[id]);
           }
         case 'error':
-          if (want == null) {
-            check('error', opError, false);
-          } else if (want == 'read_after_dispose') {
-            check('error', opError, true);
-          } else {
-            throw StateError('$fixture#$i: unknown expected error $want');
-          }
+          // Any non-null error code means "this op must fail"; null means "must
+          // not". The runner does not model error identity — the fixtures carry
+          // the code so the contract is legible, and each binding's own tests
+          // pin which error type it throws.
+          check('error', opError, want != null);
         case 'value':
           if (expect_['error'] == null) {
             if (type == 'read') {
