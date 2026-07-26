@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.27.0
+
+### Added
+
+- **The `ReactiveMap` Core surface now binds every flavor.** Ordering and atomic
+  move bound only the single-threaded map; the thread-safe and async maps
+  exposed the present set and nothing else. All flavors now carry `keys`, `len`,
+  `is_empty`, `contains_key`, `position`, `move_to` / `move_before` /
+  `move_after`, and `remove`, each with membership and order signals minted on
+  its own graph. A move touches no entry handle and awaits nothing, so it is
+  neither thread- nor async-coloured.
+- A shared, graph-agnostic `KeyedOrder` core holding the present set, the key
+  order, and the move algebra. It deliberately holds no reactivity: membership
+  and order invalidation is a graph write, so each flavor owns its own cells.
+- The canonical ordering fixtures now replay against all three flavors, with
+  invalidation measured by recompute count rather than a cache flag, plus
+  directional move coverage the canonical corpus does not provide (its only
+  `move_before` step moves a key that already follows its anchor, so the
+  `anchor - 1` branch was never exercised).
+
+### Fixed
+
+- The thread-safe and async maps stored plain values and their context field was
+  annotated `// ignore: unused_field` — dead. Both are graph-backed now, so a
+  per-entry read registers an edge and a write invalidates that entry's readers
+  and no other.
+
 ## 0.26.0
 
 ### Changed
