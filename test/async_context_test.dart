@@ -151,7 +151,8 @@ void main() {
       trigger.set(1);
       // The recompute runs but yields an equal value: callers still resolve.
       expect(await slot.getAsync(), 'constant');
-      expect(calls, 2, reason: 'memo recompute still runs; suppression is on publish');
+      expect(calls, 2,
+          reason: 'memo recompute still runs; suppression is on publish');
       await ctx.disposeAsync();
     });
   });
@@ -186,7 +187,8 @@ void main() {
   });
 
   group('batch', () {
-    test('coalesces multiple cell updates into one invalidation pass', () async {
+    test('coalesces multiple cell updates into one invalidation pass',
+        () async {
       final ctx = AsyncContext();
       final a = ctx.cell(1);
       final b = ctx.cell(2);
@@ -335,6 +337,53 @@ void main() {
       // Must not spin: edge consumption makes the walk naturally terminating.
       cell.set(2);
       expect(await a.getAsync(), 20);
+      await ctx.disposeAsync();
+    });
+  });
+
+  group('synchronous computed nodes', () {
+    test('resolve inline and re-derive after dependency invalidation',
+        () async {
+      final ctx = AsyncContext();
+      final source = ctx.cell(2);
+      final doubled = ctx.computed((cc) => cc.getCell(source) * 2);
+
+      expect(ctx.get(doubled), 4);
+      expect(ctx.isSet(doubled), isTrue);
+      source.set(3);
+      expect(ctx.isSet(doubled), isFalse);
+      expect(ctx.get(doubled), 6);
+
+      await ctx.disposeAsync();
+    });
+
+    test('clearSlots schedules one observer run for a multi-root transition',
+        () async {
+      final ctx = AsyncContext();
+      var leftValue = 1;
+      var rightValue = 2;
+      final left = ctx.computed((_) => leftValue);
+      final right = ctx.computed((_) => rightValue);
+      final seen = <(int, int)>[];
+      final effect = ctx.effectAsync((cc) async {
+        seen.add((cc.get(left), cc.get(right)));
+        return null;
+      });
+
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(seen, [(1, 2)]);
+
+      leftValue = 10;
+      rightValue = 20;
+      ctx.clearSlots([left, right]);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      expect(
+        seen,
+        [(1, 2), (10, 20)],
+        reason: 'one transition must not expose or schedule a partial frontier',
+      );
+
+      await effect.disposeAsync();
       await ctx.disposeAsync();
     });
   });

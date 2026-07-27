@@ -50,13 +50,13 @@ void main() {
     final topic = TopicCell<String>(Context());
     topic.subscribe('worker');
     topic.publish('a');
-    expect(topic.advance('worker'), 1);
-    expect(topic.advance('worker'), 1);
+    expect(topic.advance('worker'), 'a');
+    expect(topic.advance('worker'), isNull);
 
     topic.disconnect('worker');
     topic.publish('b');
     expect(topic.readStream('worker'), isEmpty);
-    expect(topic.advance('worker'), 1);
+    expect(topic.advance('worker'), isNull);
     expect(topic.subscription('worker')!.cursor, 1);
 
     topic.reconnect('worker');

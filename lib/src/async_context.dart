@@ -123,7 +123,21 @@ typedef Equals<T> = bool Function(T a, T b);
 /// [AsyncSlotState.resolved], the in-flight future + revision when
 /// [computing], or the error when [error].
 class AsyncSlotHandle<T> implements AsyncGraphNode {
-  AsyncSlotHandle(this._ctx, this._compute, {Equals<T>? eq}) : _eq = eq;
+  AsyncSlotHandle(
+    this._ctx,
+    Future<T> Function(AsyncComputeContext ctx) compute, {
+    Equals<T>? eq,
+  })  : _computeAsync = compute,
+        _computeSync = null,
+        _eq = eq;
+
+  AsyncSlotHandle.sync(
+    this._ctx,
+    T Function(AsyncComputeContext ctx) compute, {
+    Equals<T>? eq,
+  })  : _computeAsync = null,
+        _computeSync = compute,
+        _eq = eq;
 
   /// Whether this node has been torn down (`#lzspecedgeindex`). Declared on the
   /// slot rather than only on the effect subclass so all three async node kinds
@@ -135,7 +149,8 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
   bool get isDisposed => _nodeDisposed;
 
   final AsyncContext _ctx;
-  final Future<T> Function(AsyncComputeContext ctx) _compute;
+  final Future<T> Function(AsyncComputeContext ctx)? _computeAsync;
+  final T Function(AsyncComputeContext ctx)? _computeSync;
   final Equals<T>? _eq;
 
   AsyncSlotState _state = AsyncSlotState.empty;
@@ -155,12 +170,40 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
   /// The cached value when resolved; `null` otherwise.
   T? get value => _state == AsyncSlotState.resolved ? _value : null;
 
-  /// Synchronous cached read; returns the value if [state] is
-  /// [AsyncSlotState.resolved], or `null` otherwise (warm-path fast path).
+  /// Synchronous cached read.
+  ///
+  /// An async computation returns its cached value when resolved and `null`
+  /// otherwise. A synchronous computation created by [AsyncContext.computed]
+  /// resolves inline when dirty, so queue-family reader kinds can stay
+  /// deliberately uncoloured while still living on the async graph.
   T? get() {
     if (_nodeDisposed) throw DisposedNodeError(this);
     _ctx._track(this);
-    return _state == AsyncSlotState.resolved ? _value : null;
+    if (_state == AsyncSlotState.resolved) return _value;
+    final compute = _computeSync;
+    return compute == null ? null : _resolveSync(compute);
+  }
+
+  T _resolveSync(T Function(AsyncComputeContext ctx) compute) {
+    if (_ctx._disposed) throw StateError('AsyncContext disposed');
+    for (final dep in _dependencies) {
+      _ctx._dependents[dep]?.remove(this);
+    }
+    _dependencies.clear();
+    final cc = AsyncComputeContext._(this);
+    final previous = _ctx._currentAsync;
+    _ctx._currentAsync = this;
+    try {
+      final value = compute(cc);
+      _value = value;
+      _state = AsyncSlotState.resolved;
+      return value;
+    } catch (_) {
+      _state = AsyncSlotState.error;
+      rethrow;
+    } finally {
+      _ctx._currentAsync = previous;
+    }
   }
 
   /// Await a slot value; uses [get] for resolved slots, otherwise spawns async
@@ -168,6 +211,7 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
   /// spawning duplicate futures (in-flight deduplication).
   Future<T> getAsync() async {
     if (_nodeDisposed) throw DisposedNodeError(this);
+    if (_computeSync != null) return get() as T;
     if (_state == AsyncSlotState.resolved) {
       _ctx._track(this);
       return _value as T;
@@ -226,7 +270,7 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
     _ctx._currentAsync = this;
     Future<T> runner;
     try {
-      runner = _compute(cc);
+      runner = _computeAsync!(cc);
     } catch (e, st) {
       _ctx._currentAsync = previous;
       _onCompleteError(revision, e, st);
@@ -247,7 +291,10 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
       _failInFlight(const _Superseded());
       return;
     }
-    if (_eq != null && _state != AsyncSlotState.empty && _value is T && _eq(_value as T, value)) {
+    if (_eq != null &&
+        _state != AsyncSlotState.empty &&
+        _value is T &&
+        _eq(_value as T, value)) {
       // Computed equality suppression: keep the cached value, do not cascade.
       _state = AsyncSlotState.resolved;
       _inFlight?.complete(_value as T);
@@ -315,6 +362,12 @@ class AsyncComputeContext {
     return slot.getAsync();
   }
 
+  /// Read a synchronous computed on the async graph, recording the dependency.
+  T get<T>(AsyncSlotHandle<T> slot) {
+    _slot._trackDep(slot);
+    return slot.get() as T;
+  }
+
   /// Read [cell]'s value synchronously, recording it as a dependency.
   T getCell<T>(AsyncCellHandle<T> cell) {
     _slot._trackDep(cell);
@@ -344,6 +397,22 @@ class AsyncContext {
           Future<T> Function(AsyncComputeContext ctx) compute) =>
       AsyncSlotHandle<T>(this, compute);
 
+  /// Create a synchronous computed on the async graph.
+  ///
+  /// This is for derivations whose inputs are already local and synchronous,
+  /// such as queue length or a subscription cursor. They resolve inline on
+  /// [get] and therefore do not colour an otherwise synchronous Core API with
+  /// `Future`.
+  AsyncSlotHandle<T> computed<T>(T Function(AsyncComputeContext ctx) compute) =>
+      AsyncSlotHandle<T>.sync(this, compute);
+
+  /// Read a synchronous computed, resolving it inline when dirty.
+  T get<T>(AsyncSlotHandle<T> handle) => handle.get() as T;
+
+  /// Whether a computed currently carries a resolved value.
+  bool isSet(AsyncSlotHandle<dynamic> handle) =>
+      handle.state == AsyncSlotState.resolved;
+
   /// Like [computedAsync] with an equality memo guard. A recompute that yields
   /// an equal value (per [eq]) suppresses the dependency cascade.
   AsyncSlotHandle<T> memoAsync<T>(
@@ -362,18 +431,27 @@ class AsyncContext {
     } finally {
       _batching = wasBatching;
       if (!_batching) {
-        // Propagate queued invalidations now (outermost batch exit).
-        final queue = List<Object>.of(_batchQueue);
-        _batchQueue.clear();
-        for (final dep in queue) {
-          _invalidateDependents(dep);
+        // Propagate every queued source and explicit computed root in one
+        // frontier walk at the outermost boundary.
+        final roots = <Object>[..._batchQueue];
+        final cleared = Set<AsyncSlotHandle<dynamic>>.of(_batchClearSlots);
+        for (final slot in cleared) {
+          slot._onInvalidate();
+          roots.add(slot);
         }
+        _batchQueue.clear();
+        _batchClearSlots.clear();
+        _invalidateFrontier(
+          roots,
+          alreadyInvalidated: cleared,
+        );
       }
     }
   }
 
   bool _batching = false;
   final Set<Object> _batchQueue = {};
+  final Set<AsyncSlotHandle<dynamic>> _batchClearSlots = {};
 
   void _track(Object dependency) {
     final current = _currentAsync;
@@ -398,6 +476,38 @@ class AsyncContext {
       _batchQueue.add(dependency);
       return;
     }
+    _invalidateFrontier([dependency]);
+  }
+
+  /// Explicitly clear one derived node.
+  void clear(AsyncSlotHandle<dynamic> slot) => clearSlots([slot]);
+
+  /// Clear several derived roots in one frontier walk.
+  ///
+  /// Queue-family mutations use this to make a transition atomic: downstream
+  /// observers cannot run between `len` and `is_full` becoming dirty.
+  void clearSlots(Iterable<AsyncSlotHandle<dynamic>> slots) {
+    if (_disposed) return;
+    final live = slots.where((slot) => !slot._nodeDisposed).toList();
+    if (live.isEmpty) return;
+    if (_batching) {
+      _batchClearSlots.addAll(live);
+      return;
+    }
+    for (final slot in live) {
+      slot._onInvalidate();
+    }
+    _invalidateFrontier(
+      live,
+      alreadyInvalidated: Set<AsyncSlotHandle<dynamic>>.of(live),
+    );
+  }
+
+  void _invalidateFrontier(
+    Iterable<Object> roots, {
+    Set<AsyncSlotHandle<dynamic>>? alreadyInvalidated,
+  }) {
+    if (_disposed) return;
     // Iterative invalidation frontier walk, mirroring `lazily-rs`
     // `invalidate_frontier_async`: a slot that depends on a slot must itself be
     // invalidated, so the walk covers the whole transitive dependent cone
@@ -408,10 +518,10 @@ class AsyncContext {
     // the branch dies, so every edge is traversed at most once — diamonds and
     // dependency cycles terminate without an explicit visited set. Edges
     // re-register on the next recompute via `_trackDep`.
-    final stack = <Object>[dependency];
+    final stack = <Object>[...roots];
     // Effects are scheduled after the walk so that a rerun's freshly
     // re-registered edges are not consumed by the still-running walk.
-    final effects = <_AsyncEffectHandle>[];
+    final effects = <_AsyncEffectHandle>{};
     while (stack.isNotEmpty) {
       final current = stack.removeLast();
       final affected = _dependents.remove(current);
@@ -424,7 +534,9 @@ class AsyncContext {
         if (dep is _AsyncEffectHandle) {
           effects.add(dep);
         } else if (dep is AsyncSlotHandle) {
-          dep._onInvalidate();
+          if (alreadyInvalidated?.remove(dep) != true) {
+            dep._onInvalidate();
+          }
           stack.add(dep);
         }
       }

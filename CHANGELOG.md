@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## Unreleased
+
+### Added
+
+- **The complete queue family now binds all three execution flavors.**
+  `ThreadSafeQueueCell` / `ThreadSafeTopicCell` /
+  `ThreadSafeWorkQueueCell` run through Dart's shipped single-isolate
+  run-to-completion guard, while the `Async*` counterparts mint memoized reader
+  kinds on `AsyncContext`. Queue storage, cursor movement, and lease decisions
+  remain synchronous on every flavor, as required by the Core contract.
+- `AsyncContext.computed`, `get`, `isSet`, `clear`, and `clearSlots`: local
+  synchronous derivations resolve inline on the async graph, and multi-root
+  invalidation clears one atomic frontier.
+- One enforced nine-row flavor ledger and canonical replay of all eleven
+  queue-family fixtures against `QueueCell`, `TopicCell`, and `WorkQueueCell`
+  on single-threaded, thread-safe, and async contexts. Every flavor asserts a
+  positive step count and the nested `expected.invalidates` matrices.
+
+### Changed
+
+- `TopicCell.advance` now returns the element passed by the cursor (or `null`
+  for a no-op), matching the canonical topic contract. A newly-created
+  subscription now invalidates its pre-existing reader node just like a
+  reconnect.
+
 ## 0.27.1
 
 ### Changed

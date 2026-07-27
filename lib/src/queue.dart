@@ -627,6 +627,7 @@ final class TopicCell<T> {
     _subscriptions[subscriberId] =
         _TopicSubscription(tailOffset, durability, true);
     _ensureReader(subscriberId);
+    _invalidate([subscriberId]);
     return TopicSubscribeOutcome.subscribed;
   }
 
@@ -674,29 +675,34 @@ final class TopicCell<T> {
   }
 
   /// Reactively read the retained suffix at this subscriber's cursor.
-  List<T> readStream(String subscriberId) => _ensureReader(subscriberId)();
+  List<T> readStream(String subscriberId, [Compute? cx]) {
+    final reader = _ensureReader(subscriberId);
+    return cx == null ? reader() : cx.get(reader);
+  }
 
-  T? read(String subscriberId) {
-    final stream = readStream(subscriberId);
+  T? read(String subscriberId, [Compute? cx]) {
+    final stream = readStream(subscriberId, cx);
     return stream.isEmpty ? null : stream.first;
   }
 
-  int advance(String subscriberId, [int count = 1]) {
+  T? advance(String subscriberId, [int count = 1]) {
     final subscription = _subscriptions[subscriberId];
     if (subscription == null || count < 0) {
       throw StateError('invalid topic cursor advance');
     }
+    if (count == 0) return null;
     if (!subscription.connected || subscription.cursor == tailOffset) {
-      return subscription.cursor;
+      return null;
     }
     if (subscription.cursor + count > tailOffset) {
       throw StateError('invalid topic cursor advance');
     }
+    final value = _elements[subscription.cursor - _baseOffset];
     if (count > 0) {
       subscription.cursor += count;
       _invalidate([subscriberId]);
     }
-    return subscription.cursor;
+    return value;
   }
 
   /// Remove the prefix below all durable cursors without invalidating readers.

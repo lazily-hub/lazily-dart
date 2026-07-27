@@ -204,10 +204,13 @@ final class WorkQueueCell<T> {
     return expired.length;
   }
 
-  int pendingLen() => _pendingLen();
-  bool isEmpty() => _isEmpty();
-  int inFlightLen() => _inFlightLen();
-  int deadLetterLen() => _deadLetterLen();
+  int pendingLen([Compute? cx]) =>
+      cx == null ? _pendingLen() : cx.get(_pendingLen);
+  bool isEmpty([Compute? cx]) => cx == null ? _isEmpty() : cx.get(_isEmpty);
+  int inFlightLen([Compute? cx]) =>
+      cx == null ? _inFlightLen() : cx.get(_inFlightLen);
+  int deadLetterLen([Compute? cx]) =>
+      cx == null ? _deadLetterLen() : cx.get(_deadLetterLen);
 
   WorkQueueReaderHandles readerHandles() => WorkQueueReaderHandles(
         pendingLen: _pendingLen,
