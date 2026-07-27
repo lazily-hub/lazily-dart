@@ -8,7 +8,7 @@
 /// - **[SourceMap]** = `ReactiveMap<K, V, Cell<V>>` — **input-cell** entries.
 ///   Adds cell-only [SourceMap.set] plus eager value-minting ([SourceMap.entry] /
 ///   [SourceMap.entryWith]).
-/// - **[ComputedMap]** = `ReactiveMap<K, V, Slot<V>>` — **derived-slot** entries.
+/// - **[ComputedMap]** = `ReactiveMap<K, V, Computed<V>>` — guarded derived entries.
 ///   [ReactiveMap.getOrInsertWith] mints a slot on first access (**lazy
 ///   materialization**); [ComputedMap.materializeAll] pre-mints the keyset
 ///   (**eager**). A slot's value is derived, so `ComputedMap` has **no `set`**.
@@ -98,7 +98,7 @@ enum EntryKind {
 /// dependents, and lineage (it is not a remove + re-mint).
 ///
 /// The two specializations a binding exposes are [SourceMap] (input cells) and
-/// [ComputedMap] (derived slots). Subclasses supply the handle-kind operations
+/// [ComputedMap] (guarded computed entries). Subclasses supply the handle-kind operations
 /// ([_materializeHandle] / [_observeHandle] / [_clearHandle] / [entryKind]) —
 /// the Dart form of the `MapHandle` trait.
 abstract class ReactiveMap<K, V, H> {
@@ -107,6 +107,7 @@ abstract class ReactiveMap<K, V, H> {
         _orderSignal = Source<int>(ctx, 0);
 
   final Context ctx;
+
   /// Present set + key order + the move algebra. Graph-agnostic and shared with
   /// the thread-safe and async flavors; see `keyed_order.dart`.
   final KeyedOrder<K, H> _keyed = KeyedOrder<K, H>();
@@ -398,15 +399,16 @@ class SourceMap<K, V> extends ReactiveMap<K, V, Source<V>> {
   }
 }
 
-/// A keyed **derived-slot** collection: every entry is a [Slot] whose value is
-/// derived (the [ComputedMap] specialization of [ReactiveMap], `H = Slot<V>`).
+/// A keyed **computed** collection: every entry is a guarded [Computed] whose
+/// value is derived (the [ComputedMap] specialization of [ReactiveMap],
+/// `H = Computed<V>`).
 ///
 /// [ReactiveMap.getOrInsertWith] mints a slot on first access (**lazy
 /// materialization**); [materializeAll] pre-mints the keyset (**eager**). A
-/// slot's value is derived, so `ComputedMap` has **no `set`**. There is **no
+/// computed's value is derived, so `ComputedMap` has **no `set`**. There is **no
 /// eager/lazy mode flag** — eager is the pre-mint loop, lazy is mint-on-access.
 /// Mirrors `lazily-rs::ComputedMap`.
-class ComputedMap<K, V> extends ReactiveMap<K, V, Slot<V>> {
+class ComputedMap<K, V> extends ReactiveMap<K, V, Computed<V>> {
   ComputedMap(super.ctx);
 
   @override
@@ -414,16 +416,16 @@ class ComputedMap<K, V> extends ReactiveMap<K, V, Slot<V>> {
 
   @override
   // A derived node: the same node an eager pre-mint would allocate.
-  Slot<V> _materializeHandle(V Function(Compute cx) compute) =>
-      Slot<V>(ctx, compute);
+  Computed<V> _materializeHandle(V Function(Compute cx) compute) =>
+      Computed<V>(ctx, compute);
 
   @override
-  V _observeHandle(Slot<V> handle) => handle.call();
+  V _observeHandle(Computed<V> handle) => handle.call();
 
   @override
-  void _clearHandle(Slot<V> handle) => handle.clearDependents();
+  void _clearHandle(Computed<V> handle) => ctx.disposeNode(handle);
 
-  /// Read the value at [key] if present (a derived-slot read, subscribing the
+  /// Read the value at [key] if present (a computed read, subscribing the
   /// caller), or `null` if the key is not materialized.
   V? get(K key) {
     final h = handle(key);
@@ -459,10 +461,13 @@ typedef SlotMap<K, V> = ComputedMap<K, V>;
 enum InsertAt {
   /// Append at the end (default).
   end,
+
   /// At an absolute index (use [SourceMap.moveTo] after insert to position).
   at,
+
   /// Just before [anchor].
   before,
+
   /// Just after [anchor].
   after;
 }
@@ -655,7 +660,8 @@ List<DiffOp<K, V>> reconcileDiff<K, V>(
 List<int> _longestIncreasingSubsequence(List<int> seq) {
   final n = seq.length;
   if (n == 0) return const [];
-  final tails = <int>[]; // tails[k] = index into seq of smallest tail of IS len k+1
+  final tails =
+      <int>[]; // tails[k] = index into seq of smallest tail of IS len k+1
   final prev = List<int>.filled(n, -1);
   for (var i = 0; i < n; i++) {
     var lo = 0;

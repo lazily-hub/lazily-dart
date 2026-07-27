@@ -23,16 +23,20 @@ void main() {
       final ctx = Context();
       final map = SourceMap<String, int>(ctx);
       var calls = 0;
-      expect(map.getOrInsertWith('a', (_, __) {
-        calls++;
-        return 7;
-      }), 7);
+      expect(
+          map.getOrInsertWith('a', (_, __) {
+            calls++;
+            return 7;
+          }),
+          7);
       expect(map.lenUntracked, 1);
       // Second access returns the existing value; factory is NOT called again.
-      expect(map.getOrInsertWith('a', (_, __) {
-        calls++;
-        return 999;
-      }), 7);
+      expect(
+          map.getOrInsertWith('a', (_, __) {
+            calls++;
+            return 999;
+          }),
+          7);
       expect(calls, 1);
       // An explicit set is observed by a subsequent getOrInsertWith.
       map.set('a', 42);
@@ -67,7 +71,8 @@ void main() {
 
     test('materializeAll is eager (pre-mint)', () {
       final ctx = Context();
-      final fam = ComputedMap<int, int>(ctx)..materializeAll([0, 1, 2, 5, 9], (_, k) => k * 3);
+      final fam = ComputedMap<int, int>(ctx)
+        ..materializeAll([0, 1, 2, 5, 9], (_, k) => k * 3);
       expect(fam.presentCount(), 5);
       for (final k in [0, 1, 2, 5, 9]) {
         expect(fam.isPresent(k), isTrue);
@@ -97,9 +102,33 @@ void main() {
       expect(fam.get(3), 30);
     });
 
-    test('remove clears a slot and bumps membership', () {
+    test('entries are guarded Computed handles', () {
       final ctx = Context();
-      final fam = ComputedMap<int, int>(ctx)..materializeAll([1, 2], (_, k) => k);
+      final base = Source<int>(ctx, 1);
+      final fam = ComputedMap<String, int>(ctx);
+      expect(fam.getOrInsertWith('parity', (cx, _) => cx.get(base) & 1), 1);
+
+      final handle = fam.handle('parity');
+      expect(handle, isA<Computed<int>>());
+
+      var downstreamRuns = 0;
+      final downstream = Slot<int>(ctx, (cx) {
+        downstreamRuns++;
+        return cx.get(handle!);
+      });
+      expect(downstream(), 1);
+      expect(downstreamRuns, 1);
+
+      base.value =
+          3; // parity is unchanged: the Computed guard stops the ripple.
+      expect(downstream(), 1);
+      expect(downstreamRuns, 1);
+    });
+
+    test('remove disposes a computed and bumps membership', () {
+      final ctx = Context();
+      final fam = ComputedMap<int, int>(ctx)
+        ..materializeAll([1, 2], (_, k) => k);
       expect(fam.remove(1), isTrue);
       expect(fam.isPresent(1), isFalse);
       expect(fam.remove(1), isFalse);
@@ -110,7 +139,8 @@ void main() {
   group('eager and lazy observe identically', () {
     test('ComputedMap eager (materializeAll) == lazy (getOrInsertWith)', () {
       final ctx = Context();
-      final eager = ComputedMap<int, int>(ctx)..materializeAll([0, 1, 2, 5, 9], (_, k) => k * 3);
+      final eager = ComputedMap<int, int>(ctx)
+        ..materializeAll([0, 1, 2, 5, 9], (_, k) => k * 3);
       final lazy = ComputedMap<int, int>(ctx);
       for (final k in [0, 1, 2, 5, 9]) {
         expect(lazy.getOrInsertWith(k, (_, k) => k * 3), eager.get(k));

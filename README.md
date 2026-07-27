@@ -370,9 +370,9 @@ entry's handle kind `H`, with two specializations (`#reactivemap`):
 
 - `SourceMap<K, V>` = `ReactiveMap<K, V, Cell<V>>` — **input-cell** entries; adds
   cell-only `set` plus eager value-minting (`entry` / `entryWith`).
-- `ComputedMap<K, V>` = `ReactiveMap<K, V, Slot<V>>` — **derived-slot** entries;
-  `getOrInsertWith` mints a slot on first access (**lazy materialization**),
-  `materializeAll` pre-mints the keyset (**eager**). A slot's value is derived,
+- `ComputedMap<K, V>` = `ReactiveMap<K, V, Computed<V>>` — guarded derived entries;
+`getOrInsertWith` mints a computed on first access (**lazy materialization**),
+`materializeAll` pre-mints the keyset (**eager**). Its value is derived,
   so `ComputedMap` has **no `set`**, and there is **no eager/lazy mode flag**.
 
 The shared surface (`getOrInsertWith` / `remove` / `move*` / membership / order /
