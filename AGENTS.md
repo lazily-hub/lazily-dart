@@ -6,9 +6,9 @@ handles `Source` (get/set/merge) and `Computed` (get/`.eager()`/`.lazy()`/
 unguarded storage/lazy-computed position. `Cell` is a retained compatibility
 spelling of `Source`. Automatic dependency tracking, plus the full lazily-spec
 wire protocol and CRDT collection types. The eager construction is
-`computed(ctx, f).eager()`; `Signal` is a back-compat alias for an eager
-`Computed`. There is no `Cell<T,K>` genus and no separate `memo` kind — the
-equality guard folded into `Computed` (`#lzcellkernel`).
+`computed(ctx, f).eager()`; there is no `Signal` compatibility constructor.
+There is no `Cell<T,K>` genus and no separate `memo` kind — the equality guard
+folded into `Computed` (`#lzcellkernel`).
 
 ## Commit & Push
 

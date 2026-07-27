@@ -35,8 +35,7 @@ split**: the kind is convention — a `Source` has `set` / `merge`, a `Computed`
 does not.
 
 Values are **lazy by default**. When you need eager push-style semantics, call
-`Computed.eager`. `Signal(ctx, f)` is retained as a back-compat alias for
-`computed(ctx, f).eager()`.
+`computed(ctx, f).eager()`. There is no `Signal` compatibility constructor.
 
 ## Usage
 
@@ -336,7 +335,7 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 
 | Layer | Where |
 |-------|-------|
-| Reactive core — Cell kernel v2 (`Source`/`Cell` / `Computed`+`computed`/`.eager()`/`.lazy()` / `Effect` / `Slot` (unguarded) / `batch`; `Signal` back-compat alias) | `package:lazily/lazily.dart` |
+| Reactive core — Cell kernel v2 (`Source`/`Cell` / `Computed`+`computed`/`.eager()`/`.lazy()` / `Effect` / `Slot` (unguarded) / `batch`; no `Signal` compatibility constructor) | `package:lazily/lazily.dart` |
 | Keyed cell collections (`ReactiveMap` / `SourceMap` / `ComputedMap` / `SourceTree` / reconciliation) | `package:lazily/lazily.dart` |
 | Flat state machine + Harel state charts | `package:lazily/lazily.dart` |
 | TextCrdt (char CRDT) + delta sync | `package:lazily/lazily.dart` |
