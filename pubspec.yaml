@@ -4,7 +4,7 @@ description: >-
   dependency tracking and cache invalidation, plus the lazily-spec wire protocol
   for mirroring graph state across processes and languages. Pure Dart: Flutter,
   web, and native.
-version: 0.28.0
+version: 0.29.0
 
 executables:
   lazily-interop-peer: interop_peer

@@ -66,7 +66,7 @@ class _InteropPeer {
     return {
       'ok': true,
       'binding': 'lazily-dart',
-      'version': '0.27.1',
+      'version': '0.29.0',
       'protocol_version': _protocolVersion,
       'features': [
         'distributed_crdt',

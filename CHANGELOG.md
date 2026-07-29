@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.29.0
+
+### Added
+
+- Portable logical-clock `Timer`, caller-driven `Timeout<T>`, and
+  `RevisionBarrier` production APIs with synchronous and Future adapters.
+- Canonical stdlib fixture replay and independently advertised interop peer
+  capabilities for all three portable features.
+- A JavaScript-target browser check for exact uint64 JSON projection.
+
+### Fixed
+
+- Revision barriers reject and latch regressing logical clocks before invoking
+  cancellation, and preserve terminal outcomes established during reentrant or
+  asynchronous cancellation callbacks.
+
 ## 0.28.0
 
 ### Added
