@@ -46,6 +46,9 @@ export 'src/service.dart';
 export 'src/stable_id.dart';
 export 'src/state_chart.dart';
 export 'src/state_machine.dart';
+// `Timeout` is available from `package:lazily/stdlib.dart`; hiding it here
+// avoids colliding with package:test's ubiquitous test configuration type.
+export 'src/stdlib.dart' hide Timeout;
 export 'src/temporal.dart';
 export 'src/text_crdt.dart';
 export 'src/windowing.dart';

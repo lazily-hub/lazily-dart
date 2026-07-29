@@ -1,4 +1,4 @@
-.PHONY: check analyze test conformance-coverage formal-check
+.PHONY: check analyze test test-interop-peer stdlib-browser-check conformance-coverage formal-check
 
 # lazily-dart had no Makefile; verification was ad-hoc `dart analyze` + `dart test`.
 # The conformance-coverage guard needs somewhere to hang, and a named `check` makes
@@ -7,7 +7,7 @@
 # `conformance-coverage` runs AFTER `test`, not before: the guard now reads the
 # runtime manifest the suite writes, so ordering it first would only ever see the
 # previous run's evidence, or none at all.
-check: analyze test test-interop-peer conformance-coverage formal-check
+check: analyze test test-interop-peer stdlib-browser-check conformance-coverage formal-check
 	@echo "lazily-dart: check OK"
 
 analyze:
@@ -24,6 +24,13 @@ test:
 
 test-interop-peer:
 	dart run bin/interop_peer.dart --self-check
+
+# The public stdlib core and Future adapters are portable; compiling this
+# entrypoint catches accidental dart:io or VM-only dependencies.
+stdlib-browser-check:
+	@mkdir -p build
+	dart compile js -O1 -o build/stdlib_browser_check.js tool/stdlib_browser_check.dart
+	node build/stdlib_browser_check.js
 
 # Conformance-coverage guard (#lazilyupgradeconformance). Runtime: fails when a
 # canonical fixture was never OPENED by the suite. Naming is not replaying — see

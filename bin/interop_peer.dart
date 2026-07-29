@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:lazily/ipc.dart';
+import 'package:lazily/stdlib.dart' as lazily;
 
 const int _protocolVersion = 1;
 
@@ -15,6 +16,7 @@ class _InteropPeer {
   int? _peerId;
   int _logical = 0;
   CrdtPlaneRuntime? _runtime;
+  final Map<String, _StdlibFeature> _stdlib = {};
 
   Map<String, Object?> handle(Map<String, Object?> request) {
     switch (request['cmd']) {
@@ -26,6 +28,12 @@ class _InteropPeer {
         return _deliver(request);
       case 'snapshot':
         return _snapshot();
+      case 'feature_reset':
+        return _featureReset(request);
+      case 'feature_step':
+        return _featureStep(request);
+      case 'feature_observe':
+        return _featureObserve(request);
       case 'bye':
         return {'ok': true};
       case 'link_open':
@@ -54,17 +62,77 @@ class _InteropPeer {
     _peerId = assigned;
     _logical = 0;
     _runtime = CrdtPlaneRuntime(assigned);
+    _stdlib.clear();
     return {
       'ok': true,
       'binding': 'lazily-dart',
       'version': '0.27.1',
       'protocol_version': _protocolVersion,
-      'features': ['distributed_crdt'],
+      'features': [
+        'distributed_crdt',
+        'stdlib_timer_v1',
+        'stdlib_timeout_v1',
+        'stdlib_revision_barrier_v1',
+      ],
       'codecs': ['json'],
       'channels': <Object?>[],
       'channel_variants': <String, Object?>{},
       'platform_profile': 'portable',
       'carve_outs': ['msgpack', 'transport_links'],
+    };
+  }
+
+  Map<String, Object?> _featureReset(Map<String, Object?> request) {
+    final feature = request['feature'];
+    if (feature is! String || !_supportedFeature(feature)) {
+      return {
+        'ok': false,
+        'error': 'unsupported feature $feature',
+        'unsupported': true,
+      };
+    }
+    _stdlib[feature] = _StdlibFeature(feature);
+    return {'ok': true, 'feature': feature};
+  }
+
+  Map<String, Object?> _featureStep(Map<String, Object?> request) {
+    final feature = request['feature'];
+    if (feature is! String) {
+      throw const FormatException('feature_step requires string feature');
+    }
+    final state = _stdlib[feature];
+    if (state == null) {
+      throw StateError('feature $feature must be reset before stepping');
+    }
+    final step = request['step'];
+    if (step is! Map) {
+      throw const FormatException('feature_step requires object step');
+    }
+    final observation = state.step(step.cast<String, Object?>());
+    return {
+      'ok': true,
+      'feature': feature,
+      'observation': observation,
+    };
+  }
+
+  Map<String, Object?> _featureObserve(Map<String, Object?> request) {
+    final feature = request['feature'];
+    if (feature is! String) {
+      throw const FormatException('feature_observe requires string feature');
+    }
+    final state = _stdlib[feature];
+    if (state == null) {
+      throw StateError('feature $feature must be reset before observation');
+    }
+    final observation = state.last;
+    if (observation == null) {
+      throw StateError('feature $feature has no observation');
+    }
+    return {
+      'ok': true,
+      'feature': feature,
+      'observation': observation,
     };
   }
 
@@ -146,6 +214,191 @@ class _InteropPeer {
   }
 }
 
+bool _supportedFeature(String feature) =>
+    feature == 'stdlib_timer_v1' ||
+    feature == 'stdlib_timeout_v1' ||
+    feature == 'stdlib_revision_barrier_v1';
+
+BigInt _logicalUint(Object? value, String name) {
+  if (value is int) return BigInt.from(value);
+  if (value is double && value.isFinite && value == value.truncateToDouble()) {
+    return BigInt.parse(value.toStringAsFixed(0));
+  }
+  if (value is String) return BigInt.parse(value);
+  throw FormatException('$name requires an unsigned integer');
+}
+
+lazily.TimeoutCancellation _cancellation(Object? value) {
+  switch (value) {
+    case 'pending':
+      return lazily.TimeoutCancellation.pending;
+    case 'cancelled':
+      return lazily.TimeoutCancellation.cancelled;
+    case 'unavailable':
+      return lazily.TimeoutCancellation.unavailable;
+    default:
+      return lazily.TimeoutCancellation.unavailable;
+  }
+}
+
+class _StdlibFeature {
+  _StdlibFeature(this.name);
+
+  final String name;
+  lazily.Timer? timer;
+  lazily.Timeout<String>? timeout;
+  lazily.RevisionBarrier? barrier;
+  Map<String, Object?>? last;
+
+  Map<String, Object?> step(Map<String, Object?> step) {
+    final observation = switch (name) {
+      'stdlib_timer_v1' => _timerStep(step),
+      'stdlib_timeout_v1' => _timeoutStep(step),
+      'stdlib_revision_barrier_v1' => _barrierStep(step),
+      _ => throw StateError('unsupported feature $name'),
+    };
+    last = observation;
+    return observation;
+  }
+
+  Map<String, Object?> _timerStep(Map<String, Object?> step) {
+    switch (step['op']) {
+      case 'start':
+        try {
+          final value = lazily.Timer(
+            _logicalUint(step['now'], 'now'),
+            _logicalUint(step['duration'], 'duration'),
+          );
+          timer = value;
+          return value.initial.toJson();
+        } on lazily.StdlibUnavailable catch (error) {
+          timer = null;
+          return {'outcome': 'unavailable', 'reason': error.reason};
+        }
+      case 'observe':
+        final value = timer;
+        if (value == null) throw StateError('timer feature is not started');
+        return value.observe(_logicalUint(step['now'], 'now')).toJson();
+      default:
+        throw FormatException('unsupported timer feature step ${step['op']}');
+    }
+  }
+
+  Map<String, Object?> _timeoutStep(Map<String, Object?> step) {
+    switch (step['op']) {
+      case 'start':
+        try {
+          final value = lazily.Timeout<String>(
+            _logicalUint(step['now'], 'now'),
+            _logicalUint(step['duration'], 'duration'),
+          );
+          timeout = value;
+          return value.initial.toJson();
+        } on lazily.StdlibUnavailable catch (error) {
+          timeout = null;
+          return {'outcome': 'unavailable', 'reason': error.reason};
+        }
+      case 'poll':
+        final value = timeout;
+        if (value == null) throw StateError('timeout feature is not started');
+        var operationCalls = 0;
+        var cancellationCalls = 0;
+        final observation = value.poll(
+          _logicalUint(step['now'], 'now'),
+          () {
+            operationCalls++;
+            return switch (step['operation']) {
+              'pending' => const lazily.TimeoutOperation<String>.pending(),
+              'completed' => lazily.TimeoutOperation<String>.completed(
+                  step['value'] as String,
+                ),
+              _ => const lazily.TimeoutOperation<String>.unavailable(),
+            };
+          },
+          () {
+            cancellationCalls++;
+            return _cancellation(step['cancellation']);
+          },
+        ).toJson();
+        return {
+          ...observation,
+          'operation_calls': operationCalls,
+          'cancellation_calls': cancellationCalls,
+        };
+      default:
+        throw FormatException('unsupported timeout feature step ${step['op']}');
+    }
+  }
+
+  Map<String, Object?> _barrierStep(Map<String, Object?> step) {
+    var cancellationCalls = 0;
+    late lazily.RevisionBarrierObservation observation;
+    switch (step['op']) {
+      case 'start':
+        final deadline = step['deadline'];
+        final value = lazily.RevisionBarrier(
+          revision: _logicalUint(step['revision'], 'revision'),
+          requiredRevision: _logicalUint(
+            step['required_revision'],
+            'required_revision',
+          ),
+          deadline:
+              deadline == null ? null : _logicalUint(deadline, 'deadline'),
+        );
+        barrier = value;
+        observation = value.initial;
+        break;
+      case 'observe':
+        final value = barrier;
+        if (value == null) throw StateError('barrier feature is not started');
+        observation = value.observe(
+          _logicalUint(step['now'], 'now'),
+          step['predicate'] as bool,
+          () {
+            cancellationCalls++;
+            return _cancellation(step['cancellation']);
+          },
+        );
+        break;
+      case 'register_recheck':
+        final value = barrier;
+        if (value == null) throw StateError('barrier feature is not started');
+        observation = value.registerRecheck(
+          _logicalUint(step['now'], 'now'),
+          _logicalUint(step['observed_revision'], 'observed_revision'),
+          step['predicate'] as bool,
+        );
+        break;
+      case 'advance':
+        final value = barrier;
+        if (value == null) throw StateError('barrier feature is not started');
+        observation = value.advance(
+          _logicalUint(step['revision'], 'revision'),
+          step['predicate'] as bool,
+        );
+        break;
+      case 'dispose':
+        final value = barrier;
+        if (value == null) throw StateError('barrier feature is not started');
+        observation = value.dispose();
+        break;
+      case 'receipt':
+        final value = barrier;
+        if (value == null) throw StateError('barrier feature is not started');
+        observation = value.receipt(step['key'] as String);
+        break;
+      default:
+        throw FormatException(
+          'unsupported revision barrier feature step ${step['op']}',
+        );
+    }
+    return {
+      ...observation.toJson(),
+      if (step['op'] == 'observe') 'cancellation_calls': cancellationCalls,
+    };
+  }
+}
+
 void _selfCheck() {
   final peer = _InteropPeer();
   if (peer.handle({
@@ -178,6 +431,72 @@ void _selfCheck() {
       })['applied'] !=
       0) {
     throw StateError('duplicate self-check failed');
+  }
+  final featureCases = <(String, List<Map<String, Object?>>, String)>[
+    (
+      'stdlib_timer_v1',
+      [
+        {'op': 'start', 'now': 0, 'duration': 0},
+        {'op': 'observe', 'now': 0},
+      ],
+      'fired',
+    ),
+    (
+      'stdlib_timeout_v1',
+      [
+        {'op': 'start', 'now': 0, 'duration': 1},
+        {
+          'op': 'poll',
+          'now': 0,
+          'operation': 'completed',
+          'value': 'ok',
+          'cancellation': 'pending',
+        },
+      ],
+      'completed',
+    ),
+    (
+      'stdlib_revision_barrier_v1',
+      [
+        {
+          'op': 'start',
+          'revision': 1,
+          'required_revision': 1,
+          'deadline': null,
+        },
+        {
+          'op': 'observe',
+          'now': 0,
+          'predicate': true,
+          'cancellation': 'pending',
+        },
+      ],
+      'satisfied',
+    ),
+  ];
+  for (final (feature, steps, outcome) in featureCases) {
+    final reset = peer.handle({
+      'cmd': 'feature_reset',
+      'feature': feature,
+    });
+    if (reset['ok'] != true) {
+      throw StateError('$feature reset self-check failed');
+    }
+    for (final step in steps) {
+      peer.handle({
+        'cmd': 'feature_step',
+        'feature': feature,
+        'step': step,
+      });
+    }
+    final observed = peer.handle({
+      'cmd': 'feature_observe',
+      'feature': feature,
+    });
+    final observation = observed['observation']! as Map<String, Object?>;
+    if (observation['outcome'] != outcome) {
+      throw StateError('$feature self-check failed: $observation');
+    }
   }
 }
 
