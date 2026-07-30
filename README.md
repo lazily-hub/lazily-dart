@@ -492,20 +492,43 @@ git clone https://github.com/lazily-hub/lazily-formal.git ../lazily-formal
 dart run tool/formal_check.dart
 ```
 
-## See also
+## The lazily family
+
+`lazily` is one reactive model — the Cell kernel, keyed collections, state
+machines and charts, CRDTs, and the distributed plane — implemented natively per
+language and held to the same behaviour by a shared conformance corpus.
 
 - [`lazily-spec`][spec] — language-agnostic wire protocol + the conformance
-  fixtures (IPC and state-chart) every binding replays.
+  fixtures (IPC and state-chart) every binding replays. It also carries the
+  generated cross-language feature matrix; read that table rather than any
+  per-binding copy.
 - [`lazily-formal`][formal] — Lean 4 formal model (shared primitives, the flat
-  `StateMachine` kernel, and the full Harel `StateChart`); the executable
+  `StateMachine` kernel, and the full Harel `StateChart`). Not a binding: it is
+  the neutral formal home every binding depends on *equally*, and the executable
   reference behind the state-chart fixtures and the deterministic `send`
   lazily-dart inherits.
-- [`lazily-rs`][rs] / [`lazily-py`][py] / [`lazily-zig`][zig] — sibling reactive
-  cores.
+
+| Repo | Language |
+|---|---|
+| [`lazily-rs`][rs] | Rust — the reference implementation |
+| [`lazily-py`][py] | Python |
+| [`lazily-go`][go] | Go |
+| [`lazily-kt`][kt] | Kotlin / JVM |
+| [`lazily-js`][js] | JavaScript / TypeScript |
+| [`lazily-cs`][cs] | C# / .NET |
+| [`lazily-cpp`][cpp] | C++ |
+| [`lazily-zig`][zig] | Zig |
+| **`lazily-dart`** | Dart / Flutter — you are here |
+| [`lazily-react`][react] | React / Preact bindings layered over [`lazily-js`][js] — not a separate language binding |
 
 [rs]: https://github.com/lazily-hub/lazily-rs
 [py]: https://github.com/lazily-hub/lazily-py
+[go]: https://github.com/lazily-hub/lazily-go
+[kt]: https://github.com/lazily-hub/lazily-kt
 [js]: https://github.com/lazily-hub/lazily-js
+[cs]: https://github.com/lazily-hub/lazily-cs
+[cpp]: https://github.com/lazily-hub/lazily-cpp
 [zig]: https://github.com/lazily-hub/lazily-zig
+[react]: https://github.com/lazily-hub/lazily-react
 [spec]: https://github.com/lazily-hub/lazily-spec
 [formal]: https://github.com/lazily-hub/lazily-formal
