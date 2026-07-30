@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## Unreleased
+
+### Added
+
+- **The transport-agnostic reactive ingress family, all three execution flavors**
+  (`#designimplementtransport`). `IngressCore` is the graph-agnostic admission
+  algebra — keyed lifecycle scopes (opening/live/suspended/closed), the normative
+  admission order (lifecycle → generation fence → freshness → generation handoff
+  → dedupe → ordering → backpressure → merge), a bounded reorder buffer, a hot
+  window coalesced under `MergePolicy`, and a bounded three-channel receipt log
+  with eviction-stable offsets. Reactivity deliberately stays out: every mutator
+  returns an `IngressChange` naming the dirtied reader kinds, and each shell
+  clears exactly that set on its own graph.
+- `IngressCell` / `ThreadSafeIngressCell` / `AsyncIngressCell`: four reader kinds
+  per scope (`value` / `readiness` / `authority` / `retry`), three independent
+  receipt readers, and a derived `IngressSchedule`. Readiness, authority, and
+  retry are **derives, not refresh calls**, and there are no observers anywhere in
+  the family. The whole dirtied set clears in one frontier walk
+  (`Context.invalidateSlots` / `AsyncContext.clearSlots`), so no reader can
+  observe "new value, old authority".
+- `IngressTransport` + `InProcIngress`: the transport is a value the primitive
+  never touches. A WebSocket frame, an RPC response, and a polled page are the
+  same input once decoded, and the transport kind influences exactly one derived
+  value — the schedule, whose poll interval exists only for bounded polling and is
+  never zero. A bounded-polling transport answers `false` to a replay request, so
+  "this gap will never close" is observable rather than silent.
+- Backpressure reuses the relay algebra: `IngressPolicy.overflow` is
+  `Overflow`, validated against the merge policy's `conflates` flag at
+  construction exactly as `RelayCell` does. `Overflow.block` refuses **without**
+  advancing the watermark, so the producer's retry after a drain is in order
+  rather than a duplicate. A drain is an egress, not an ack.
+- One filesystem-enforced three-row flavor ledger and canonical replay of all
+  seven `conformance/ingress/*.json` fixtures against every flavor. Each flavor
+  asserts a positive step count equal to the corpus total, and `expected.invalidates`
+  is asserted per reader kind and per receipt channel in **both** directions
+  through a cache-validity probe — never by receipt count, because a stale cache
+  recomputes to the right count. The probe itself is pinned by a test that proves
+  it can fail. Every gate was mutation-checked against seven deliberate defects.
+
 ## 0.29.0
 
 ### Added

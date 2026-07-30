@@ -24,12 +24,15 @@
 library;
 
 export 'src/async_context.dart';
+export 'src/async_ingress.dart';
 export 'src/async_queue_family.dart';
 export 'src/async_reactive_family.dart';
 export 'src/collections.dart';
 export 'src/coordination.dart';
 export 'src/core.dart';
 export 'src/crdt_tree.dart';
+export 'src/ingress.dart';
+export 'src/ingress_core.dart';
 export 'src/lossless_tree_crdt.dart';
 export 'src/membership.dart';
 export 'src/merge.dart';
@@ -53,6 +56,7 @@ export 'src/temporal.dart';
 export 'src/text_crdt.dart';
 export 'src/windowing.dart';
 export 'src/thread_safe.dart';
+export 'src/thread_safe_ingress.dart';
 export 'src/thread_safe_queue_family.dart';
 export 'src/thread_safe_reactive_family.dart';
 export 'src/utf8_offsets.dart';
