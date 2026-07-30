@@ -35,20 +35,22 @@ fi
 # Every entry here survived the static-to-runtime upgrade unchanged: the suite
 # opens exactly the 111 fixtures the grep said it named, so lazily-dart had no
 # named-but-never-opened fixture to find.
+#
+# It did have the opposite rot (#lzcovallowlistrot). Seven entries named fixtures
+# the suite replays — the four `collections/topiccell_*` and two
+# `collections/workqueue_*` scenarios that queue_family_conformance_test.dart
+# replays across all three flavors, and `signaling/frames.json`, whose every
+# frame distributed_conformance_test.dart round-trips or rejects. Nothing
+# complained because the error understated coverage, and an excuse list that is
+# half fiction is one nobody can read the real gaps out of. The stale-entry check
+# at the bottom of this file now fails on that direction too.
 KNOWN_UNCOVERED=(
   "agent-doc/delta_agent_doc_state.json"
   "agent-doc/snapshot_agent_doc_state.json"
   "arena_blob.json"
-  "collections/topiccell_broadcast_cursor_isolation.json"
-  "collections/topiccell_durable_replay_gc.json"
-  "collections/topiccell_ephemeral_lifecycle.json"
-  "collections/topiccell_offline_tail_bounds.json"
-  "collections/workqueue_competing_delivery.json"
-  "collections/workqueue_lease_deadletter.json"
   "distributed/crdt_sync_frames.json"
   "reliable-sync/coalesce_bounds_outbox.json"
   "reliable-sync/liveness_lease_eviction.json"
-  "signaling/frames.json"
 )
 
 MANIFEST="${LAZILY_CONFORMANCE_MANIFEST:-build/conformance-fixtures-loaded.txt}"
@@ -106,11 +108,26 @@ while IFS= read -r id; do
   fi
 done <<< "$OPENED"
 
-# A stale allowlist is its own drift: an entry naming a fixture that no longer
-# exists means the corpus moved and nobody updated the excuse.
+# A stale allowlist is its own drift, in two directions.
+#
+# (1) An entry naming a fixture that no longer exists means the corpus moved and
+#     nobody updated the excuse.
+# (2) An entry naming a fixture the suite DOES open means the gap was closed and
+#     nobody deleted the excuse. This one understates coverage, so nothing ever
+#     complains: no bug gets filed about coverage you are told you lack, and a
+#     bloated excuse list buries the real gaps. The comparison below is the exact
+#     `grep -qxF <<< "$OPENED"` the covered-check uses, so the two can never
+#     disagree about what "opened" means.
 for known in "${KNOWN_UNCOVERED[@]:-}"; do
   if [ ! -f "$SPEC_DIR/$known" ]; then
     echo "ERROR: KNOWN_UNCOVERED lists '$known', which is not in the canonical corpus." >&2
+    missing=$((missing + 1))
+    continue
+  fi
+  if grep -qxF "$known" <<< "$OPENED"; then
+    echo "ERROR: KNOWN_UNCOVERED lists '$known', but the suite DID open it." >&2
+    echo "       The excuse is stale — the fixture is covered. Delete the entry from" >&2
+    echo "       KNOWN_UNCOVERED so the list keeps naming only real gaps." >&2
     missing=$((missing + 1))
   fi
 done
