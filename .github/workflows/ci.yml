@@ -74,10 +74,65 @@ jobs:
 
       - run: dart pub get
       - run: dart analyze --fatal-infos
+
+      # Two of the four conformance guards execute INSIDE `dart test` (the
+      # unconsumed- and unasserted-assertion-key rungs, via the addTearDown in
+      # test/conformance_assertions.dart) and two do not: the fixture-coverage
+      # guard and the per-scenario replay ledger are read afterwards by
+      # scripts/check-conformance-coverage.sh. CI ran the test binary and never
+      # the script, so it enforced the first two and SILENTLY SKIPPED the other
+      # two (#lzguardsnotinci). The steps below close that gap by reproducing
+      # exactly what the Makefile's `test` + `conformance-coverage` targets do.
+      #
+      # Truncate the evidence files ONCE, here. The recorders APPEND — `dart
+      # test` runs each test file in its own process and every one of them
+      # contributes to a single union — so truncating anywhere else would either
+      # scatter the evidence or destroy it mid-run. The `.lock` removals match
+      # the Makefile: a lock left behind by a killed writer would stall every
+      # subsequent append until its 10s deadline expires, once per record.
+      - name: Reset conformance evidence files (#lzguardsnotinci)
+        run: |
+          mkdir -p build
+          : > build/conformance-fixtures-loaded.txt
+          rm -f build/conformance-fixtures-loaded.txt.lock
+          : > build/conformance-scenarios-replayed.txt
+          rm -f build/conformance-scenarios-replayed.txt.lock
+
       - name: dart test (with lazily-formal proof verification)
         env:
           LAZILY_FORMAL_PATH: ${{ github.workspace }}/_lazily-formal
+          # ABSOLUTE paths, the same values the Makefile passes as `$(CURDIR)/...`.
+          # `dart test` runs each test file in its own process, and a relative
+          # path would scatter partial evidence across whatever working directory
+          # each process happens to use. Unset, the recorders are NO-OPS: the
+          # guard below would then read empty files, and an evidence file that is
+          # never written is the vacuous green this whole ladder exists to reject.
+          LAZILY_CONFORMANCE_MANIFEST: ${{ github.workspace }}/lazily-dart/build/conformance-fixtures-loaded.txt
+          LAZILY_CONFORMANCE_SCENARIOS: ${{ github.workspace }}/lazily-dart/build/conformance-scenarios-replayed.txt
         run: dart test
+
+      # Rungs 1 and 4: canonical-fixture coverage and per-scenario replay. Runs
+      # AFTER the suite, never before — the script reads the evidence the run
+      # just wrote, so ordering it first would only ever see the previous run's
+      # manifest, or none at all.
+      #
+      # LAZILY_SPEC_CONFORMANCE_DIR is set explicitly rather than left to the
+      # script's `../lazily-spec/conformance` default: the script SKIPs with exit
+      # 0 when the corpus is absent, which on a runner would report green while
+      # checking nothing. Naming the workspace path pins it to the checkout the
+      # precondition step above already asserted, in the same spirit as that
+      # guard block.
+      - name: Conformance coverage + scenario replay guards (#lzguardsnotinci)
+        env:
+          LAZILY_SPEC_CONFORMANCE_DIR: ${{ github.workspace }}/lazily-spec/conformance
+          LAZILY_CONFORMANCE_MANIFEST: ${{ github.workspace }}/lazily-dart/build/conformance-fixtures-loaded.txt
+          LAZILY_CONFORMANCE_SCENARIOS: ${{ github.workspace }}/lazily-dart/build/conformance-scenarios-replayed.txt
+        run: |
+          # The scenario ledger check needs jq and fails closed without it, but a
+          # guard that dies on a missing tool reads like a guard that found a
+          # problem. Say which it is, up front.
+          command -v jq >/dev/null 2>&1 || { echo "::error::jq is not installed on this runner — the scenario replay guard cannot read the corpus's scenario ids"; exit 1; }
+          ./scripts/check-conformance-coverage.sh
 
   lean:
     name: Lean formal models (#lzleanformal)
