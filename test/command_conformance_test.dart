@@ -38,7 +38,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _load(String name) =>
-    jsonDecode(File(_fixturePath(name)).specReadAsStringSync()) as Map<String, dynamic>;
+    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync())) as Map<String, dynamic>;
 
 List<Map<String, dynamic>> _frames(Map<String, dynamic> obj) =>
     (obj['frames'] as List).cast<Map<String, dynamic>>();
@@ -153,7 +153,7 @@ void main() {
     for (final frame in _frames(fx)) {
       foldFrame(p, frame);
     }
-    _assertProjection(p, fx['expect'] as Map<String, dynamic>);
+    _assertProjection(p, assertionsOf(fx['expect']));
     expect(p.terminalFor('cmd-run-1'), isNull);
   });
 
@@ -163,12 +163,12 @@ void main() {
     for (final frame in _frames(fx)) {
       foldFrame(p, frame);
     }
-    _assertProjection(p, fx['expect'] as Map<String, dynamic>);
+    _assertProjection(p, assertionsOf(fx['expect']));
   });
 
   test('accepted then applied receipt is terminal only at receipt', () {
     final fx = _load('accepted_then_applied_receipt.json');
-    final expectSpec = fx['expect'] as Map<String, dynamic>;
+    final expectSpec = assertionsOf(fx['expect']);
     final terminalAt = expectSpec['terminal_after_frame_index'] as int;
     final p = CommandProjection();
     final frames = _frames(fx);
@@ -186,7 +186,7 @@ void main() {
 
   test('stale generation events and receipts are ignored', () {
     final fx = _load('stale_generation_ignored.json');
-    final expectSpec = fx['expect'] as Map<String, dynamic>;
+    final expectSpec = assertionsOf(fx['expect']);
     final ignored =
         (expectSpec['ignored_frame_indices'] as List).cast<int>().toList();
     final p = CommandProjection();
@@ -203,7 +203,7 @@ void main() {
 
   test('terminal conflict fails closed fixture', () {
     final fx = _load('terminal_conflict_fail_closed.json');
-    final expectSpec = fx['expect'] as Map<String, dynamic>;
+    final expectSpec = assertionsOf(fx['expect']);
     final conflictAt = expectSpec['conflict_after_frame_index'] as int;
     final commandId = expectSpec['conflict_command_id'] as String;
     final p = CommandProjection();
@@ -215,7 +215,8 @@ void main() {
             reason: 'frame $i should raise a terminal conflict');
       }
     }
-    expect(p.hasConflict(commandId), isTrue);
+    expect(p.hasConflict(commandId), expectSpec['conflict'],
+        reason: 'fixture declares whether the fold ends in conflict');
     final before = CommandProjectionImage.fromWire(
         expectSpec['projection_before_conflict']);
     expect(p.toImage(), before);
@@ -225,11 +226,32 @@ void main() {
     final fx = _load('cancel_preempts_nonterminal.json');
     for (final scenarioEl in (fx['scenarios'] as List)) {
       final scenario = scenarioEl as Map<String, dynamic>;
+      final expectSpec = assertionsOf(scenario['expect']);
+      // `cancel_after_applied_ignored` is the whole point of the second
+      // scenario: a cancel arriving after `applied` must be IGNORED, never
+      // rewrite applied into rejected. Checking only the projection would pass
+      // against a fold that rejected the frame for the wrong reason.
+      final ignored =
+          (expectSpec['ignored_frame_indices'] as List?)?.cast<int>() ??
+              const <int>[];
       final p = CommandProjection();
-      for (final frame in (scenario['frames'] as List)) {
-        foldFrame(p, frame as Map<String, dynamic>);
+      final frames = (scenario['frames'] as List).cast<Map<String, dynamic>>();
+      for (var i = 0; i < frames.length; i++) {
+        final before = p.toImage();
+        foldFrame(p, frames[i]);
+        if (ignored.contains(i)) {
+          // "Ignored" is a property of the FOLD, not of the returned status
+          // variant: `CommandProjection.cancel` reports `Recorded` for a cancel
+          // it accepted into its dedup log even when the cancel changes
+          // nothing, so the status is the wrong signal. What the fixture
+          // asserts is that a cancel arriving after `applied` never rewrites
+          // applied into rejected — i.e. the projection is unchanged.
+          expect(p.toImage(), before,
+              reason: '${scenario['name']} frame $i must not change the '
+                  'projection');
+        }
       }
-      _assertProjection(p, scenario['expect'] as Map<String, dynamic>);
+      _assertProjection(p, expectSpec);
     }
   });
 
@@ -239,12 +261,12 @@ void main() {
     for (final frame in _frames(fx)) {
       foldFrame(p, frame);
     }
-    _assertProjection(p, fx['expect'] as Map<String, dynamic>);
+    _assertProjection(p, assertionsOf(fx['expect']));
   });
 
   test('rpc call waits for terminal', () {
     final fx = _load('rpc_call_waits_for_terminal.json');
-    final expectSpec = fx['expect'] as Map<String, dynamic>;
+    final expectSpec = assertionsOf(fx['expect']);
     final rpc = expectSpec['rpc'] as Map<String, dynamic>;
     final commandId = rpc['command_id'] as String;
     final resolvesAt = rpc['resolves_after_frame_index'] as int;

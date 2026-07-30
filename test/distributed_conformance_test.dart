@@ -15,7 +15,7 @@ Map<String, dynamic> _loadFixture(List<String> segments) {
   for (final path in candidates) {
     final f = File(path);
     if (f.existsSync()) {
-      return jsonDecode(f.specReadAsStringSync()) as Map<String, dynamic>;
+      return attributeFixture(jsonDecode(f.specReadAsStringSync())) as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: ${segments.join('/')}');
@@ -97,7 +97,7 @@ void _playAntiEntropy(Map<String, dynamic> scenario) {
   }).toList();
 
   final applied = runtime.ingestOps(ops);
-  final expect_ = scenario['expect'] as Map<String, dynamic>;
+  final expect_ = assertionsOf(scenario['expect']);
 
   expect(applied, expect_['applied_count'] as int, reason: 'applied_count');
 
@@ -107,12 +107,18 @@ void _playAntiEntropy(Map<String, dynamic> scenario) {
         reason: 'redeliver_applied_count');
   }
 
-  if (scenario['reverse_order_equivalent'] == true) {
+  final orderIndependent = expect_['order_independent'];
+  if (orderIndependent != null || scenario['reverse_order_equivalent'] == true) {
     final runtime2 = CrdtPlaneRuntime(1);
     runtime2.ingestOps(ops.reversed.toList());
-    expect(runtime2.converged().map((e) => e.toWire()).toList(),
-        runtime.converged().map((e) => e.toWire()).toList(),
-        reason: 'order_independent');
+    final reversedWire = runtime2.converged().map((e) => e.toWire()).toList();
+    final forwardWire = runtime.converged().map((e) => e.toWire()).toList();
+    if (orderIndependent != null) {
+      expect(reversedWire.toString() == forwardWire.toString(),
+          orderIndependent, reason: 'order_independent');
+    } else {
+      expect(reversedWire, forwardWire, reason: 'order_independent');
+    }
   }
 
   final convergedExpected =
@@ -128,6 +134,28 @@ void _playAntiEntropy(Map<String, dynamic> scenario) {
       expect(aw['key'], ew['key'], reason: 'converged[$i].key');
     }
   }
+
+  // `resolution` names the conflict rule the plane applies. Assert the RULE,
+  // not the label: every converged entry must carry the state of the
+  // highest-stamped op for its (node, key). Comparing the label alone would
+  // pass against a plane that resolved by arrival order and happened to agree.
+  expect(expect_['resolution'], 'max_stamp',
+      reason: 'this runner models max-stamp resolution only');
+  for (final entry in actual) {
+    final rivals = ops.where((o) => o.node == entry.node).toList();
+    expect(rivals, isNotEmpty, reason: 'converged entry with no source op');
+    final winner =
+        rivals.reduce((a, b) => _higherStamp(b.stamp, a.stamp) ? b : a);
+    expect(entry.state, winner.state.toWire(),
+        reason: 'max_stamp resolution for node ${entry.node}');
+  }
+}
+
+/// Stamp order is (wall_time, logical, peer), lexicographically.
+bool _higherStamp(WireStamp a, WireStamp b) {
+  if (a.wallTime != b.wallTime) return a.wallTime > b.wallTime;
+  if (a.logical != b.logical) return a.logical > b.logical;
+  return a.peer > b.peer;
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +163,7 @@ void _playAntiEntropy(Map<String, dynamic> scenario) {
 // ---------------------------------------------------------------------------
 
 void _playCausalReceipts(Map<String, dynamic> fixture) {
-  final assertions = fixture['assertions'] as Map<String, dynamic>;
+  final assertions = assertionsOf(fixture['assertions']);
   final wireReceipts = (fixture['wire']
       as Map<String, dynamic>)['CausalReceipts'] as Map<String, dynamic>;
   final receiptsList =

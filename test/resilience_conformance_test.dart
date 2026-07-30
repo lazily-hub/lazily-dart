@@ -23,7 +23,7 @@ Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
       ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
       : File('test/conformance/resilience/$name').specReadAsStringSync();
-  return jsonDecode(src) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
 
 /// Observe a cell through a slot; returns the slot primed (cached).
@@ -69,7 +69,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       if (op['type'] == 'record') {
         cb.record(op['success'] as bool, op['now'] as int);
       } else if (op['type'] == 'allow') {
@@ -93,7 +93,7 @@ void main() {
     final observed = _observe(ctx, r.delayCell);
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       expect(r.nextDelay(), equals(step['returns']), reason: 'delay');
       expect(r.delay(), equals(expected['delay']));
       final wantInv =
@@ -112,7 +112,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       if (op['type'] == 'acquire') {
         expect(b.acquire(), equals(step['returns']));
       } else {
@@ -134,7 +134,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       bool edge;
       if (op['type'] == 'arm') {
         t.arm(op['now'] as int, op['timeout'] as int);

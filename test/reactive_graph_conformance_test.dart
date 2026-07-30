@@ -941,7 +941,7 @@ Future<_Report> _replay(
   if (tail == null) return report;
 
   stepIdx = -1; // the `expected` tail is not a numbered step
-  final finalState = (tail['final_state'] as Map?)?.cast<String, dynamic>();
+  final finalState = assertionsOfOrNull(tail['final_state']);
   if (finalState != null) {
     final degrees =
         (finalState['dependents_of'] as Map?)?.cast<String, dynamic>() ?? {};
@@ -966,7 +966,7 @@ Future<_Report> _replay(
     }
   }
 
-  final publish = (tail['after_publish'] as Map?)?.cast<String, dynamic>();
+  final publish = assertionsOfOrNull(tail['after_publish']);
   final publishOp = (publish?['op'] as Map?)?.cast<String, dynamic>();
   if (publish != null && publishOp != null) {
     final before = model.runLog.length;
@@ -1043,7 +1043,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   var totalChecks = 0;
 
   for (final name in expectedFixtures.toList()..sort()) {
-    final fx = (jsonDecode(File('$specDir/$name').specReadAsStringSync()) as Map)
+    final fx = (attributeFixture(jsonDecode(File('$specDir/$name').specReadAsStringSync())) as Map)
         .cast<String, dynamic>();
     final unsupported = _opsOf(fx).difference(supportedOps).toList()..sort();
     // A parked fixture is skipped before the op filter (it uses only supported
@@ -1074,7 +1074,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
         models.add(model);
         reports.add(await _replay(model, name, _stepsOf(fx), null));
       } else if (shape == 'scenarios') {
-        final tail = (fx['expected'] as Map?)?.cast<String, dynamic>();
+        final tail = assertionsOfOrNull(fx['expected']);
         for (final sc in _scenariosOf(fx)) {
           // Each scenario gets its own context: `observationally_equal` is a
           // claim about two independent worlds, not about one world twice.
@@ -1090,7 +1090,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
       // observable, not merely each satisfy `expected` independently. This is
       // the whole reason the `scenarios` shape exists — a relation between two
       // op streams is not expressible in a single `steps` array.
-      final pair = _strs((fx['expected'] as Map?)?['observationally_equal']);
+      final pair = _strs(assertionsOfOrNull(fx['expected'])?['observationally_equal']);
       if (pair.isNotEmpty) {
         final names = _scenariosOf(fx).map((s) => s['name'] as String).toList();
         final idx = pair.map((p) {

@@ -26,7 +26,7 @@ Map<String, dynamic> _loadFixture(String name) {
           final resource = 'test/conformance/statechart/$name';
           return File(resource).specReadAsStringSync();
         })();
-  return jsonDecode(src) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
 
 List<String> _activeExpected(Object? expected) {

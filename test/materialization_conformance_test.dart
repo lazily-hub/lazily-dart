@@ -42,7 +42,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _load(String name) =>
-    jsonDecode(File(_fixturePath(name)).specReadAsStringSync())
+    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
         as Map<String, dynamic>;
 
 Set<String> _asSet(Iterable<String> keys) => keys.toSet();
@@ -95,7 +95,7 @@ Map<String, dynamic> _checkValFixture(String name) {
   expect(_computedMapModels, contains(fixture['model']),
       reason: 'fixture model');
   final spec = _parseVal(fixture);
-  final expected = fixture['expected'] as Map<String, dynamic>;
+  final expected = assertionsOf(fixture['expected']);
   final lookup = (Compute cx, String k) => spec.values[k]!;
 
   // default_mode_eager.
@@ -128,7 +128,7 @@ void main() {
   group('ComputedMap materialization conformance (#reactivemap)', () {
     test('observational_transparency replays identically', () {
       final fixture = _checkValFixture('observational_transparency.json');
-      final expected = fixture['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(fixture['expected']);
       final spec = _parseVal(fixture);
       final lookup = (Compute cx, String k) => spec.values[k]!;
 
@@ -144,7 +144,7 @@ void main() {
 
     test('deferral_not_deallocation replays identically', () {
       final fixture = _checkValFixture('deferral_not_deallocation.json');
-      final expected = fixture['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(fixture['expected']);
       final spec = _parseVal(fixture);
       final lookup = (Compute cx, String k) => spec.values[k]!;
 
@@ -195,7 +195,7 @@ void main() {
     test('entry_kind_orthogonal_to_mode replays identically', () {
       final fixture = _load('entry_kind_orthogonal_to_mode.json');
       expect(_computedMapModels, contains(fixture['model']));
-      final expected = fixture['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(fixture['expected']);
       expect(expected['default_mode'], 'eager');
 
       final entries = (fixture['spec'] as Map<String, dynamic>)['entries']

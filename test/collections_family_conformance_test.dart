@@ -201,7 +201,7 @@ void _replay(_Flavor flavor, String fixtureName) {
   expect(path, isNotNull,
       reason: 'canonical collections fixture missing: $fixtureName');
   final fixture =
-      jsonDecode(File(path!).specReadAsStringSync()) as Map<String, dynamic>;
+      attributeFixture(jsonDecode(File(path!).specReadAsStringSync())) as Map<String, dynamic>;
   String where(int i) => '${flavor.name} $fixtureName step $i';
 
   final initial = fixture['initial'] as Map<String, dynamic>?;
@@ -226,7 +226,7 @@ void _replay(_Flavor flavor, String fixtureName) {
   for (var i = 0; i < steps.length; i++) {
     final step = steps[i] as Map<String, dynamic>;
     final op = step['op'] as Map<String, dynamic>;
-    final expected = step['expected'] as Map<String, dynamic>;
+    final expected = assertionsOf(step['expected'], 'step $i');
 
     // Rebuild + settle readers from the CURRENT key set so each step's
     // invalidation is measured against a fully settled graph.

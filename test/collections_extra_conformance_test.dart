@@ -23,7 +23,7 @@ Map<String, dynamic> _loadFixture(String name) {
   for (final path in candidates) {
     final f = File(path);
     if (f.existsSync()) {
-      return jsonDecode(f.specReadAsStringSync()) as Map<String, dynamic>;
+      return attributeFixture(jsonDecode(f.specReadAsStringSync())) as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: $name');
@@ -106,7 +106,7 @@ void _playTextCrdtScenario(Map<String, dynamic> scenario) {
     _applyTextCrdtStep(replicas, step);
   }
 
-  final expect_ = scenario['expect'] as Map<String, dynamic>?;
+  final expect_ = assertionsOfOrNull(scenario['expect']);
   if (expect_ != null) {
     _checkTextCrdtExpect(replicas, expect_);
   }
@@ -194,7 +194,7 @@ void _playTextCrdtDeltaScenario(Map<String, dynamic> scenario) {
     _applyTextCrdtDeltaStep(replicas, step);
   }
 
-  final expect_ = scenario['expect'] as Map<String, dynamic>?;
+  final expect_ = assertionsOfOrNull(scenario['expect']);
   if (expect_ != null) {
     _checkTextCrdtDeltaExpect(replicas, expect_);
   }
@@ -311,7 +311,7 @@ void _playSeqCrdtScenario(Map<String, dynamic> scenario) {
     _applySeqCrdtStep(replicas, step);
   }
 
-  final expect_ = scenario['expect'] as Map<String, dynamic>?;
+  final expect_ = assertionsOfOrNull(scenario['expect']);
   if (expect_ != null) {
     _checkSeqCrdtExpect(replicas, expect_);
   }
@@ -453,7 +453,7 @@ void _playSemTreeScenario(Map<String, dynamic> scenario) {
   final treeSpec = _parseTreeNode(scenario['tree'] as Map<String, dynamic>);
   final tree = SemTree.build<num, dynamic>(ctx, treeSpec, fold);
 
-  final expectInitial = scenario['expect_initial'] as Map<String, dynamic>?;
+  final expectInitial = assertionsOfOrNull(scenario['expect_initial']);
   if (expectInitial != null) {
     for (final entry in expectInitial.entries) {
       if (entry.key == 'sibling_a_cached' || entry.key == 'downstream_consumer_reran') continue;
@@ -465,7 +465,7 @@ void _playSemTreeScenario(Map<String, dynamic> scenario) {
   if (edit is Map) {
     tree.setValue(edit['id'] as String, edit['value'] as num);
 
-    final expectAfter = scenario['expect_after'] as Map<String, dynamic>?;
+    final expectAfter = assertionsOfOrNull(scenario['expect_after']);
     if (expectAfter != null) {
       for (final entry in expectAfter.entries) {
         switch (entry.key) {
@@ -490,7 +490,7 @@ void _playSemTreeScenario(Map<String, dynamic> scenario) {
   final removeChild = scenario['remove_child'];
   if (removeChild is Map) {
     tree.removeChild(removeChild['parent'] as String, removeChild['child'] as String);
-    final expectAfter = scenario['expect_after'] as Map<String, dynamic>?;
+    final expectAfter = assertionsOfOrNull(scenario['expect_after']);
     if (expectAfter != null) {
       for (final entry in expectAfter.entries) {
         expect(tree.nodeValue(entry.key), equals(entry.value), reason: 'after ${entry.key}');
@@ -534,7 +534,7 @@ void _playStableIdScenario(Map<String, dynamic> scenario) {
         .toList();
     final keys = blocks.map(blockKey).toList();
 
-    final expect_ = scenario['expect'] as Map<String, dynamic>;
+    final expect_ = assertionsOf(scenario['expect']);
     final keyEqual = expect_['key_equal'];
     if (keyEqual is List) {
       for (final pair in keyEqual.cast<List>()) {
@@ -564,7 +564,7 @@ void _playStableIdScenario(Map<String, dynamic> scenario) {
         .map((b) => _parseBlock(b as Map<String, dynamic>))
         .toList();
 
-    final expect_ = scenario['expect'] as Map<String, dynamic>;
+    final expect_ = assertionsOf(scenario['expect']);
 
     if (expect_['matches'] case final List matches) {
       final alignment = align(oldBlocks, newBlocks);

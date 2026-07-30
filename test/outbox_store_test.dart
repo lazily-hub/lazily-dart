@@ -14,7 +14,7 @@ Map<String, dynamic> _fixture() {
   for (final path in ['../lazily-spec/conformance/$name', 'test/conformance/$name']) {
     final file = File(path);
     if (file.existsSync()) {
-      return jsonDecode(file.specReadAsStringSync()) as Map<String, dynamic>;
+      return attributeFixture(jsonDecode(file.specReadAsStringSync())) as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: $name');
@@ -42,7 +42,7 @@ void main() {
     }
     expect(
       store.scanAfter(ordered['scan_after'] as int).map((entry) => entry.$1),
-      (ordered['expect'] as Map<String, dynamic>)['epochs'],
+      (assertionsOf(ordered['expect']))['epochs'],
     );
 
     final monotone = _scenario('ack cursor is monotone and prune-safe');
@@ -54,7 +54,7 @@ void main() {
         in (monotone['ack_through'] as List<dynamic>).cast<int>()) {
       outbox.ackThrough(epoch);
     }
-    final expectMap = monotone['expect'] as Map<String, dynamic>;
+    final expectMap = assertionsOf(monotone['expect']);
     expect(outbox.ackedThrough, expectMap['cursor']);
     expect(outbox.retainedEpochs(), expectMap['retained']);
     expect(_replayEpochs(outbox.replayFrom(0)), expectMap['replay_from_zero']);
@@ -74,7 +74,7 @@ void main() {
     }
 
     final reopened = FileOutbox(path);
-    final expectMap = restart['expect'] as Map<String, dynamic>;
+    final expectMap = assertionsOf(restart['expect']);
     expect(reopened.ackedThrough, expectMap['loaded_cursor']);
     expect(reopened.retainedEpochs(), expectMap['retained']);
     expect(_replayEpochs(reopened.replayFrom(0)), expectMap['replay']);
@@ -94,7 +94,7 @@ void main() {
       handles[save['handle']]!.ackThrough(save['epoch'] as int);
     }
     final expected =
-        (scenario['expect'] as Map<String, dynamic>)['loaded_cursor'];
+        (assertionsOf(scenario['expect']))['loaded_cursor'];
     expect(handles['stale']!.ackedThrough, expected);
     expect(FileOutboxStore(path).loadCursor(), expected);
   });

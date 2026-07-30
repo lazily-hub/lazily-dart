@@ -22,7 +22,7 @@ Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
       ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
       : File('test/conformance/presence/$name').specReadAsStringSync();
-  return jsonDecode(src) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
 
 /// Observe a cell through a slot; returns the slot primed (cached).
@@ -57,7 +57,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       switch (op['type']) {
         case 'set':
           cell.set(op['value'] as String, op['now'] as int, op['ttl'] as int);
@@ -81,7 +81,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       switch (op['type']) {
         case 'heartbeat':
           cell.heartbeat(op['peer'] as int, op['value'] as String, op['now'] as int);
@@ -109,7 +109,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       switch (op['type']) {
         case 'set':
           cell.set(op['peer'] as int, op['value'] as String, op['now'] as int);

@@ -35,7 +35,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _load(String name) =>
-    jsonDecode(File(_fixturePath(name)).specReadAsStringSync())
+    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
         as Map<String, dynamic>;
 
 Map<String, dynamic> _scenario(Map<String, dynamic> fx, String name) =>
@@ -56,6 +56,70 @@ WireStamp _stamp(Map<String, dynamic> o) => WireStamp(
       logical: o['logical'] as int,
       peer: o['peer'] as int,
     );
+
+/// The corpus's name for a [ResyncAction] variant.
+String _actionName(ResyncAction action) => switch (action) {
+      ResyncActionApply() => 'Apply',
+      ResyncActionRequestSnapshot() => 'RequestSnapshot',
+      ResyncActionIgnore() => 'Ignore',
+    };
+
+/// Fold one inbound frame into a `node -> bytes` projection, the way a receiver
+/// materializes the graph.
+///
+/// A Snapshot REPLACES the projection — it is the sender's whole state at its
+/// epoch, which is exactly why gap recovery is state-equivalent rather than
+/// lossy. A Delta folds its cell writes in.
+void _fold(Map<NodeId, List<int>> state, IpcMessage m) {
+  if (m is IpcMessageSnapshot) {
+    state.clear();
+    for (final node in m.value.nodes) {
+      final s = node.state;
+      if (s is NodeStatePayload) state[node.node] = s.bytes.toList();
+    }
+    return;
+  }
+  if (m is! IpcMessageDelta) return;
+  for (final op in m.value.ops) {
+    final NodeId node;
+    final IpcValue payload;
+    if (op is DeltaOpCellSet) {
+      node = op.node;
+      payload = op.payload;
+    } else if (op is DeltaOpSlotValue) {
+      node = op.node;
+      payload = op.payload;
+    } else {
+      continue;
+    }
+    if (payload is IpcValueInline) state[node] = payload.bytes.toList();
+  }
+}
+
+/// A fixture's `{"<node>": [bytes]}` projection in this runner's shape.
+Map<NodeId, List<int>> _stateOf(Object? declared) => {
+      for (final e in (declared as Map).entries)
+        int.parse(e.key as String): (e.value as List).cast<int>(),
+    };
+
+bool _sameState(Map<NodeId, List<int>> a, Map<NodeId, List<int>> b) =>
+    a.length == b.length &&
+    a.keys.every((k) {
+      final x = a[k]!, y = b[k];
+      return y != null &&
+          x.length == y.length &&
+          List.generate(x.length, (i) => x[i] == y[i]).every((v) => v);
+    });
+
+/// Check a boolean property the fixture DECLARES against what the replay
+/// actually observed.
+///
+/// Deliberately not `expect(observed, isTrue)` guarded by the declared value: a
+/// fixture that flips the claim to `false` must then require the property to be
+/// absent, or the assertion only ever tests one polarity.
+void _declares(Object? declared, bool observed, String what) {
+  expect(observed, declared, reason: what);
+}
 
 /// A reference file-backed [DurableOutbox] (crash-replay test helper): one
 /// `[epoch, wire]` JSON row per line, reopened from disk to model a crash.
@@ -190,25 +254,46 @@ void main() {
       expect(fx['kind'], 'ReliableSync');
 
       final sc = _scenario(fx, 'span_3_applies_equal_to_unit_fold');
+      final ex = assertionsOf(sc['expect']);
       final d = sc['delta'] as Map<String, dynamic>;
       final base = d['base_epoch'] as int;
       final epoch = d['epoch'] as int;
       expect(epoch > base + 1, isTrue, reason: 'fixture pins a multi-epoch span');
       final delta = Delta(baseEpoch: base, epoch: epoch);
       expect(delta.span, epoch - base);
-      final coord = ResyncCoordinator(sc['receiver_last_epoch'] as int);
-      expect(coord.ingestDelta(delta).isApply, isTrue);
-      expect(coord.lastEpoch,
-          (sc['expect'] as Map)['receiver_last_epoch_after']);
+      final start = sc['receiver_last_epoch'] as int;
+      final coord = ResyncCoordinator(start);
+      final action = coord.ingestDelta(delta);
+      expect(_actionName(action), ex['action']);
+      _declares(ex['applied'], action.isApply, 'delta applied');
+      expect(coord.lastEpoch, ex['receiver_last_epoch_after']);
+      // `atomic_advance`: the whole span lands in ONE ingest — the cursor never
+      // rests on an intermediate epoch.
+      _declares(ex['atomic_advance'], coord.lastEpoch - start == delta.span,
+          'span advanced the cursor atomically, not epoch by epoch');
+      // `fold_equivalent`: folding the same span as unit deltas leaves the
+      // receiver on the same cursor, so a span is an optimization and not a
+      // different protocol.
+      final unit = ResyncCoordinator(start);
+      for (var e = base; e < epoch; e++) {
+        expect(unit.ingestDelta(Delta(baseEpoch: e, epoch: e + 1)).isApply,
+            isTrue);
+      }
+      _declares(ex['fold_equivalent'], unit.lastEpoch == coord.lastEpoch,
+          'span fold equals the unit fold');
 
       final gap = _scenario(fx, 'gap_rule_unchanged_under_span');
+      final gapEx = assertionsOf(gap['expect']);
       final gc = ResyncCoordinator(gap['receiver_last_epoch'] as int);
       final gd = gap['delta'] as Map<String, dynamic>;
       final res = gc.ingestDelta(
           Delta(baseEpoch: gd['base_epoch'] as int, epoch: gd['epoch'] as int));
       expect(res, isA<ResyncActionRequestSnapshot>());
+      expect(_actionName(res), gapEx['action']);
+      _declares(gapEx['applied'], res.isApply, 'gap delta is not applied');
       expect((res as ResyncActionRequestSnapshot).fromEpoch,
-          (gap['expect'] as Map)['request_from']);
+          gapEx['request_from']);
+      expect(gc.lastEpoch, gapEx['receiver_last_epoch_after']);
       expect(gc.lastEpoch, gap['receiver_last_epoch']);
     });
 
@@ -216,11 +301,19 @@ void main() {
       final fx = _load('resync_gap_converge.json');
 
       final sc = _scenario(fx, 'drop_suffix_then_resync_converges');
+      final ex = assertionsOf(sc['expect']);
       final coord = ResyncCoordinator(sc['start_last_epoch'] as int);
+      // What the dropping receiver actually materializes, and — separately —
+      // what it would hold from the deltas ALONE. The second is what gives
+      // `equals_no_drop_receiver` teeth below.
+      final state = <NodeId, List<int>>{};
+      final deltasOnly = <NodeId, List<int>>{};
+      final sender = <NodeId, List<int>>{};
       var requests = 0;
       for (final frame in (sc['inbound'] as List).cast<Map<String, dynamic>>()) {
         if (frame['dropped'] == true) continue;
-        final res = coord.ingest(_msg(frame['frame']));
+        final m = _msg(frame['frame']);
+        final res = coord.ingest(m);
         switch (frame['expect_action']) {
           case 'Apply':
             expect(res.isApply, isTrue);
@@ -232,19 +325,33 @@ void main() {
           default:
             expect(res.isIgnore, isTrue);
         }
+        if (res.isApply) _fold(state, m);
+        if (m.isDelta) _fold(deltasOnly, m);
+        // The covering Snapshot IS the sender's whole state at the final epoch,
+        // and therefore what a receiver that dropped nothing holds.
+        if (m.isSnapshot) _fold(sender, m);
         expect(coord.lastEpoch, frame['last_epoch_after']);
       }
-      expect(coord.lastEpoch, (sc['expect'] as Map)['final_last_epoch']);
-      expect(requests, (sc['expect'] as Map)['resync_requests_emitted']);
+      expect(coord.lastEpoch, ex['final_last_epoch']);
+      expect(requests, ex['resync_requests_emitted']);
+      expect(state, _stateOf(ex['converged_nodes']));
+      _declares(ex['equals_no_drop_receiver'], _sameState(state, sender),
+          'gap recovery is state-equivalent, not lossy');
+      expect(_sameState(deltasOnly, sender), isFalse,
+          reason: 'the deltas this receiver saw are MISSING the dropped '
+              "suffix's writes — without that the equality above would hold "
+              'trivially and prove nothing about recovery');
 
       final single = _scenario(fx, 'single_request_per_gap');
+      final singleEx = assertionsOf(single['expect']);
       final c2 = ResyncCoordinator(single['start_last_epoch'] as int);
       var req2 = 0;
       for (final frame
           in (single['inbound'] as List).cast<Map<String, dynamic>>()) {
         if (c2.ingest(_msg(frame['frame'])).isRequestSnapshot) req2++;
       }
-      expect(req2, (single['expect'] as Map)['resync_requests_emitted']);
+      expect(req2, singleEx['resync_requests_emitted']);
+      expect(c2.lastEpoch, singleEx['final_last_epoch']);
     });
 
     test('idempotent_redelivery.json', () {
@@ -254,14 +361,29 @@ void main() {
         'duplicate_current_head_is_ignored'
       ]) {
         final sc = _scenario(fx, name);
+        final ex = assertionsOf(sc['expect']);
         final coord = ResyncCoordinator(sc['start_last_epoch'] as int);
+        final state = _stateOf(sc['state_before']);
+        final before = {
+          for (final e in state.entries) e.key: List<int>.of(e.value),
+        };
         for (final frame
             in (sc['inbound'] as List).cast<Map<String, dynamic>>()) {
-          expect(coord.ingest(_msg(frame['frame'])).isIgnore, isTrue,
-              reason: name);
+          final m = _msg(frame['frame']);
+          final res = coord.ingest(m);
+          expect(res.isIgnore, isTrue, reason: name);
+          // Fold only what the coordinator ACCEPTED. The re-delivered frame
+          // carries a different value for the same node, so a receiver that
+          // folded regardless of the decision would visibly diverge here —
+          // which is what makes `state_after` a real assertion and not a
+          // restatement of `state_before`.
+          if (res.isApply) _fold(state, m);
           expect(coord.lastEpoch, frame['last_epoch_after']);
         }
-        expect(coord.lastEpoch, (sc['expect'] as Map)['final_last_epoch']);
+        expect(coord.lastEpoch, ex['final_last_epoch']);
+        expect(state, _stateOf(ex['state_after']));
+        _declares(ex['net_effect_unchanged'], _sameState(state, before),
+            'at-least-once delivery, exactly-once effect ($name)');
       }
     });
 
@@ -271,7 +393,7 @@ void main() {
       final appended = _framesOf(sc, 'appended');
       final ack = sc['ack_through'] as int;
       final cursor = sc['reconnect_cursor'] as int;
-      final expect_ = sc['expect'] as Map<String, dynamic>;
+      final expect_ = assertionsOf(sc['expect']);
 
       final dir = Directory.systemTemp.createTempSync('lz_outbox_dart_');
       final path = '${dir.path}/outbox.jsonl';
@@ -294,8 +416,12 @@ void main() {
         // "crash": reopen the durable file outbox from disk.
         file = _FileOutbox(path);
         final replay = file.replayFrom(cursor);
-        expect(replay.map((e) => e.$1).toList(),
-            (expect_['replayed_from_cursor'] as List).cast<int>());
+        final replayed = replay.map((e) => e.$1).toList();
+        expect(replayed, (expect_['replayed_from_cursor'] as List).cast<int>());
+        // `replay_order` is not a duplicate of `replayed_from_cursor`: the set
+        // can be right while the ORDER is wrong, and a receiver that folds a
+        // later epoch first sees a gap it can never close.
+        expect(replayed, (expect_['replay_order'] as List).cast<int>());
 
         final coord = ResyncCoordinator(cursor);
         final applied = <int>[];
@@ -304,47 +430,140 @@ void main() {
         }
         expect(applied, (expect_['receiver_applies'] as List).cast<int>());
         expect(coord.lastEpoch, expect_['receiver_last_epoch_after']);
+
+        // At-least-once on the wire, exactly-once in effect: every frame the
+        // sender still owed lands, and none lands twice.
+        final owed = [
+          for (final (e, _) in appended)
+            if (e > ack) e,
+        ];
+        final lost = owed.where((e) => !applied.contains(e)).length;
+        final doubled = applied.length - applied.toSet().length;
+        expect(lost, expect_['ops_lost']);
+        expect(doubled, expect_['ops_doubled']);
+        _declares(expect_['exactly_once_effect'], lost == 0 && doubled == 0,
+            'crash replay is at-least-once delivery with exactly-once effect');
       } finally {
         dir.deleteSync(recursive: true);
       }
 
       // send_failure_retains_frame_for_next_tick
       final sc2 = _scenario(fx, 'send_failure_retains_frame_for_next_tick');
-      final ex2 = sc2['expect'] as Map<String, dynamic>;
+      final ex2 = assertionsOf(sc2['expect']);
       final retained = (ex2['retained'] as List).cast<int>();
       final mem2 = InMemoryOutbox();
       for (final (e, m) in _framesOf(sc2, 'appended')) {
         mem2.append(e, m);
       }
       expect(mem2.retainedEpochs(), retained);
-      expect(mem2.replayFrom(retained[0] - 1).map((e) => e.$1).toList(),
-          retained);
+      // The send failed and nothing was acked, so the frame is still owed.
+      _declares(
+          ex2['frame_retained_after_failed_send'],
+          sc2['send_fails_first_attempt'] == true &&
+              sc2['ack_through'] == null &&
+              mem2.retainedEpochs().isNotEmpty,
+          'a failed send retains the frame');
+      final resent = mem2.replayFrom(retained[0] - 1).map((e) => e.$1).toList();
+      expect(resent, (ex2['resent_on_next_tick'] as List).cast<int>());
+      // A retained frame is a DELAY, not a hole: the next tick replays it, so
+      // the receiver never sees an epoch it can no longer obtain.
+      _declares(ex2['permanent_gap'], resent.isEmpty,
+          'a retained frame is redeliverable, so there is no permanent gap');
     });
 
     test('liveness_orset_lww.json', () {
       final fx = _load('liveness_orset_lww.json');
 
       final add = _scenario(fx, 'open_set_add_wins_over_stale_remove');
-      final set = OrSet();
-      for (final op in (add['ops'] as List).cast<Map<String, dynamic>>()) {
-        if (op['op'] == 'add') {
-          set.add(op['tag'] as String);
-        } else if (op['op'] == 'remove') {
-          set.removeObserved((op['observed_tags'] as List).cast<String>());
+      final addEx = assertionsOf(add['expect']);
+      final addOps = (add['ops'] as List).cast<Map<String, dynamic>>();
+      OrSet replayOrSet(Iterable<Map<String, dynamic>> ops) {
+        final s = OrSet();
+        for (final op in ops) {
+          if (op['op'] == 'add') {
+            s.add(op['tag'] as String);
+          } else if (op['op'] == 'remove') {
+            s.removeObserved((op['observed_tags'] as List).cast<String>());
+          }
         }
+        return s;
       }
-      expect(set.present(), (add['expect'] as Map)['present']);
+
+      final set = replayOrSet(addOps);
+      expect(set.present(), addEx['present']);
+
+      // `reason` is the corpus's prose for WHY the set stays present. Holding
+      // it to the tag the replay actually computes stops the explanation from
+      // drifting away from the data it explains.
+      final addedTags = {
+        for (final op in addOps)
+          if (op['op'] == 'add') op['tag'] as String,
+      };
+      final observedTags = {
+        for (final op in addOps)
+          if (op['op'] == 'remove') ...(op['observed_tags'] as List).cast<String>(),
+      };
+      final unobserved = addedTags.difference(observedTags);
+      expect(set.present(), unobserved.isNotEmpty,
+          reason: 'present iff some added tag outlived every remove');
+      for (final tag in unobserved) {
+        expect(addEx['reason'], contains(tag),
+            reason: 'the fixture explains presence by a tag no remove '
+                'observed; the replay computed $unobserved');
+      }
+      // `order_independent`: an OrSet join is commutative, so the reversed
+      // transcript must reach the same verdict.
+      _declares(addEx['order_independent'],
+          replayOrSet(addOps.reversed).present() == set.present(),
+          'OrSet outcome is order-independent');
+      // `redeliver_applied_count`: re-delivering the whole transcript applies
+      // nothing new.
+      final redelivered = replayOrSet(addOps)..join(set);
+      _declares(addEx['redeliver_applied_count'] == 0,
+          redelivered.present() == set.present() && redelivered == set,
+          'a re-delivered transcript is a no-op');
 
       final lww = _scenario(fx, 'lww_alive_highest_stamp_wins');
+      final lwwEx = assertionsOf(lww['expect']);
       final ops = (lww['ops'] as List).cast<Map<String, dynamic>>();
-      final reg = WireLwwRegister<bool>(
-          _stamp(ops[0]['stamp'] as Map<String, dynamic>),
-          ops[0]['value'] as bool);
-      for (final op in ops.skip(1)) {
-        reg.set(_stamp(op['stamp'] as Map<String, dynamic>),
-            op['value'] as bool);
+      WireLwwRegister<bool> replayLww(List<Map<String, dynamic>> os) {
+        final r = WireLwwRegister<bool>(
+            _stamp(os[0]['stamp'] as Map<String, dynamic>),
+            os[0]['value'] as bool);
+        for (final op in os.skip(1)) {
+          r.set(_stamp(op['stamp'] as Map<String, dynamic>),
+              op['value'] as bool);
+        }
+        return r;
       }
-      expect(reg.value, (lww['expect'] as Map)['value']);
+
+      final reg = replayLww(ops);
+      expect(reg.value, lwwEx['value']);
+      // `resolution`: the corpus names the conflict rule. Assert the rule, not
+      // the label — the surviving value must be the one carried by the op with
+      // the maximum stamp.
+      expect(lwwEx['resolution'], 'max_stamp');
+      // Stamp order is (wall_time, logical, peer) lexicographically — the same
+      // total order the register uses to break ties.
+      List<int> stampKey(Map<String, dynamic> op) {
+        final s = _stamp(op['stamp'] as Map<String, dynamic>);
+        return [s.wallTime, s.logical, s.peer];
+      }
+
+      bool higher(List<int> a, List<int> b) {
+        for (var i = 0; i < a.length; i++) {
+          if (a[i] != b[i]) return a[i] > b[i];
+        }
+        return false;
+      }
+
+      final maxStamped = ops.reduce(
+          (a, b) => higher(stampKey(b), stampKey(a)) ? b : a);
+      expect(reg.value, maxStamped['value'],
+          reason: 'max_stamp resolution: the highest-stamp write survives');
+      _declares(lwwEx['order_independent'],
+          replayLww(ops.reversed.toList()).value == reg.value,
+          'LWW outcome is order-independent');
 
       final death = _scenario(fx, 'whole_editor_death_cascades');
       final open = (death['open_set'] as List)
@@ -368,9 +587,28 @@ void main() {
           if (alive[p]?.value == true) doc
       }.toList()
         ..sort();
+      final deathEx = assertionsOf(death['expect']);
       expect(live,
-          (death['expect'] as Map)['live_docs_after'].cast<String>().toList()
-            ..sort());
+          (deathEx['live_docs_after'] as List).cast<String>().toList()..sort());
+      // `live_docs_before` is the aggregate this replay started from — assert it
+      // rather than assume it, or the "after" set could be right for the wrong
+      // reason (a doc that was never live cannot demonstrate a cascade).
+      final liveBefore = <String>{for (final (doc, _) in open) doc}.toList()
+        ..sort();
+      expect(liveBefore,
+          (deathEx['live_docs_before'] as List).cast<String>().toList()..sort());
+      // `cascade`: ONE pid death dropped MORE THAN ONE doc, and left the docs
+      // of every other pid alone. That pair is the cascade; either half on its
+      // own is satisfied by an unrelated single drop.
+      final dropped = liveBefore.where((d) => !live.contains(d)).toList();
+      final otherPidDocs = [
+        for (final (doc, p) in open)
+          if (p != pid) doc,
+      ];
+      _declares(
+          deathEx['cascade'],
+          dropped.length > 1 && otherPidDocs.every(live.contains),
+          'one pid death cascades across its docs and isolates the others');
     });
   });
 

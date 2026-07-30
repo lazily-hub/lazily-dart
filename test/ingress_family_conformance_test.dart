@@ -104,7 +104,7 @@ Directory _fixtureDir() {
 Map<String, dynamic> _fixture(String name) {
   final file = File('${_fixtureDir().path}/$name');
   expect(file.existsSync(), isTrue, reason: '$name is declared but absent');
-  return jsonDecode(file.specReadAsStringSync()) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(file.specReadAsStringSync())) as Map<String, dynamic>;
 }
 
 String _sources() {
@@ -556,7 +556,7 @@ List<String> _keysOf(Map<String, dynamic> fixture) {
     final key = (step['op'] as Map<String, dynamic>)['key'];
     if (key is String && !keys.contains(key)) keys.add(key);
     final scopes =
-        (step['expected'] as Map<String, dynamic>)['scopes'] as Map<String, dynamic>;
+        assertionsOf(step['expected'])['scopes'] as Map<String, dynamic>;
     for (final scopeKey in scopes.keys) {
       if (!keys.contains(scopeKey)) keys.add(scopeKey);
     }
@@ -657,7 +657,7 @@ int _replay(_Flavor flavor, String name) {
 }
 
 void _assertState(_IngressModel model, Map<String, dynamic> step, String where) {
-  final expected = step['expected'] as Map<String, dynamic>;
+  final expected = assertionsOf(step['expected']);
   final scopes = expected['scopes'] as Map<String, dynamic>;
   for (final entry in scopes.entries) {
     final key = entry.key;
@@ -725,7 +725,7 @@ void _assertInvalidation(
   const kinds = ['value', 'readiness', 'authority', 'retry'];
   const channels = ['accepted', 'dropped', 'error'];
   final want =
-      (step['expected'] as Map<String, dynamic>)['invalidates'] as Map<String, dynamic>;
+      assertionsOf(step['expected'])['invalidates'] as Map<String, dynamic>;
   final wantScopes = want['scopes'] as Map<String, dynamic>;
   for (final entry in wantScopes.entries) {
     final key = entry.key;

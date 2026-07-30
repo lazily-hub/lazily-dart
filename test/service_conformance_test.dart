@@ -22,7 +22,7 @@ Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
       ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
       : File('test/conformance/service/$name').specReadAsStringSync();
-  return jsonDecode(src) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
 
 /// Observe a cell through a slot; returns the slot primed (cached).
@@ -62,7 +62,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       h.set(op['name'] as String, op['up'] as bool, op['critical'] as bool);
       expect(h.health(), equals(_health(expected['health'] as String)));
       final wantInv =
@@ -80,7 +80,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       r.set(op['name'] as String, op['ready'] as bool);
       expect(r.ready(), equals(expected['ready']));
       final wantInv =
@@ -98,7 +98,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       switch (op['type'] as String) {
         case 'register':
           d.register(op['service'] as String, op['endpoint'] as String,
@@ -127,7 +127,7 @@ void main() {
 
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
-      final expected = step['expected'] as Map<String, dynamic>;
+      final expected = assertionsOf(step['expected']);
       switch (op['type'] as String) {
         case 'register':
           reg.register(op['service'] as String, op['endpoint'] as String);

@@ -24,7 +24,7 @@ String _fixturePath(String name) {
 
 Map<String, Object?> _loadFixture(String name) {
   final fixture =
-      jsonDecode(File(_fixturePath(name)).specReadAsStringSync()) as Map<String, Object?>;
+      attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync())) as Map<String, Object?>;
   expect(fixture['protocol_version'], 1, reason: '$name protocol_version');
   return fixture;
 }

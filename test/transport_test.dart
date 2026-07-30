@@ -214,19 +214,28 @@ void main() {
         'test/conformance/delta_zero_copy_arrow.json',
       ].firstWhere((p) => File(p).existsSync(),
           orElse: () => throw StateError('fixture not found'));
-      final fixture =
-          jsonDecode(File(path).specReadAsStringSync()) as Map<String, dynamic>;
+      final fixture = attributeFixture(jsonDecode(
+          File(path).specReadAsStringSync())) as Map<String, dynamic>;
       final wire = fixture['wire'] as Map<String, dynamic>;
       final msg = IpcMessage.fromWire(wire);
 
-      final assertions = fixture['assertions'] as Map<String, dynamic>;
+      final assertions = assertionsOf(fixture['assertions']);
       final delta = (msg as IpcMessageDelta).value;
       expect(delta.baseEpoch, assertions['base_epoch']);
       expect(delta.epoch, assertions['epoch']);
       expect(delta.ops.length, assertions['op_count']);
       final op = delta.ops[0] as DeltaOpSlotValue;
+      expect((op.toWire() as Map).keys.single, assertions['first_op_kind']);
       final blob = (op.payload as IpcValueSharedBlob).blob;
-      expect(blob.backend, BlobBackendKind.arrow);
+      expect((op.payload.toWire() as Map).keys.single,
+          assertions['first_op_payload_kind']);
+      // The whole point of this fixture: the SharedBlob descriptor carries a
+      // `backend` discriminator selecting which pluggable zero-copy backend the
+      // receiver resolves. Reading it FROM the assertions rather than
+      // hard-coding `arrow` is what makes replaying the fixture prove anything
+      // — a hard-coded expectation passes even when the decoder drops the field
+      // and defaults it.
+      expect(blob.backend.wire, assertions['first_op_payload_backend']);
 
       // Re-encode must reproduce the fixture wire exactly (backend='arrow'
       // preserved).

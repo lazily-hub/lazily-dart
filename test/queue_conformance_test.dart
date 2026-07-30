@@ -38,7 +38,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _loadFixture(String name) =>
-    jsonDecode(File(_fixturePath(name)).specReadAsStringSync()) as Map<String, dynamic>;
+    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync())) as Map<String, dynamic>;
 
 /// Build a QueueCell from the fixture's `initial` block.
 QueueCell<String> _buildInitial(
@@ -152,7 +152,7 @@ void _runFixture(String name) {
   for (var i = 0; i < steps.length; i++) {
     final step = steps[i];
     final op = step['op'] as Map<String, dynamic>;
-    final expected = step['expected'] as Map<String, dynamic>;
+    final expected = assertionsOf(step['expected']);
     final invalidates = (expected['invalidates'] ?? {}) as Map<String, dynamic>;
 
     // Prime readers from the CURRENT state so each step's invalidation is

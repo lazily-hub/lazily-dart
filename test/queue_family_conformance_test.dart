@@ -101,7 +101,7 @@ Directory _fixtureDir() {
 Map<String, dynamic> _fixture(String name) {
   final file = File('${_fixtureDir().path}/$name');
   expect(file.existsSync(), isTrue, reason: '$name is declared but absent');
-  return jsonDecode(file.specReadAsStringSync()) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(file.specReadAsStringSync())) as Map<String, dynamic>;
 }
 
 String _sources() {
@@ -124,7 +124,7 @@ List<Map<String, dynamic>> _steps(Map<String, dynamic> fixture, String name) {
         reason: '$name step $i puts invalidates at step level; the canonical '
             'location is expected.invalidates');
     expect(
-      (step['expected'] as Map<String, dynamic>).containsKey('invalidates'),
+      assertionsOf(step['expected']).containsKey('invalidates'),
       isTrue,
       reason: '$name step $i has no invalidation matrix',
     );
@@ -251,7 +251,7 @@ int _replayQueue(_Flavor flavor, String name) {
   for (var i = 0; i < steps.length; i++) {
     final step = steps[i];
     final op = step['op'] as Map<String, dynamic>;
-    final expected = step['expected'] as Map<String, dynamic>;
+    final expected = assertionsOf(step['expected']);
     final invalidates = expected['invalidates'] as Map<String, dynamic>;
     harness.prime();
     final returns = harness.apply(op);
@@ -419,7 +419,7 @@ Set<String> _topicIds(Map<String, dynamic> fixture) {
     final op = step['op'] as Map<String, dynamic>;
     final subscriber = op['subscriber'];
     if (subscriber is String) ids.add(subscriber);
-    final expected = step['expected'] as Map<String, dynamic>;
+    final expected = assertionsOf(step['expected']);
     addKeys(expected['subscriptions']);
     addKeys(expected['reads']);
     addKeys(expected['invalidates']);
@@ -437,7 +437,7 @@ int _replayTopic(_Flavor flavor, String name) {
   for (var i = 0; i < steps.length; i++) {
     final step = steps[i];
     final op = step['op'] as Map<String, dynamic>;
-    final expected = step['expected'] as Map<String, dynamic>;
+    final expected = assertionsOf(step['expected']);
     final invalidates = expected['invalidates'] as Map<String, dynamic>;
     harness.prime(ids);
     final returns = harness.apply(op);
@@ -645,7 +645,7 @@ int _replayWork(_Flavor flavor, String name) {
   for (var i = 0; i < steps.length; i++) {
     final step = steps[i];
     final op = step['op'] as Map<String, dynamic>;
-    final expected = step['expected'] as Map<String, dynamic>;
+    final expected = assertionsOf(step['expected']);
     final invalidates = expected['invalidates'] as Map<String, dynamic>;
     harness.prime();
     final returns = harness.apply(op);

@@ -13,7 +13,7 @@ Map<String, dynamic> _fixture() {
   for (final path in ['../lazily-spec/conformance/$name', 'test/conformance/$name']) {
     final file = File(path);
     if (file.existsSync()) {
-      return jsonDecode(file.specReadAsStringSync()) as Map<String, dynamic>;
+      return attributeFixture(jsonDecode(file.specReadAsStringSync())) as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: $name');

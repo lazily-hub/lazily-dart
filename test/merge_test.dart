@@ -112,7 +112,8 @@ void main() {
 
   test('mergecell_algebra.json fixture', () {
     final fixture =
-        jsonDecode(_fixture('mergecell_algebra.json')) as Map<String, dynamic>;
+        attributeFixture(jsonDecode(_fixture('mergecell_algebra.json')))
+            as Map<String, dynamic>;
     final byName = {'KeepLatest': keepLatest<int>(), 'Sum': sum(), 'Max': max()};
     var seen = 0;
     for (final scenarioEl in fixture['scenarios'] as List) {
@@ -135,7 +136,7 @@ void main() {
         final before = runs;
         mc.merge(step['merge'] as int);
         final fired = runs > before;
-        final expected = step['expected'] as Map<String, dynamic>;
+        final expected = assertionsOf(step['expected']);
         expect(mc.get(), expected['value'], reason: policy.name);
         expect(fired, expected['invalidates'], reason: policy.name);
       }

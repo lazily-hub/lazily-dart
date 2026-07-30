@@ -40,7 +40,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _loadFixture(String name) =>
-    jsonDecode(File(_fixturePath(name)).specReadAsStringSync()) as Map<String, dynamic>;
+    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync())) as Map<String, dynamic>;
 
 class _World {
   final Map<String, LosslessTreeCrdt> replicas = {};
@@ -206,7 +206,7 @@ void _runFixture(String name) {
         _applyStep(world, step as Map<String, dynamic>);
       }
     }
-    _assertExpect(world, scenario['expect'] as Map<String, dynamic>, scenarioName);
+    _assertExpect(world, assertionsOf(scenario['expect']), scenarioName);
   }
 }
 

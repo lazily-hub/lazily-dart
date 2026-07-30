@@ -11,7 +11,7 @@ final _specDir = Directory('../lazily-spec/conformance/stdlib');
 
 Map<String, dynamic> _fixture(String name) {
   final source = File('${_specDir.path}/$name').specReadAsStringSync();
-  return jsonDecode(source) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(source)) as Map<String, dynamic>;
 }
 
 BigInt _logicalUint(Object? value) {

@@ -39,7 +39,7 @@ String _fixturePath(String name) {
 }
 
 Map<String, dynamic> _load(String name) =>
-    jsonDecode(File(_fixturePath(name)).specReadAsStringSync())
+    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
         as Map<String, dynamic>;
 
 /// The suffix after the last `/` of a full family key path.
@@ -77,7 +77,7 @@ void main() {
         final applied = target.ingest(frame);
         expect(applied, greaterThan(0), reason: 'first ingest applied nothing');
 
-        final expect_ = sc['expect'] as Map<String, dynamic>;
+        final expect_ = assertionsOf(sc['expect']);
 
         if (sc['reingest'] == true) {
           final reapplied = target.ingest(frame);

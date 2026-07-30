@@ -24,7 +24,7 @@ Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
       ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
       : File('test/conformance/rateshape/$name').specReadAsStringSync();
-  return jsonDecode(src) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
 
 /// Observe a cell through a slot; returns the slot primed (cached).
@@ -52,7 +52,7 @@ void _replay(
 ) {
   final observed = _observe(ctx, cell.outputCell);
   for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
-    final expected = step['expected'] as Map<String, dynamic>;
+    final expected = assertionsOf(step['expected']);
     final emitted = drive(step);
     expect(emitted, equals(step['returns']), reason: 'emit');
     expect(cell.output(), equals(expected['output']), reason: 'output');

@@ -25,6 +25,14 @@ library;
 
 import 'dart:io';
 
+import 'conformance_assertions.dart';
+
+/// Re-exported so every runner that already imports this library also gets the
+/// unconsumed-assertion-key guard (`#lzassertunknownkeys`) with no new import.
+/// The two guards are the same idea one level apart: this file proves a fixture
+/// was OPENED, `conformance_assertions.dart` proves its assertions were READ.
+export 'conformance_assertions.dart';
+
 /// Everything after this marker in a resolved path is the fixture's id, so the
 /// manifest is keyed the same way the canonical corpus listing is.
 const _conformanceMarker = 'lazily-spec/conformance/';
@@ -51,6 +59,14 @@ String specReadFileSync(String path) => File(path).specReadAsStringSync();
 /// comparable to the corpus listing regardless.
 void recordConformanceRead(String path) {
   final absolute = File(path).absolute.path.replaceAll(r'\', '/');
+  // Name the fixture for the unconsumed-key guard's failure message. Recorded
+  // for the vendored mirrors too (`test/conformance/...`), which the manifest
+  // below deliberately ignores: the manifest measures the canonical corpus,
+  // this only labels an error.
+  final vendored = absolute.indexOf('/conformance/');
+  if (vendored != -1) {
+    currentConformanceFixture = absolute.substring(vendored + 13);
+  }
   final index = absolute.indexOf(_conformanceMarker);
   if (index == -1) return;
   final id = absolute.substring(index + _conformanceMarker.length);

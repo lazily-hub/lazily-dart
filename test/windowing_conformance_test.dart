@@ -23,7 +23,7 @@ Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
       ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
       : File('test/conformance/windowing/$name').specReadAsStringSync();
-  return jsonDecode(src) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
 
 int _sum(int a, int b) => a + b;
@@ -45,7 +45,7 @@ bool _invalidated(Context ctx, Slot slot) {
 
 /// Assert the projected output and invalidation flag for one step.
 void _check(Context ctx, Slot observed, Map<String, dynamic> step, Object? out) {
-  final expected = step['expected'] as Map<String, dynamic>;
+  final expected = assertionsOf(step['expected']);
   expect(out, equals(expected['output']), reason: 'output');
   final wantInv = (expected['invalidates'] as Map<String, dynamic>)['output'];
   expect(_invalidated(ctx, observed), equals(wantInv), reason: 'invalidation');
