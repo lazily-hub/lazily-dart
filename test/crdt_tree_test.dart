@@ -19,12 +19,10 @@ Map<String, dynamic> _fixture() {
   throw StateError('fixture not found: $name');
 }
 
-Map<String, dynamic> _scenario(String name) =>
-    (_fixture()['scenarios'] as List<dynamic>)
-        .cast<Map<String, dynamic>>()
-        .firstWhere(
-          (item) => item['name'] == name,
-        );
+/// By-id lookup through the scenario ledger (`#lzscenariocoverage`), so
+/// reaching for three of this fixture's scenarios and forgetting the fourth is
+/// a failure rather than a silent gap.
+Map<String, dynamic> _scenario(String name) => scenarioNamed(_fixture(), name);
 
 bool _mapsEqual(Map<int, int> a, Map<int, int> b) =>
     a.length == b.length &&

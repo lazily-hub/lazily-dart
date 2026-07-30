@@ -109,6 +109,14 @@ T attributeFixture<T>(T decoded) {
   return decoded;
 }
 
+/// The fixture id [attributeFixture] recorded as the owner of [node], or null
+/// when [node] came from somewhere else.
+///
+/// Exposed for the scenario ledger (`#lzscenariocoverage`), which has a
+/// scenario or a fixture root in hand and needs to name the file it came from.
+/// Identity-keyed, so it answers for any object inside a decoded fixture.
+String? fixtureOwnerOf(Object node) => _owners[node];
+
 void _attribute(Object? node, String id, int depth) {
   // Fixtures are shallow; the bound only stops a pathological one from
   // recursing without end. JSON cannot cycle, so it is belt-and-braces.

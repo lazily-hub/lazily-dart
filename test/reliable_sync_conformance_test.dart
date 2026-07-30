@@ -38,10 +38,15 @@ Map<String, dynamic> _load(String name) =>
     attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
         as Map<String, dynamic>;
 
+/// By-id lookup through the scenario ledger (`#lzscenariocoverage`).
+///
+/// This file is where the defect that item exists for was found: it reached for
+/// three of `liveness_orset_lww.json`'s four scenarios by name and the fourth,
+/// `derived_live_doc_aggregate_converges_under_retry`, was never replayed. Every
+/// other guard was green — the fixture was opened, and the keys of the blocks
+/// this runner DID bind were all read and asserted.
 Map<String, dynamic> _scenario(Map<String, dynamic> fx, String name) =>
-    (fx['scenarios'] as List)
-        .cast<Map<String, dynamic>>()
-        .firstWhere((s) => s['name'] == name);
+    scenarioNamed(fx, name);
 
 IpcMessage _msg(Object? wire) => IpcMessage.fromWire(wire);
 
@@ -117,6 +122,104 @@ bool _sameState(Map<NodeId, List<int>> a, Map<NodeId, List<int>> b) =>
 // `expect(observed, isTrue)` guarded by the declared value, because a fixture
 // that flips the claim to `false` must then require the property to be ABSENT,
 // or the assertion only ever tests one polarity.
+
+/// One replica's liveness state, for the derived per-doc aggregate scenario.
+///
+/// The corpus models liveness as two cells side by side: a per-`doc/pid` OR-set
+/// saying an editor holds the doc open, and a per-pid LWW `alive` register
+/// saying the process is still running. The DERIVED fact — which docs are live
+/// — is a fold over both, and it is that fold, not either cell, that
+/// `derived_live_doc_aggregate_converges_under_retry` pins: both cells are
+/// semilattices, so the fold of them must converge under reordering and
+/// re-delivery too.
+class _LivenessReplica {
+  /// `doc/pid` -> open-set. Presence means that editor still holds the doc.
+  final Map<String, OrSet> open = <String, OrSet>{};
+
+  /// `alive/pid` -> the process's liveness register.
+  final Map<String, WireLwwRegister<bool>> alive =
+      <String, WireLwwRegister<bool>>{};
+
+  /// Ops that CHANGED this replica. Re-delivering a seen op leaves the state
+  /// identical and so does not count — which is the whole claim behind
+  /// `redeliver_applied_count`.
+  int applied = 0;
+
+  void apply(Map<String, dynamic> op) {
+    final before = copy();
+    _apply(op);
+    if (!sameAs(before)) applied++;
+  }
+
+  void _apply(Map<String, dynamic> op) {
+    final key = op['key'] as String;
+    switch (op['register_kind']) {
+      case 'orset':
+        final set = open.putIfAbsent(key, OrSet.new);
+        if (op['op'] == 'add') {
+          set.add(op['tag'] as String);
+        } else if (op['op'] == 'remove') {
+          set.removeObserved((op['observed_tags'] as List).cast<String>());
+        } else {
+          throw StateError('unknown orset op ${op['op']}');
+        }
+      case 'lww':
+        final stamp = _stamp(op['stamp'] as Map<String, dynamic>);
+        final value = op['value'] as bool;
+        final register = alive[key];
+        if (register == null) {
+          alive[key] = WireLwwRegister<bool>(stamp, value);
+        } else {
+          // Stamp-dominance decides, so an op arriving out of order is
+          // rejected rather than applied — that is what makes the reversed
+          // transcript converge.
+          register.set(stamp, value);
+        }
+      default:
+        throw StateError('unknown register_kind ${op['register_kind']}');
+    }
+  }
+
+  /// The derived aggregate: a doc is live iff some editor holds it open AND
+  /// that editor's process is alive.
+  List<String> liveDocs() {
+    final docs = <String>{};
+    for (final entry in open.entries) {
+      if (!entry.value.present()) continue;
+      final parts = entry.key.split('/');
+      if (alive['alive/${parts[1]}']?.value == true) docs.add(parts[0]);
+    }
+    return docs.toList()..sort();
+  }
+
+  /// This replica with every open-set entry for [doc] dropped.
+  ///
+  /// The probe behind `per_doc_isolation`: removing one doc's evidence must
+  /// remove exactly that doc from the aggregate.
+  _LivenessReplica withoutDoc(String doc) {
+    final other = copy();
+    other.open.removeWhere((key, _) => key.startsWith('$doc/'));
+    return other;
+  }
+
+  _LivenessReplica copy() {
+    final other = _LivenessReplica();
+    for (final entry in open.entries) {
+      other.open[entry.key] = OrSet()..join(entry.value);
+    }
+    for (final entry in alive.entries) {
+      other.alive[entry.key] =
+          WireLwwRegister<bool>(entry.value.stamp, entry.value.value);
+    }
+    return other;
+  }
+
+  bool sameAs(_LivenessReplica other) =>
+      open.length == other.open.length &&
+      alive.length == other.alive.length &&
+      open.keys.every((k) => open[k] == other.open[k]) &&
+      alive.keys.every((k) => alive[k] == other.alive[k]);
+}
 
 /// A reference file-backed [DurableOutbox] (crash-replay test helper): one
 /// `[epoch, wire]` JSON row per line, reopened from disk to model a crash.
@@ -624,6 +727,76 @@ void main() {
           'cascade',
           dropped.length > 1 && otherPidDocs.every(live.contains),
           'one pid death cascades across its docs and isolates the others');
+
+      // The fourth scenario. It was skipped here for as long as this test
+      // existed and nothing noticed: the file was opened, and the blocks the
+      // three scenarios above bind had every key read and asserted. Only the
+      // scenario ledger sees a scenario that was never reached
+      // (`#lzscenariocoverage`).
+      //
+      // What it pins is one level up from the three above: those assert that
+      // each CELL converges, this asserts that the aggregate DERIVED from both
+      // cells converges. A fold of semilattices is not automatically a
+      // semilattice — a fold that reads `alive` before the open-set, or caches
+      // a per-doc verdict, converges cell-by-cell and still disagrees between
+      // replicas.
+      final derived =
+          _scenario(fx, 'derived_live_doc_aggregate_converges_under_retry');
+      final derivedEx = assertionsOf(derived['expect']);
+      final derivedOps = (derived['ops'] as List).cast<Map<String, dynamic>>();
+      final peers = (derived['replicas'] as List).cast<String>();
+
+      final first = _LivenessReplica();
+      for (final op in derivedOps) {
+        first.apply(op);
+      }
+      // `reverse_order_equivalent` is the fixture's instruction for how to
+      // build the second replica, so it DRIVES the replay rather than being
+      // compared against a hardcoded reversal.
+      final second = _LivenessReplica();
+      for (final op in (derived['reverse_order_equivalent'] as bool)
+          ? derivedOps.reversed
+          : derivedOps) {
+        second.apply(op);
+      }
+
+      assertKeyWith(derivedEx, 'converged_live_docs', (v) {
+        final want = (v as List).cast<String>().toList()..sort();
+        expect(first.liveDocs(), want, reason: '${peers[0]} live docs');
+        expect(second.liveDocs(), want, reason: '${peers[1]} live docs');
+      });
+      assertKey(
+          derivedEx,
+          'order_independent',
+          first.liveDocs().join(',') == second.liveDocs().join(','),
+          'the derived aggregate does not depend on delivery order');
+
+      // Re-delivery. The count is the number of ops that CHANGED the replica,
+      // so a fold that re-applied a seen add — minting a second tag, say —
+      // would report a non-zero count here even though presence is unchanged.
+      final appliedBefore = first.applied;
+      final aggregateBefore = first.liveDocs();
+      if (derived['redeliver'] as bool) {
+        for (final op in derivedOps) {
+          first.apply(op);
+        }
+      }
+      assertKey(derivedEx, 'redeliver_applied_count',
+          first.applied - appliedBefore, 're-delivered ops apply nothing new');
+      expect(first.liveDocs(), aggregateBefore,
+          reason: 're-delivery must not move the derived aggregate either');
+
+      // `per_doc_isolation`: dropping one doc's open-set evidence removes THAT
+      // doc from the aggregate and nothing else. Guarded by a >1 doc count so
+      // the claim cannot be satisfied vacuously — with a single live doc there
+      // is nothing for it to be isolated from.
+      final docs = first.liveDocs();
+      final isolated = docs.length > 1 &&
+          docs.every((doc) =>
+              first.withoutDoc(doc).liveDocs().join(',') ==
+              docs.where((d) => d != doc).join(','));
+      assertKey(derivedEx, 'per_doc_isolation', isolated,
+          'each doc\'s liveness folds independently of its siblings');
     });
   });
 

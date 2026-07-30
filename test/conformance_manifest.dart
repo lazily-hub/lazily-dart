@@ -21,6 +21,22 @@
 /// coverage for every mirrored fixture and hand this guard back the vacuous
 /// green it exists to prevent. lazily-go's `vendored_fixture_drift_test.go`
 /// stays on the raw read for the same reason.
+///
+/// ## Rung 4: which SCENARIOS were replayed (`#lzscenariocoverage`)
+///
+/// Opening a fixture is not replaying it. A fixture carrying four named
+/// scenarios can be partially replayed and every guard in this repo stays
+/// green: this manifest asks only whether the FILE was read, and the key
+/// guards in `conformance_assertions.dart` only bind blocks a runner actually
+/// reaches, so an unreplayed scenario contributes no unconsumed key and no
+/// unasserted key. Skipping a whole scenario is invisible to a guard that only
+/// inspects the scenarios you ran.
+///
+/// So there is a second ledger, written the same way and for the same reason —
+/// at the point of replay, by [scenariosOf] / [scenarioNamed], never declared.
+/// `scripts/check-conformance-coverage.sh` reads it and compares, for every
+/// fixture the manifest says was opened, the ledger's ids against the ids the
+/// fixture carries on disk.
 library;
 
 import 'dart:io';
@@ -74,6 +90,103 @@ void recordConformanceRead(String path) {
   _appendToManifest(id);
 }
 
+// ---------------------------------------------------------------------------
+// Scenario ledger (`#lzscenariocoverage`)
+// ---------------------------------------------------------------------------
+
+/// Scenario ids already appended by THIS process, as `fixture\tid`.
+final Set<String> _replayed = <String>{};
+
+/// The id of one scenario, resolved the way every binding resolves it.
+///
+/// Fixed order, so a ledger written by one binding names the same scenarios as
+/// a ledger written by any other:
+///
+///  1. `id` — the three `stdlib/*.json` fixtures;
+///  2. else `name` — the other 27 scenario-bearing fixtures;
+///  3. else the positional index, spelled `#<n>` (0-based).
+///
+/// The positional fallback exists only because
+/// `collections/mergecell_algebra.json` carries NO identifier — its three
+/// scenarios are distinguished by `policy` alone. It is a fallback, not a
+/// design: `scripts/check-conformance-coverage.sh` reports every scenario that
+/// lands on it, so the corpus gap stays visible until it is fixed upstream.
+/// Adding the missing identifiers is a `lazily-spec` change and does not belong
+/// to any one binding.
+String scenarioIdOf(Map<String, dynamic> scenario, int index) {
+  final id = scenario['id'];
+  if (id is String && id.isNotEmpty) return id;
+  final name = scenario['name'];
+  if (name is String && name.isNotEmpty) return name;
+  return '#$index';
+}
+
+/// Record that [scenario] — the [index]th of [fixture] — was replayed.
+///
+/// The fixture is named from the decode-time attribution
+/// ([fixtureOwnerOf]), falling back to the most recently read fixture. When
+/// neither answers, nothing is recorded and the guard reports the scenario as
+/// unreplayed: the ledger is EVIDENCE, and unattributable evidence is none.
+///
+/// Prefer [scenariosOf] / [scenarioNamed], which call this at the point of
+/// replay so a runner cannot forget it.
+void recordScenario(
+  Map<String, dynamic> fixture,
+  Map<String, dynamic> scenario,
+  int index,
+) {
+  final owner = fixtureOwnerOf(fixture) ??
+      fixtureOwnerOf(scenario) ??
+      currentConformanceFixture;
+  if (owner == null) return;
+  final line = '$owner\t${scenarioIdOf(scenario, index)}';
+  if (!_replayed.add(line)) return;
+  _appendEvidence('LAZILY_CONFORMANCE_SCENARIOS', line);
+}
+
+/// Every scenario of [fixture], recording each id as it is YIELDED.
+///
+/// This is the seam the scenario guard hangs on. A fixture carrying four
+/// scenarios of which a runner replays three is green under every other guard
+/// in this repo — the coverage guard only asks whether the FILE was opened, and
+/// the key guards only bind blocks a runner actually reaches, so an unreplayed
+/// scenario contributes no unconsumed key. Recording here makes the skip
+/// visible without any runner having to declare anything.
+///
+/// The recording is lazy, like the iterable: a caller that stops early records
+/// only what it consumed, which is the honest answer. The corollary is that a
+/// loop body which `continue`s past a scenario has ALREADY recorded it — if a
+/// runner needs to filter, filter before the loop and hand-record the ones it
+/// runs with [recordScenario].
+Iterable<Map<String, dynamic>> scenariosOf(Map<String, dynamic> fixture) sync* {
+  final scenarios = (fixture['scenarios'] as List).cast<Map<String, dynamic>>();
+  for (var i = 0; i < scenarios.length; i++) {
+    recordScenario(fixture, scenarios[i], i);
+    yield scenarios[i];
+  }
+}
+
+/// The one scenario of [fixture] whose resolved id is [id], recording it.
+///
+/// For runners that reach for scenarios by name rather than iterating. Throws
+/// when the fixture carries no such scenario, so a renamed scenario upstream
+/// fails loudly instead of quietly replaying nothing — `firstWhere` without an
+/// `orElse` already threw, and this keeps that while naming the ids on offer.
+Map<String, dynamic> scenarioNamed(Map<String, dynamic> fixture, String id) {
+  final scenarios = (fixture['scenarios'] as List).cast<Map<String, dynamic>>();
+  for (var i = 0; i < scenarios.length; i++) {
+    if (scenarioIdOf(scenarios[i], i) == id) {
+      recordScenario(fixture, scenarios[i], i);
+      return scenarios[i];
+    }
+  }
+  throw StateError(
+    'no scenario "$id" in ${fixtureOwnerOf(fixture) ?? currentConformanceFixture}'
+    ' — it carries '
+    '${[for (var i = 0; i < scenarios.length; i++) scenarioIdOf(scenarios[i], i)]}',
+  );
+}
+
 /// Append one id to the path in `LAZILY_CONFORMANCE_MANIFEST`.
 ///
 /// APPEND, never truncate: `dart test` runs the suites concurrently and every
@@ -114,8 +227,13 @@ void recordConformanceRead(String path) {
 ///
 /// A write failure is swallowed. It surfaces downstream as missing evidence,
 /// which is correct; failing a suite over bookkeeping is not.
-void _appendToManifest(String id) {
-  final out = Platform.environment['LAZILY_CONFORMANCE_MANIFEST'];
+void _appendToManifest(String id) => _appendEvidence(
+      'LAZILY_CONFORMANCE_MANIFEST',
+      id,
+    );
+
+void _appendEvidence(String variable, String line) {
+  final out = Platform.environment[variable];
   if (out == null || out.isEmpty) return;
   final lock = File('$out.lock');
   final deadline = DateTime.now().add(const Duration(seconds: 10));
@@ -134,7 +252,7 @@ void _appendToManifest(String id) {
   try {
     handle = File(out).openSync(mode: FileMode.append);
     handle.setPositionSync(handle.lengthSync());
-    handle.writeStringSync('$id\n');
+    handle.writeStringSync('$line\n');
     handle.flushSync();
   } catch (_) {
     // Intentionally ignored — see above.

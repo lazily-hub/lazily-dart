@@ -20,12 +20,8 @@ Map<String, dynamic> _fixture() {
   throw StateError('fixture not found: $name');
 }
 
-Map<String, dynamic> _scenario(String name) =>
-    (_fixture()['scenarios'] as List<dynamic>)
-        .cast<Map<String, dynamic>>()
-        .firstWhere(
-          (item) => item['name'] == name,
-        );
+/// By-id lookup through the scenario ledger (`#lzscenariocoverage`).
+Map<String, dynamic> _scenario(String name) => scenarioNamed(_fixture(), name);
 
 IpcMessage _message(int epoch) =>
     IpcMessage.ofDelta(Delta(baseEpoch: epoch - 1, epoch: epoch));

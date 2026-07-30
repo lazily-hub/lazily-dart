@@ -17,10 +17,18 @@ analyze:
 # ABSOLUTE: `dart test` runs each test file in its own process, and a relative path
 # would scatter partial manifests across whatever working directory each process
 # uses. The recorder appends, so every process contributes to one union.
+#
+# The scenario ledger (`#lzscenariocoverage`) is the same shape one level down:
+# the manifest says a FIXTURE was opened, the ledger says which of its
+# SCENARIOS were replayed. Same truncate-once, same absolute path, same reason.
 test:
 	@mkdir -p build && : > build/conformance-fixtures-loaded.txt \
-		&& rm -f build/conformance-fixtures-loaded.txt.lock
-	LAZILY_CONFORMANCE_MANIFEST=$(CURDIR)/build/conformance-fixtures-loaded.txt dart test
+		&& rm -f build/conformance-fixtures-loaded.txt.lock \
+		&& : > build/conformance-scenarios-replayed.txt \
+		&& rm -f build/conformance-scenarios-replayed.txt.lock
+	LAZILY_CONFORMANCE_MANIFEST=$(CURDIR)/build/conformance-fixtures-loaded.txt \
+		LAZILY_CONFORMANCE_SCENARIOS=$(CURDIR)/build/conformance-scenarios-replayed.txt \
+		dart test
 
 test-interop-peer:
 	dart run bin/interop_peer.dart --self-check

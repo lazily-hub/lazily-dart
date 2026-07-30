@@ -32,7 +32,7 @@ Map<String, dynamic> _loadFixture(String name) {
 void main() {
   group('TextCrdt convergence', () {
     final fixture = _loadFixture('textcrdt_convergence.json');
-    for (final scenario in (fixture['scenarios'] as List).cast<Map<String, dynamic>>()) {
+    for (final scenario in scenariosOf(fixture)) {
       test(scenario['name'] as String, () {
         _playTextCrdtScenario(scenario);
       });
@@ -41,7 +41,7 @@ void main() {
 
   group('TextCrdt delta sync', () {
     final fixture = _loadFixture('textcrdt_delta_sync.json');
-    for (final scenario in (fixture['scenarios'] as List).cast<Map<String, dynamic>>()) {
+    for (final scenario in scenariosOf(fixture)) {
       test(scenario['name'] as String, () {
         _playTextCrdtDeltaScenario(scenario);
       });
@@ -50,7 +50,7 @@ void main() {
 
   group('SeqCrdt convergence', () {
     final fixture = _loadFixture('seqcrdt_convergence.json');
-    for (final scenario in (fixture['scenarios'] as List).cast<Map<String, dynamic>>()) {
+    for (final scenario in scenariosOf(fixture)) {
       test(scenario['name'] as String, () {
         _playSeqCrdtScenario(scenario);
       });
@@ -59,7 +59,7 @@ void main() {
 
   group('SemTree incremental', () {
     final fixture = _loadFixture('semtree_incremental.json');
-    for (final scenario in (fixture['scenarios'] as List).cast<Map<String, dynamic>>()) {
+    for (final scenario in scenariosOf(fixture)) {
       test(scenario['name'] as String, () {
         _playSemTreeScenario(scenario);
       });
@@ -68,7 +68,7 @@ void main() {
 
   group('Stable-id alignment', () {
     final fixture = _loadFixture('stableid_alignment.json');
-    for (final scenario in (fixture['scenarios'] as List).cast<Map<String, dynamic>>()) {
+    for (final scenario in scenariosOf(fixture)) {
       test(scenario['name'] as String, () {
         _playStableIdScenario(scenario);
       });

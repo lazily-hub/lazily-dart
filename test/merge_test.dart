@@ -116,8 +116,10 @@ void main() {
             as Map<String, dynamic>;
     final byName = {'KeepLatest': keepLatest<int>(), 'Sum': sum(), 'Max': max()};
     var seen = 0;
-    for (final scenarioEl in fixture['scenarios'] as List) {
-      final scenario = scenarioEl as Map<String, dynamic>;
+    // This is the one fixture in the corpus whose scenarios carry NO
+    // identifier — the ledger records them positionally as `#0`..`#2` and the
+    // guard reports the fallback (`#lzscenariocoverage`).
+    for (final scenario in scenariosOf(fixture)) {
       final policy = byName[scenario['policy']]!;
       final flags = scenario['flags'] as Map<String, dynamic>;
       expect(policy.commutative, flags['commutative']);

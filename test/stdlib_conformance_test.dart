@@ -167,8 +167,7 @@ void main() {
 
   test('Timer replays stdlib/timer.json', () {
     final fixture = _fixture('timer.json');
-    for (final scenario
-        in (fixture['scenarios'] as List).cast<Map<String, dynamic>>()) {
+    for (final scenario in scenariosOf(fixture)) {
       final holder = <stdlib.Timer?>[null];
       for (final step
           in (scenario['steps'] as List).cast<Map<String, dynamic>>()) {
@@ -183,8 +182,7 @@ void main() {
 
   test('Timeout replays stdlib/timeout.json', () {
     final fixture = _fixture('timeout.json');
-    for (final scenario
-        in (fixture['scenarios'] as List).cast<Map<String, dynamic>>()) {
+    for (final scenario in scenariosOf(fixture)) {
       final holder = <stdlib.Timeout<String>?>[null];
       for (final step
           in (scenario['steps'] as List).cast<Map<String, dynamic>>()) {
@@ -199,8 +197,7 @@ void main() {
 
   test('RevisionBarrier replays stdlib/revision_barrier.json', () {
     final fixture = _fixture('revision_barrier.json');
-    for (final scenario
-        in (fixture['scenarios'] as List).cast<Map<String, dynamic>>()) {
+    for (final scenario in scenariosOf(fixture)) {
       final holder = <stdlib.RevisionBarrier?>[null];
       for (final step
           in (scenario['steps'] as List).cast<Map<String, dynamic>>()) {

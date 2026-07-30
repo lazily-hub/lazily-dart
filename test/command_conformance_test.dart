@@ -232,8 +232,7 @@ void main() {
 
   test('cancel preempts nonterminal scenarios', () {
     final fx = _load('cancel_preempts_nonterminal.json');
-    for (final scenarioEl in (fx['scenarios'] as List)) {
-      final scenario = scenarioEl as Map<String, dynamic>;
+    for (final scenario in scenariosOf(fx)) {
       final expectSpec = assertionsOf(scenario['expect']);
       // `cancel_after_applied_ignored` is the whole point of the second
       // scenario: a cancel arriving after `applied` must be IGNORED, never

@@ -188,9 +188,9 @@ void _assertExpect(_World world, Map<String, dynamic> expectSpec, String scenari
 
 void _runFixture(String name) {
   final fixture = _loadFixture(name);
-  final scenarios = (fixture['scenarios'] as List).cast<Map<String, dynamic>>();
-  for (var i = 0; i < scenarios.length; i++) {
-    final scenario = scenarios[i];
+  var i = -1;
+  for (final scenario in scenariosOf(fixture)) {
+    i++;
     final scenarioName =
         scenario['name'] != null ? '$name[${scenario['name']}]' : '$name[$i]';
     final seed = scenario['seed'] as Map<String, dynamic>;

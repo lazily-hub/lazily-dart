@@ -1088,7 +1088,11 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
         reports.add(await _replay(model, name, _stepsOf(fx), null));
       } else if (shape == 'scenarios') {
         final tail = assertionsOfOrNull(fx['expected']);
-        for (final sc in _scenariosOf(fx)) {
+        // `scenariosOf` — not the local `_scenariosOf` — because THIS is the
+        // replay site. The local helper is also used for op-set analysis and
+        // for resolving `observationally_equal` names, neither of which
+        // replays anything (`#lzscenariocoverage`).
+        for (final sc in scenariosOf(fx)) {
           // Each scenario gets its own context: `observationally_equal` is a
           // claim about two independent worlds, not about one world twice.
           final model = create();

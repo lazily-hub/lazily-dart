@@ -24,8 +24,7 @@ Map<String, dynamic> _loadFixture(List<String> segments) {
 void main() {
   group('Distributed anti-entropy', () {
     final fixture = _loadFixture(['distributed', 'anti_entropy_converge.json']);
-    for (final scenario
-        in (fixture['scenarios'] as List).cast<Map<String, dynamic>>()) {
+    for (final scenario in scenariosOf(fixture)) {
       test(scenario['name'] as String, () {
         _playAntiEntropy(scenario);
       });

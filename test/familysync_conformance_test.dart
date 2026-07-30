@@ -52,10 +52,7 @@ void main() {
   group('reactive family sync conformance (#lzfamilysync)', () {
     final fixture = _load('materialize_on_ingest.json');
     final namespace = fixture['namespace'] as String;
-    final scenarios =
-        (fixture['scenarios'] as List).cast<Map<String, dynamic>>();
-
-    for (final sc in scenarios) {
+    for (final sc in scenariosOf(fixture)) {
       test(sc['name'] as String, () {
         final origin = CrdtPlaneRuntime(sc['origin_peer'] as int)
           ..registerFamilyLww(namespace);
