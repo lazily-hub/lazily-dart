@@ -107,7 +107,6 @@ void _runStepsFixture(String name) {
     final step = steps[i];
     final op = step['op'] as Map<String, dynamic>;
     final expected = assertionsOf(step['expected'], 'step $i');
-    final invalidates = expected['invalidates'] as Map<String, dynamic>;
 
     // Build readers from the CURRENT key set so each step's invalidation is
     // measured in isolation (matches lazily-rs).
@@ -121,70 +120,75 @@ void _runStepsFixture(String name) {
     final membershipReader = Slot<int>(ctx, (cx) => map.len(cx))..call(); // prime
     final orderReader = Slot<List<String>>(ctx, (cx) => map.keys(cx))..call(); // prime
 
-    // Snapshot handles for the keys this step checks handle_stability on.
-    final handleStableKeys = (expected['handle_stable'] as Map<String, dynamic>?)
-            ?.entries
-            .where((e) => e.value == true)
-            .map((e) => e.key)
-            .toList() ??
-        const <String>[];
-    final handlesBefore = <String, Source<int>>{
-      for (final k in handleStableKeys) k: map.cell(k)!,
+    // Snapshot handles for the keys this step checks handle_stability on. The
+    // snapshot has to be taken BEFORE the op, so the key is read here and the
+    // fixture's own value is compared after the op, below.
+    final handleStableBefore = <String, Source<int>?>{
+      for (final k in (expected['handle_stable'] as Map?)?.keys ?? const [])
+        k as String: map.cell(k),
     };
 
     // Apply the op.
     _applyOp(ctx, map, op);
 
-    // Assert invalidation. Value readers: only check survivor keys.
-    final expectedValueInvalidations =
-        (invalidates['value'] as List?)?.cast<String>() ?? const [];
-    final survivors = map.keys();
-    for (final entry in valueReaders.entries) {
-      final k = entry.key;
-      if (!survivors.contains(k)) continue; // removed: not checked
-      final warm = _isWarm(entry.value, ctx);
-      final invalidated = expectedValueInvalidations.contains(k);
-      expect(warm, !invalidated,
-          reason: '$name step $i `${op['type']}` value reader `$k`: '
-              'expected invalidated=$invalidated');
-    }
+    // Assert invalidation, all three readers, against the fixture's block.
+    assertKeyWith(expected, 'invalidates', (v) {
+      final invalidates = v as Map;
+      // Value readers: only check survivor keys.
+      final expectedValueInvalidations =
+          (invalidates['value'] as List?)?.cast<String>() ?? const [];
+      final survivors = map.keys();
+      for (final entry in valueReaders.entries) {
+        final k = entry.key;
+        if (!survivors.contains(k)) continue; // removed: not checked
+        final warm = _isWarm(entry.value, ctx);
+        final invalidated = expectedValueInvalidations.contains(k);
+        expect(warm, !invalidated,
+            reason: '$name step $i `${op['type']}` value reader `$k`: '
+                'expected invalidated=$invalidated');
+      }
 
-    // Membership reader.
-    final membershipInvalidated = invalidates['membership'] == true;
-    expect(_isWarm(membershipReader, ctx), !membershipInvalidated,
-        reason: '$name step $i `${op['type']}` membership reader: '
-            'expected invalidated=$membershipInvalidated');
+      // Membership reader.
+      final membershipInvalidated = invalidates['membership'] == true;
+      expect(_isWarm(membershipReader, ctx), !membershipInvalidated,
+          reason: '$name step $i `${op['type']}` membership reader: '
+              'expected invalidated=$membershipInvalidated');
 
-    // Order reader.
-    final orderInvalidated = invalidates['order'] == true;
-    expect(_isWarm(orderReader, ctx), !orderInvalidated,
-        reason: '$name step $i `${op['type']}` order reader: '
-            'expected invalidated=$orderInvalidated');
+      // Order reader.
+      final orderInvalidated = invalidates['order'] == true;
+      expect(_isWarm(orderReader, ctx), !orderInvalidated,
+          reason: '$name step $i `${op['type']}` order reader: '
+              'expected invalidated=$orderInvalidated');
+    });
 
     // Assert resulting state: order, membership (set-equal), values.
-    final expectedOrder = _asOrder(expected['order']);
-    expect(map.keys(), equals(expectedOrder),
-        reason: '$name step $i `${op['type']}` order');
+    assertKeyWith(expected, 'order', (v) {
+      expect(map.keys(), equals(_asOrder(v)),
+          reason: '$name step $i `${op['type']}` order');
+    });
 
-    final expectedMembership = _asOrder(expected['membership']);
-    expect(map.keys().toSet(), equals(expectedMembership.toSet()),
-        reason: '$name step $i `${op['type']}` membership');
+    assertKeyWith(expected, 'membership', (v) {
+      expect(map.keys().toSet(), equals(_asOrder(v).toSet()),
+          reason: '$name step $i `${op['type']}` membership');
+    });
 
-    final expectedValues = expected['values'] as Map<String, dynamic>?;
-    if (expectedValues != null) {
-      for (final e in expectedValues.entries) {
-        expect(map.get(e.key), e.value,
+    assertKeyIfPresent(expected, 'values', (v) {
+      for (final e in (v as Map).entries) {
+        expect(map.get(e.key as String), e.value,
             reason: '$name step $i `${op['type']}` value[${e.key}]');
       }
-    }
+    });
 
     // Assert handle stability (same Cell identity before & after).
-    for (final k in handleStableKeys) {
-      final after = map.cell(k);
-      expect(after, isNotNull, reason: '$name step $i `$k` handle still present');
-      expect(identical(handlesBefore[k], after), isTrue,
-          reason: '$name step $i `${op['type']}` `$k` handle_stable');
-    }
+    assertKeyIfPresent(expected, 'handle_stable', (v) {
+      for (final e in (v as Map).entries) {
+        final k = e.key as String;
+        final after = map.cell(k);
+        expect(after, isNotNull, reason: '$name step $i `$k` handle still present');
+        expect(identical(handleStableBefore[k], after), equals(e.value),
+            reason: '$name step $i `${op['type']}` `$k` handle_stable');
+      }
+    });
   }
 }
 
@@ -205,7 +209,8 @@ void _runReconcileFixture(String name) {
   final target = pairs(reconcile['target'] as Map<String, dynamic>);
   final ops = reconcileDiff(prior, target);
 
-  final expectedOps = (expected['ops'] as List).cast<Map<String, dynamic>>();
+  final expectedOps = assertKeyWith(expected, 'ops',
+      (v) => (v as List).cast<Map<String, dynamic>>());
   expect(ops.length, expectedOps.length,
       reason: '$name minimal op set size');
 
@@ -223,7 +228,7 @@ void _runReconcileFixture(String name) {
         final move = got as DiffOpMove<String, int>;
         expect(move.key, want['key'], reason: '$name op[$i] move key');
         // Resolve the fixture's relative anchor to the expected final index.
-        final wantOrder = (expected['result_order'] as List).cast<String>();
+        final wantOrder = (expected['result_order'] as List).cast<String>();  // asserted below
         final anchor = want['after'] ?? want['before'];
         if (anchor != null) {
           final anchorIdx = wantOrder.indexOf(anchor as String);
@@ -255,13 +260,15 @@ void _runReconcileFixture(String name) {
     (target.map((e) => e.key)).toList(),
     {for (final e in target) e.key: e.value},
   );
-  expect(map.keys(), equals((expected['result_order'] as List).cast<String>()),
-      reason: '$name convergence');
+  assertKeyWith(expected, 'result_order', (v) {
+    expect(map.keys(), equals((v as List).cast<String>()),
+        reason: '$name convergence');
+  });
 
   // stable_keys_not_invalidated: prime a value reader per stable key, run the
   // reconcile, then assert each stable reader stayed cached.
-  final stableKeys =
-      (expected['stable_keys_not_invalidated'] as List).cast<String>();
+  final stableKeys = assertKeyWith(expected, 'stable_keys_not_invalidated',
+      (v) => (v as List).cast<String>());
   final readers = <String, Slot<int?>>{};
   for (final k in stableKeys) {
     final slot = Slot<int?>(ctx, (cx) => map.read(k, cx))..call();

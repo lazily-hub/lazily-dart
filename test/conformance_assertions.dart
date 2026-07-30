@@ -1,4 +1,5 @@
-/// Unconsumed-assertion-key guard (`#lzassertunknownkeys`).
+/// Unconsumed- and unasserted-assertion-key guard (`#lzassertunknownkeys`,
+/// `#lzconsumednotasserted`).
 ///
 /// A conformance runner that reads named keys out of a fixture's assertion
 /// block and silently ignores the rest reports the fixture as replayed while
@@ -32,6 +33,26 @@
 /// cast, and helper signature is unchanged. Verification is registered with
 /// [addTearDown] on first use inside a test, so no runner needs a teardown of
 /// its own.
+///
+/// ## Rung 3: consumed is not asserted (`#lzconsumednotasserted`)
+///
+/// Reading a key proves consumption, not assertion. A runner can read
+/// `block[key]` — marking it consumed — and then `continue` past it, bind it to
+/// a variable it never uses, or use it only as an `if` gate while asserting
+/// against a hardcoded literal. In all three shapes the tracker above goes
+/// green while the fixture's value never reaches a comparison; editing the
+/// fixture changes nothing.
+///
+/// So the tracker records a second set. A key becomes ASSERTED only by passing
+/// through [assertKey] / [assertKeyWith], which hand the fixture's own value to
+/// the comparison, or [excuseKey], which records out loud why there is nothing
+/// to compare here. Verification now has three failure modes:
+///
+/// - a key never read — rung 2, unchanged;
+/// - a key read but never asserted — the read-then-discard shapes above;
+/// - a stale excuse: a key both excused and asserted in the same run, so the
+///   excuse is now hiding nothing. This is the same both-directions rule the
+///   coverage guard's `KNOWN_UNCOVERED` allowlist already follows.
 library;
 
 import 'dart:collection';
@@ -180,7 +201,86 @@ void _arm() {
   }
 }
 
-/// Fail if any tracked block still carries a key no runner read.
+/// Assert [actual] equals the fixture's value for [key], marking [key] both
+/// read and asserted.
+///
+/// This is the ONE path by which a key becomes asserted. A comparison written
+/// by hand — `expect(actual, block['key'])` — still marks the key read, so it
+/// will be reported as read-but-not-asserted; that is deliberate, because a
+/// hand-written comparison is exactly where the fixture value silently stops
+/// being the thing compared.
+///
+/// [where] is appended to the failure reason; it defaults to the key.
+void assertKey(
+  Map<String, dynamic> block,
+  String key,
+  Object? actual, [
+  String? where,
+]) {
+  final expected = _markAsserted(block, key);
+  expect(actual, equals(expected), reason: where ?? key);
+}
+
+/// [assertKey] for a comparison that is not equality — a tolerance, a set
+/// containment, a regex, a derived projection.
+///
+/// Marks [key] read and asserted, then hands the fixture's value to [check].
+/// The contract is that the fixture value reaches the comparison, not that the
+/// comparison is `==`.
+T assertKeyWith<T>(
+  Map<String, dynamic> block,
+  String key,
+  T Function(dynamic expected) check,
+) {
+  final expected = _markAsserted(block, key);
+  return check(expected);
+}
+
+/// [assertKeyWith], but a no-op when the block does not carry [key] at all.
+///
+/// Most fixture blocks are unions: a scenario carries whichever of a dozen
+/// optional fields it cares about. An ABSENT key is the fixture's business and
+/// was never this guard's concern — only a key the block DOES carry has to
+/// reach a comparison.
+void assertKeyIfPresent(
+  Map<String, dynamic> block,
+  String key,
+  void Function(dynamic expected) check,
+) {
+  final inner = block is _TrackedAssertions ? block._inner : block;
+  if (!inner.containsKey(key)) return;
+  check(_markAsserted(block, key));
+}
+
+/// Declare that [key] cannot be asserted at this call site, and say why.
+///
+/// Marks [key] read and satisfied WITHOUT asserting it. [reason] must be
+/// non-empty and should name where the fact is proven instead, or why it is
+/// unprovable here.
+///
+/// The excuse is checked in BOTH directions: if the same run also asserts
+/// [key], the excuse has gone stale and verification fails. An excuse that
+/// hides nothing is worse than no excuse, because it reads as a known gap.
+void excuseKey(Map<String, dynamic> block, String key, String reason) {
+  if (reason.trim().isEmpty) {
+    throw ArgumentError.value(reason, 'reason', 'excuseKey($key) needs a why');
+  }
+  final tracked = block is _TrackedAssertions ? block : _trackers[block];
+  if (tracked == null) return;
+  tracked._read.add(key);
+  tracked._excused[key] = reason;
+}
+
+dynamic _markAsserted(Map<String, dynamic> block, String key) {
+  final tracked = block is _TrackedAssertions ? block : _trackers[block];
+  if (tracked == null) return block[key];
+  tracked._read.add(key);
+  tracked._asserted.add(key);
+  return tracked._inner[key];
+}
+
+/// Fail if any tracked block carries a key no runner read, a key a runner read
+/// but never asserted, or an excuse that has gone stale.
 ///
 /// Registered automatically; exposed so a runner that builds blocks outside a
 /// test can force the check.
@@ -189,17 +289,41 @@ void verifyAssertionsConsumed() {
   final blocks = List<_TrackedAssertions>.of(_pending);
   _pending.clear();
   _trackers.clear();
-  final complaints = <String>[];
+  final unread = <String>[];
+  final unasserted = <String>[];
+  final stale = <String>[];
   for (final block in blocks) {
-    final unread = block.unreadKeys;
-    if (unread.isEmpty) continue;
     final at = block.where.isEmpty ? '' : ' ${block.where}';
-    complaints.add('${block.fixture}$at: $unread');
+    final at_ = '${block.fixture}$at';
+    if (block.unreadKeys.isNotEmpty) unread.add('$at_: ${block.unreadKeys}');
+    if (block.unassertedKeys.isNotEmpty) {
+      unasserted.add('$at_: ${block.unassertedKeys}');
+    }
+    for (final key in block.staleExcuses) {
+      stale.add('$at_: $key — "${block._excused[key]}"');
+    }
+  }
+  final complaints = <String>[];
+  if (unread.isNotEmpty) {
+    complaints.add('unconsumed assertion key(s) — the fixture asserts '
+        'something this runner never evaluated, so replaying it proves '
+        'nothing about that field:\n  ${unread.join('\n  ')}');
+  }
+  if (unasserted.isNotEmpty) {
+    complaints.add('unasserted assertion key(s) — the runner READ these keys '
+        'but never compared the fixture value against anything, so editing '
+        'the fixture would change nothing. Route them through assertKey / '
+        'assertKeyWith, or declare an excuseKey with a '
+        'reason:\n  ${unasserted.join('\n  ')}');
+  }
+  if (stale.isNotEmpty) {
+    complaints.add('stale excuse(s) — these keys are excused AND asserted in '
+        'the same run, so the excuse hides nothing and now misreports a '
+        'covered field as a known gap. Delete the '
+        'excuseKey:\n  ${stale.join('\n  ')}');
   }
   if (complaints.isEmpty) return;
-  fail('unconsumed assertion key(s) — the fixture asserts something this '
-      'runner never evaluated, so replaying it proves nothing about that '
-      'field:\n  ${complaints.join('\n  ')}');
+  fail(complaints.join('\n\n'));
 }
 
 /// A fixture assertion block that remembers which of its keys were read.
@@ -215,6 +339,8 @@ class _TrackedAssertions extends MapBase<String, dynamic> {
   final String where;
   final String fixture;
   final Set<String> _read = <String>{};
+  final Set<String> _asserted = <String>{};
+  final Map<String, String> _excused = <String, String>{};
 
   @override
   dynamic operator [](Object? key) {
@@ -252,5 +378,22 @@ class _TrackedAssertions extends MapBase<String, dynamic> {
   List<String> get unreadKeys => [
         for (final key in _inner.keys)
           if (!_read.contains(key) && !_proseKeys.contains(key)) key,
+      ]..sort();
+
+  /// Keys a runner read but never routed through [assertKey] / [assertKeyWith]
+  /// / [excuseKey] — the read-then-discard shapes.
+  List<String> get unassertedKeys => [
+        for (final key in _inner.keys)
+          if (_read.contains(key) &&
+              !_asserted.contains(key) &&
+              !_excused.containsKey(key) &&
+              !_proseKeys.contains(key))
+            key,
+      ]..sort();
+
+  /// Keys carrying an excuse the same run also asserted.
+  List<String> get staleExcuses => [
+        for (final key in _excused.keys)
+          if (_asserted.contains(key)) key,
       ]..sort();
 }

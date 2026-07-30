@@ -137,8 +137,8 @@ void main() {
         mc.merge(step['merge'] as int);
         final fired = runs > before;
         final expected = assertionsOf(step['expected']);
-        expect(mc.get(), expected['value'], reason: policy.name);
-        expect(fired, expected['invalidates'], reason: policy.name);
+        assertKey(expected, 'value', mc.get(), policy.name);
+        assertKey(expected, 'invalidates', fired, policy.name);
       }
       seen++;
     }

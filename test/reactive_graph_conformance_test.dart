@@ -941,23 +941,29 @@ Future<_Report> _replay(
   if (tail == null) return report;
 
   stepIdx = -1; // the `expected` tail is not a numbered step
-  final finalState = assertionsOfOrNull(tail['final_state']);
+  // `final_state` and `after_publish` are nested assertion blocks: each is
+  // tracked in its own right and every key inside it is asserted below, so the
+  // parent key is satisfied by handing its value through rather than by a bare
+  // read.
+  final finalState =
+      assertionsOfOrNull(assertKeyWith(tail, 'final_state', (v) => v));
   if (finalState != null) {
-    final degrees =
-        (finalState['dependents_of'] as Map?)?.cast<String, dynamic>() ?? {};
+    final degrees = assertKeyWith(finalState, 'dependents_of',
+        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
     for (final id in degrees.keys.toList()..sort()) {
       final got = model.dependentsOf(id);
       check('final.dependents_of.$id', got, degrees[id]);
       report.observation.degrees[id] = got;
     }
-    final readable =
-        (finalState['readable'] as Map?)?.cast<String, dynamic>() ?? {};
+    final readable = assertKeyWith(finalState, 'readable',
+        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
     for (final id in readable.keys.toList()..sort()) {
       final ok = await alive(id);
       check('final.readable.$id', ok, readable[id]);
       report.observation.readable[id] = ok;
     }
-    final reads = (finalState['read'] as Map?)?.cast<String, dynamic>() ?? {};
+    final reads = assertKeyWith(finalState, 'read',
+        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
     for (final id in reads.keys.toList()..sort()) {
       final (value, err) = await readId(id);
       final got = err ? 'read_after_dispose' : value;
@@ -966,26 +972,33 @@ Future<_Report> _replay(
     }
   }
 
-  final publish = assertionsOfOrNull(tail['after_publish']);
-  final publishOp = (publish?['op'] as Map?)?.cast<String, dynamic>();
+  final publish =
+      assertionsOfOrNull(assertKeyWith(tail, 'after_publish', (v) => v));
+  final publishOp = publish == null
+      ? null
+      : assertKeyWith(
+          publish, 'op', (v) => (v as Map?)?.cast<String, dynamic>());
   if (publish != null && publishOp != null) {
     final before = model.runLog.length;
     await model.setCell(publishOp['id'] as String, publishOp['value'] as num);
     await model.settle();
     report.observation.afterPublishObserved = model.runLog.sublist(before);
-    check('after_publish.observed_by', report.observation.afterPublishObserved,
-        _strs(publish['observed_by']));
+    assertKeyWith(publish, 'observed_by', (v) {
+      check('after_publish.observed_by',
+          report.observation.afterPublishObserved, _strs(v));
+    });
     // Order matches the reference runner: reads (which re-register edges in a
     // lazy binding) precede the degree assertions that count them.
-    final reads = (publish['read'] as Map?)?.cast<String, dynamic>() ?? {};
+    final reads = assertKeyWith(publish, 'read',
+        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
     for (final id in reads.keys.toList()..sort()) {
       final (value, err) = await readId(id);
       final got = err ? 'read_after_dispose' : value;
       check('after_publish.read.$id', got, reads[id]);
       report.observation.afterPublishReads[id] = got;
     }
-    final degrees =
-        (publish['dependents_of'] as Map?)?.cast<String, dynamic>() ?? {};
+    final degrees = assertKeyWith(publish, 'dependents_of',
+        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
     for (final id in degrees.keys.toList()..sort()) {
       check('after_publish.dependents_of.$id', model.dependentsOf(id),
           degrees[id]);
@@ -1090,7 +1103,11 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
       // observable, not merely each satisfy `expected` independently. This is
       // the whole reason the `scenarios` shape exists — a relation between two
       // op streams is not expressible in a single `steps` array.
-      final pair = _strs(assertionsOfOrNull(fx['expected'])?['observationally_equal']);
+      final expectedTail = assertionsOfOrNull(fx['expected']);
+      final pair = expectedTail == null
+          ? const <String>[]
+          : assertKeyWith(
+              expectedTail, 'observationally_equal', (v) => _strs(v));
       if (pair.isNotEmpty) {
         final names = _scenariosOf(fx).map((s) => s['name'] as String).toList();
         final idx = pair.map((p) {

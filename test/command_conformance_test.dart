@@ -66,8 +66,10 @@ CommandApplyStatus foldFrame(CommandProjection projection, Map<String, dynamic> 
 }
 
 void _assertProjection(CommandProjection projection, Map<String, dynamic> expectSpec) {
-  final want = CommandProjectionImage.fromWire(expectSpec['projection']);
-  expect(projection.toImage(), want, reason: 'projection image mismatch');
+  assertKeyWith(expectSpec, 'projection', (v) {
+    expect(projection.toImage(), CommandProjectionImage.fromWire(v),
+        reason: 'projection image mismatch');
+  });
 }
 
 /// A canonical submit frame builder (mirrors the kt `submitFixture`).
@@ -169,57 +171,63 @@ void main() {
   test('accepted then applied receipt is terminal only at receipt', () {
     final fx = _load('accepted_then_applied_receipt.json');
     final expectSpec = assertionsOf(fx['expect']);
-    final terminalAt = expectSpec['terminal_after_frame_index'] as int;
     final p = CommandProjection();
     final frames = _frames(fx);
+    // The first frame index at which the command reads as terminal — the
+    // observable the fixture names.
+    var firstTerminalAt = -1;
     for (var i = 0; i < frames.length; i++) {
       foldFrame(p, frames[i]);
       final isTerminal = p.terminalFor('cmd-run-1') != null;
-      if (i < terminalAt) {
-        expect(isTerminal, isFalse, reason: 'frame $i must be non-terminal');
-      } else {
-        expect(isTerminal, isTrue, reason: 'frame $i must be terminal');
+      if (isTerminal && firstTerminalAt < 0) firstTerminalAt = i;
+      // Terminality must be monotone once reached.
+      if (firstTerminalAt >= 0 && i > firstTerminalAt) {
+        expect(isTerminal, isTrue,
+            reason: 'frame $i must stay terminal once terminal');
       }
     }
+    assertKey(expectSpec, 'terminal_after_frame_index', firstTerminalAt);
     _assertProjection(p, expectSpec);
   });
 
   test('stale generation events and receipts are ignored', () {
     final fx = _load('stale_generation_ignored.json');
     final expectSpec = assertionsOf(fx['expect']);
-    final ignored =
-        (expectSpec['ignored_frame_indices'] as List).cast<int>().toList();
     final p = CommandProjection();
     final frames = _frames(fx);
+    final staleIndices = <int>[];
     for (var i = 0; i < frames.length; i++) {
       final status = foldFrame(p, frames[i]);
-      if (ignored.contains(i)) {
-        expect(status, isA<CommandApplyStaleGeneration>(),
-            reason: 'frame $i should be stale-generation');
-      }
+      if (status is CommandApplyStaleGeneration) staleIndices.add(i);
     }
+    assertKeyWith(expectSpec, 'ignored_frame_indices', (v) {
+      expect(staleIndices, (v as List).cast<int>(),
+          reason: 'frames the fold reported as stale-generation');
+    });
     _assertProjection(p, expectSpec);
   });
 
   test('terminal conflict fails closed fixture', () {
     final fx = _load('terminal_conflict_fail_closed.json');
     final expectSpec = assertionsOf(fx['expect']);
-    final conflictAt = expectSpec['conflict_after_frame_index'] as int;
-    final commandId = expectSpec['conflict_command_id'] as String;
+    final commandId =
+        assertKeyWith(expectSpec, 'conflict_command_id', (v) => v as String);
     final p = CommandProjection();
     final frames = _frames(fx);
+    var conflictAt = -1;
     for (var i = 0; i < frames.length; i++) {
       final status = foldFrame(p, frames[i]);
-      if (i == conflictAt) {
-        expect(status, isA<CommandApplyTerminalConflict>(),
-            reason: 'frame $i should raise a terminal conflict');
+      if (status is CommandApplyTerminalConflict && conflictAt < 0) {
+        conflictAt = i;
       }
     }
-    expect(p.hasConflict(commandId), expectSpec['conflict'],
-        reason: 'fixture declares whether the fold ends in conflict');
-    final before = CommandProjectionImage.fromWire(
-        expectSpec['projection_before_conflict']);
-    expect(p.toImage(), before);
+    assertKey(expectSpec, 'conflict_after_frame_index', conflictAt,
+        'the frame index at which the fold raised a terminal conflict');
+    assertKey(expectSpec, 'conflict', p.hasConflict(commandId),
+        'fixture declares whether the fold ends in conflict');
+    assertKeyWith(expectSpec, 'projection_before_conflict', (v) {
+      expect(p.toImage(), CommandProjectionImage.fromWire(v));
+    });
   });
 
   test('cancel preempts nonterminal scenarios', () {
@@ -234,6 +242,13 @@ void main() {
       final ignored =
           (expectSpec['ignored_frame_indices'] as List?)?.cast<int>() ??
               const <int>[];
+      assertKeyIfPresent(expectSpec, 'ignored_frame_indices', (v) {
+        // Every named index must be in range, or the expectation never runs.
+        for (final i in (v as List).cast<int>()) {
+          expect(i, lessThan((scenario['frames'] as List).length),
+              reason: '${scenario['name']} names out-of-range frame $i');
+        }
+      });
       final p = CommandProjection();
       final frames = (scenario['frames'] as List).cast<Map<String, dynamic>>();
       for (var i = 0; i < frames.length; i++) {
@@ -267,22 +282,28 @@ void main() {
   test('rpc call waits for terminal', () {
     final fx = _load('rpc_call_waits_for_terminal.json');
     final expectSpec = assertionsOf(fx['expect']);
-    final rpc = expectSpec['rpc'] as Map<String, dynamic>;
-    final commandId = rpc['command_id'] as String;
-    final resolvesAt = rpc['resolves_after_frame_index'] as int;
-    final unresolved =
-        (rpc['unresolved_after_frame_indices'] as List).cast<int>().toList();
+    assertKeyWith(expectSpec, 'rpc', (v) {
+      final rpc = v as Map<String, dynamic>;
+      final commandId = rpc['command_id'] as String;
+      final resolvesAt = rpc['resolves_after_frame_index'] as int;
+      final unresolved =
+          (rpc['unresolved_after_frame_indices'] as List).cast<int>().toList();
+      final p = CommandProjection();
+      final frames = _frames(fx);
+      for (var i = 0; i < frames.length; i++) {
+        foldFrame(p, frames[i]);
+        final resolved = p.terminalFor(commandId) != null;
+        if (unresolved.contains(i)) {
+          expect(resolved, isFalse, reason: 'frame $i must not resolve');
+        }
+        if (i == resolvesAt) {
+          expect(resolved, isTrue, reason: 'frame $i must resolve');
+        }
+      }
+    });
     final p = CommandProjection();
-    final frames = _frames(fx);
-    for (var i = 0; i < frames.length; i++) {
-      foldFrame(p, frames[i]);
-      final resolved = p.terminalFor(commandId) != null;
-      if (unresolved.contains(i)) {
-        expect(resolved, isFalse, reason: 'frame $i must not resolve');
-      }
-      if (i == resolvesAt) {
-        expect(resolved, isTrue, reason: 'frame $i must resolve');
-      }
+    for (final frame in _frames(fx)) {
+      foldFrame(p, frame);
     }
     _assertProjection(p, expectSpec);
   });

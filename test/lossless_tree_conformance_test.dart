@@ -161,31 +161,29 @@ void _applyOp(_World world, String on, Map<String, dynamic> op) {
 }
 
 void _assertExpect(_World world, Map<String, dynamic> expectSpec, String scenario) {
-  final render = expectSpec['render'] as String?;
-  if (render != null) {
-    expect(world.replicas['a']!.render(), render, reason: '$scenario: render on `a`');
-  }
-  final renderOn = expectSpec['render_on'] as Map<String, dynamic>?;
-  if (renderOn != null) {
-    for (final entry in renderOn.entries) {
+  assertKeyIfPresent(expectSpec, 'render', (v) {
+    expect(world.replicas['a']!.render(), v, reason: '$scenario: render on `a`');
+  });
+  assertKeyIfPresent(expectSpec, 'render_on', (v) {
+    for (final entry in (v as Map).entries) {
       expect(world.replicas[entry.key]!.render(), entry.value,
           reason: '$scenario: render on `${entry.key}`');
     }
-  }
-  final liveNodes = expectSpec['live_nodes'] as int?;
-  if (liveNodes != null) {
-    expect(world.replicas['a']!.liveNodeCount(), liveNodes,
+  });
+  assertKeyIfPresent(expectSpec, 'live_nodes', (v) {
+    expect(world.replicas['a']!.liveNodeCount(), v,
         reason: '$scenario: live_nodes on `a`');
-  }
-  final converged = expectSpec['converged'] as List?;
-  if (converged != null) {
-    final labels = converged.cast<String>();
+  });
+  assertKeyIfPresent(expectSpec, 'converged', (v) {
+    // The fixture value names WHICH replicas must agree; it reaches the
+    // comparison by selecting every operand.
+    final labels = (v as List).cast<String>();
     final first = world.replicas[labels.first]!.render();
     for (final name in labels.skip(1)) {
       expect(world.replicas[name]!.render(), first,
           reason: '$scenario: `${labels.first}`/`$name` should converge');
     }
-  }
+  });
 }
 
 void _runFixture(String name) {

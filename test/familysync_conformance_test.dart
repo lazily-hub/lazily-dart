@@ -81,36 +81,37 @@ void main() {
 
         if (sc['reingest'] == true) {
           final reapplied = target.ingest(frame);
-          expect(reapplied, expect_['reingest_applied'] as int,
-              reason: 're-ingest is not idempotent');
+          assertKey(expect_, 'reingest_applied', reapplied,
+              're-ingest is not idempotent');
         }
 
         // Membership propagation: exact key set (order-independent, by suffix).
-        final gotSuffixes = target.familyKeys(namespace).map(_suffixOf).toSet();
-        final wantKeys =
-            (expect_['target_keys'] as List).cast<String>().toSet();
-        expect(gotSuffixes, wantKeys, reason: 'family membership mismatch');
-        expect(target.familyKeys(namespace).length,
-            expect_['target_present_count'] as int);
+        assertKeyWith(expect_, 'target_keys', (v) {
+          final gotSuffixes =
+              target.familyKeys(namespace).map(_suffixOf).toSet();
+          expect(gotSuffixes, (v as List).cast<String>().toSet(),
+              reason: 'family membership mismatch');
+        });
+        assertKey(expect_, 'target_present_count',
+            target.familyKeys(namespace).length);
 
         // Value adoption / LWW convergence.
-        final wantValues =
-            (expect_['target_values'] as Map).cast<String, dynamic>();
-        wantValues.forEach((suffix, want) {
-          expect(target.familyValueLww(namespace, suffix), want as bool,
-              reason: 'value for $namespace/$suffix diverged');
+        assertKeyWith(expect_, 'target_values', (v) {
+          (v as Map).cast<String, dynamic>().forEach((suffix, want) {
+            expect(target.familyValueLww(namespace, suffix), want as bool,
+                reason: 'value for $namespace/$suffix diverged');
+          });
         });
 
         // Derived-aggregate transparency: count of `true` entries converges.
-        expect(target.familyCountTrue(namespace),
-            expect_['target_count_true'] as int,
-            reason: 'derived count_true diverged');
+        assertKey(expect_, 'target_count_true',
+            target.familyCountTrue(namespace), 'derived count_true diverged');
 
         // Membership epoch bumped on materialize.
-        if (expect_['target_epoch_bumped'] == true) {
-          expect(target.membershipEpoch(), greaterThan(epochBefore),
-              reason: 'membership epoch did not bump');
-        }
+        assertKeyWith(expect_, 'target_epoch_bumped', (v) {
+          expect(target.membershipEpoch() > epochBefore, equals(v),
+              reason: 'membership epoch bump mismatch');
+        });
       });
     }
   });

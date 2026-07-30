@@ -53,14 +53,23 @@ void main() {
       final expected = assertionsOf(step['expected']);
       expect(timer.tick(op['now'] as int), equals(step['returns']),
           reason: 'fire edge');
-      expect(timer.hasFired(), equals(expected['fired']));
-      final wantValue = expected['value'] == '()' ? true : null;
-      expect(timer.value(), equals(wantValue));
-      expect(timer.nextFire(), equals(expected['next_fire']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['fired'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'invalidation');
+      assertKey(expected, 'fired', timer.hasFired());
+      assertKeyWith(expected, 'value', (v) {
+        // The corpus spells the fired payload as the unit sentinel `"()"`;
+        // Dart's TimerCell carries `true`. Fail loudly on any other spelling
+        // rather than silently degrading to `null`.
+        final Object? wantValue = switch (v) {
+          null => null,
+          '()' => true,
+          _ => fail('unexpected timer value sentinel $v'),
+        };
+        expect(timer.value(), equals(wantValue));
+      });
+      assertKey(expected, 'next_fire', timer.nextFire());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['fired']),
+            reason: 'invalidation');
+      });
     }
   });
 
@@ -76,12 +85,12 @@ void main() {
       final expected = assertionsOf(step['expected']);
       expect(iv.tick(op['now'] as int), equals(step['returns']),
           reason: 'fire edge');
-      expect(iv.count(), equals(expected['count']));
-      expect(iv.nextFire(), equals(expected['next_fire']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['count'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'invalidation');
+      assertKey(expected, 'count', iv.count());
+      assertKey(expected, 'next_fire', iv.nextFire());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['count']),
+            reason: 'invalidation');
+      });
     }
   });
 
@@ -101,12 +110,12 @@ void main() {
       final expected = assertionsOf(step['expected']);
       expect(cron.tick(op['now'] as int), equals(step['returns']),
           reason: 'fire edge');
-      expect(cron.count(), equals(expected['count']));
-      expect(cron.nextFire(), equals(expected['next_fire']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['count'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'invalidation');
+      assertKey(expected, 'count', cron.count());
+      assertKey(expected, 'next_fire', cron.nextFire());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['count']),
+            reason: 'invalidation');
+      });
     }
   });
 
@@ -127,14 +136,19 @@ void main() {
       expect(d.tick(op['now'] as int), equals(step['returns']),
           reason: 'expiry edge');
       final state = d.state();
-      final wantLabel =
-          expected['state'] == 'Expired' ? DeadlinedState.expired : DeadlinedState.live;
-      expect(state.state, equals(wantLabel));
-      expect(state.value, equals(expected['value']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['state'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'invalidation');
+      assertKeyWith(expected, 'state', (v) {
+        final wantLabel = switch (v) {
+          'Expired' => DeadlinedState.expired,
+          'Live' => DeadlinedState.live,
+          _ => fail('unknown deadline state $v'),
+        };
+        expect(state.state, equals(wantLabel));
+      });
+      assertKey(expected, 'value', state.value);
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['state']),
+            reason: 'invalidation');
+      });
     }
   });
 }

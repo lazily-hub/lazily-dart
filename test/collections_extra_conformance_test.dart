@@ -156,29 +156,24 @@ void _applyTextCrdtStep(Map<String, TextCrdt> replicas, Map<String, dynamic> ste
 }
 
 void _checkTextCrdtExpect(Map<String, TextCrdt> replicas, Map<String, dynamic> expect_) {
-  if (expect_['text'] case final String text) {
-    expect(replicas['a']!.text(), text, reason: 'text');
-  }
-  if (expect_['len'] case final int len) {
-    expect(replicas['a']!.len(), len, reason: 'len');
-  }
-  final textsEqual = expect_['texts_equal'];
-  if (textsEqual is List) {
-    final pair = (textsEqual[0] as List);
+  assertKeyIfPresent(expect_, 'text',
+      (v) => expect(replicas['a']!.text(), v, reason: 'text'));
+  assertKeyIfPresent(expect_, 'len',
+      (v) => expect(replicas['a']!.len(), v, reason: 'len'));
+  assertKeyIfPresent(expect_, 'texts_equal', (v) {
+    // The fixture value names WHICH replicas must agree; it reaches the
+    // comparison by selecting both operands.
+    final pair = ((v as List)[0] as List);
     final a = pair[0] as String;
     final b = pair[1] as String;
-    expect(replicas[a]!.text(), replicas[b]!.text(),
-        reason: 'texts_equal $a/$b');
-  }
-  if (expect_['a_starts_with'] case final String prefix) {
-    expect(replicas['a']!.text().startsWith(prefix), isTrue);
-  }
-  if (expect_['a_ends_with'] case final String suffix) {
-    expect(replicas['a']!.text().endsWith(suffix), isTrue);
-  }
-  if (expect_['tombstone_count'] case final int tc) {
-    expect(replicas['a']!.tombstoneCount(), tc);
-  }
+    expect(replicas[a]!.text(), replicas[b]!.text(), reason: 'texts_equal $a/$b');
+  });
+  assertKeyIfPresent(expect_, 'a_starts_with',
+      (v) => expect(replicas['a']!.text(), startsWith(v as String)));
+  assertKeyIfPresent(expect_, 'a_ends_with',
+      (v) => expect(replicas['a']!.text(), endsWith(v as String)));
+  assertKeyIfPresent(expect_, 'tombstone_count',
+      (v) => expect(replicas['a']!.tombstoneCount(), v));
 }
 
 // ---------------------------------------------------------------------------
@@ -265,27 +260,24 @@ void _applyTextCrdtDeltaStep(Map<String, TextCrdt> replicas, Map<String, dynamic
 }
 
 void _checkTextCrdtDeltaExpect(Map<String, TextCrdt> replicas, Map<String, dynamic> expect_) {
-  final textsEqual = expect_['texts_equal'];
-  if (textsEqual is List) {
-    final pair = (textsEqual[0] as List);
+  assertKeyIfPresent(expect_, 'texts_equal', (v) {
+    final pair = ((v as List)[0] as List);
     final a = pair[0] as String;
     final b = pair[1] as String;
     expect(replicas[a]!.text(), replicas[b]!.text(), reason: 'texts_equal');
-  }
-  final textOn = expect_['text_on'];
-  if (textOn is Map) {
-    for (final entry in textOn.entries) {
+  });
+  assertKeyIfPresent(expect_, 'text_on', (v) {
+    for (final entry in (v as Map).entries) {
       expect(replicas[entry.key]!.text(), entry.value, reason: 'text_on ${entry.key}');
     }
-  }
-  final vvOn = expect_['version_vector_on'];
-  if (vvOn is Map) {
-    for (final entry in vvOn.entries) {
+  });
+  assertKeyIfPresent(expect_, 'version_vector_on', (v) {
+    for (final entry in (v as Map).entries) {
       final expected = (entry.value as Map).map((k, v) => MapEntry(int.parse(k as String), v as int));
       expect(replicas[entry.key]!.versionVector(), expected,
           reason: 'version_vector_on ${entry.key}');
     }
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -373,54 +365,47 @@ void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas, Map<Str
     primaryReplica = orderOnRef.keys.first;
   }
 
-  if (expect_['order'] case final List order) {
-    expect(replicas[primaryReplica]!.order().map((s) => s.toString()).toList(), order);
-  }
-  if (expect_['len'] case final int len) {
-    expect(replicas[primaryReplica]!.len(), len);
-  }
-  final get_ = expect_['get'];
-  if (get_ is Map) {
-    for (final entry in get_.entries) {
+  assertKeyIfPresent(expect_, 'order',
+      (v) => expect(replicas[primaryReplica]!.order().map((s) => s.toString()).toList(), v));
+  assertKeyIfPresent(expect_, 'len', (v) => expect(replicas[primaryReplica]!.len(), v));
+  assertKeyIfPresent(expect_, 'get', (v) {
+    for (final entry in (v as Map).entries) {
       expect(replicas[primaryReplica]!.get(entry.key), entry.value, reason: 'get ${entry.key}');
     }
-  }
-  if (ordersEqual is List) {
-    final pair = (ordersEqual[0] as List);
+  });
+  assertKeyIfPresent(expect_, 'orders_equal', (v) {
+    final pair = ((v as List)[0] as List);
     final a = pair[0] as String;
     final b = pair[1] as String;
     expect(replicas[a]!.order(), replicas[b]!.order(), reason: 'orders_equal');
-  }
-  if (expect_['contains_all'] case final List all) {
-    for (final id in all) {
+  });
+  assertKeyIfPresent(expect_, 'contains_all', (v) {
+    for (final id in (v as List)) {
       expect(replicas[primaryReplica]!.contains(id.toString()), isTrue, reason: 'contains $id');
     }
-  }
-  final orderOn = expect_['order_on'];
-  if (orderOn is Map) {
-    for (final entry in orderOn.entries) {
+  });
+  assertKeyIfPresent(expect_, 'order_on', (v) {
+    for (final entry in (v as Map).entries) {
       expect(replicas[entry.key]!.order().map((s) => s.toString()).toList(), entry.value,
           reason: 'order_on ${entry.key}');
     }
-  }
-  final getOn = expect_['get_on'];
-  if (getOn is Map) {
-    for (final entry in getOn.entries) {
+  });
+  assertKeyIfPresent(expect_, 'get_on', (v) {
+    for (final entry in (v as Map).entries) {
       final rep = replicas[entry.key]!;
       for (final kv in (entry.value as Map).entries) {
         expect(rep.get(kv.key), kv.value, reason: 'get_on ${entry.key}/${kv.key}');
       }
     }
-  }
-  final notContainsOn = expect_['not_contains_on'];
-  if (notContainsOn is Map) {
-    for (final entry in notContainsOn.entries) {
+  });
+  assertKeyIfPresent(expect_, 'not_contains_on', (v) {
+    for (final entry in (v as Map).entries) {
       final rep = replicas[entry.key]!;
       for (final id in (entry.value as List)) {
         expect(rep.contains(id.toString()), isFalse, reason: 'not_contains ${entry.key}/$id');
       }
     }
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -453,13 +438,27 @@ void _playSemTreeScenario(Map<String, dynamic> scenario) {
   final treeSpec = _parseTreeNode(scenario['tree'] as Map<String, dynamic>);
   final tree = SemTree.build<num, dynamic>(ctx, treeSpec, fold);
 
+  // A downstream consumer of the root's derived value. `downstream_consumer_reran`
+  // is a real observable fact — count the reruns rather than letting the fixture
+  // value gate an assertion about something else. Built BEFORE the edit so the
+  // initial run is excluded from the count.
+  var downstreamRuns = 0;
+
   final expectInitial = assertionsOfOrNull(scenario['expect_initial']);
   if (expectInitial != null) {
-    for (final entry in expectInitial.entries) {
-      if (entry.key == 'sibling_a_cached' || entry.key == 'downstream_consumer_reran') continue;
-      expect(tree.nodeValue(entry.key), equals(entry.value), reason: 'initial ${entry.key}');
+    // `keys` deliberately does not count as a read, so the snapshot below is
+    // taken without marking anything; every key then goes through assertKey.
+    for (final key in expectInitial.keys.toList()) {
+      assertKey(expectInitial, key, tree.nodeValue(key), 'initial $key');
     }
   }
+
+  final downstream = ctx.effect((cx) {
+    cx.get(tree.rootHandle());
+    downstreamRuns++;
+    return null;
+  });
+  final runsBeforeEdit = downstreamRuns;
 
   final edit = scenario['edit'];
   if (edit is Map) {
@@ -467,33 +466,29 @@ void _playSemTreeScenario(Map<String, dynamic> scenario) {
 
     final expectAfter = assertionsOfOrNull(scenario['expect_after']);
     if (expectAfter != null) {
-      for (final entry in expectAfter.entries) {
-        switch (entry.key) {
+      for (final key in expectAfter.keys.toList()) {
+        switch (key) {
           case 'sibling_a_cached':
             // 'a' subtree should still be cached after editing 'b1'.
-            expect(tree.isCached('a'), entry.value, reason: 'sibling_a_cached');
+            assertKey(expectAfter, key, tree.isCached('a'), 'sibling_a_cached');
           case 'downstream_consumer_reran':
-            // We test this separately below.
-            break;
+            assertKey(expectAfter, key, downstreamRuns > runsBeforeEdit,
+                'downstream_consumer_reran');
           default:
-            expect(tree.nodeValue(entry.key), equals(entry.value), reason: 'after ${entry.key}');
+            assertKey(expectAfter, key, tree.nodeValue(key), 'after $key');
         }
-      }
-      // For the memo-guard scenario, verify downstream didn't rerun.
-      if (expectAfter['downstream_consumer_reran'] == false) {
-        // The root value should be unchanged → memo suppressed cascade.
-        expect(tree.isCached('root'), isTrue, reason: 'root still cached (memo guard)');
       }
     }
   }
+  downstream.dispose();
 
   final removeChild = scenario['remove_child'];
   if (removeChild is Map) {
     tree.removeChild(removeChild['parent'] as String, removeChild['child'] as String);
     final expectAfter = assertionsOfOrNull(scenario['expect_after']);
     if (expectAfter != null) {
-      for (final entry in expectAfter.entries) {
-        expect(tree.nodeValue(entry.key), equals(entry.value), reason: 'after ${entry.key}');
+      for (final key in expectAfter.keys.toList()) {
+        assertKey(expectAfter, key, tree.nodeValue(key), 'after $key');
       }
     }
   }
@@ -535,22 +530,20 @@ void _playStableIdScenario(Map<String, dynamic> scenario) {
     final keys = blocks.map(blockKey).toList();
 
     final expect_ = assertionsOf(scenario['expect']);
-    final keyEqual = expect_['key_equal'];
-    if (keyEqual is List) {
-      for (final pair in keyEqual.cast<List>()) {
+    assertKeyIfPresent(expect_, 'key_equal', (v) {
+      for (final pair in (v as List).cast<List>()) {
         final i = pair[0] as int;
         final j = pair[1] as int;
         expect(keys[i].equals(keys[j]), isTrue, reason: 'key_equal [$i,$j]');
       }
-    }
-    final keyNotEqual = expect_['key_not_equal'];
-    if (keyNotEqual is List) {
-      for (final pair in keyNotEqual.cast<List>()) {
+    });
+    assertKeyIfPresent(expect_, 'key_not_equal', (v) {
+      for (final pair in (v as List).cast<List>()) {
         final i = pair[0] as int;
         final j = pair[1] as int;
         expect(keys[i].equals(keys[j]), isFalse, reason: 'key_not_equal [$i,$j]');
       }
-    }
+    });
     return;
   }
 
@@ -566,39 +559,40 @@ void _playStableIdScenario(Map<String, dynamic> scenario) {
 
     final expect_ = assertionsOf(scenario['expect']);
 
-    if (expect_['matches'] case final List matches) {
+    assertKeyIfPresent(expect_, 'matches', (v) {
+      final matches = v as List;
       final alignment = align(oldBlocks, newBlocks);
       for (var i = 0; i < matches.length; i++) {
         final expected = matches[i] as String;
         final actual = alignment.newMatches[i].toString();
         expect(actual, expected, reason: 'match[$i]');
       }
-    }
+    });
 
-    if (expect_['removed'] case final List removed) {
+    assertKeyIfPresent(expect_, 'removed', (v) {
       final alignment = align(oldBlocks, newBlocks);
-      expect(alignment.removed, removed, reason: 'removed');
-    }
+      expect(alignment.removed, v, reason: 'removed');
+    });
 
-    if (expect_['similarity_min'] case final double min) {
+    assertKeyIfPresent(expect_, 'similarity_min', (v) {
+      final min = (v as num).toDouble();
       final alignment = align(oldBlocks, newBlocks);
       for (final m in alignment.newMatches) {
         if (m.kind == 'edited') {
-          expect(m.similarity >= min, isTrue, reason: 'similarity_min');
+          expect(m.similarity, greaterThanOrEqualTo(min), reason: 'similarity_min');
         }
       }
-    }
+    });
 
-    final newKeyEqualsOldKey = expect_['new_key_equals_old_key'];
-    if (newKeyEqualsOldKey is List) {
+    assertKeyIfPresent(expect_, 'new_key_equals_old_key', (v) {
       final keys = assignStableKeys(oldBlocks, newBlocks);
       final oldKeys = oldBlocks.map(blockKey).map((k) => k.asString()).toList();
-      for (final pair in newKeyEqualsOldKey.cast<List>()) {
+      for (final pair in (v as List).cast<List>()) {
         final ni = pair[0] as int;
         final oi = pair[1] as int;
         expect(keys[ni], oldKeys[oi], reason: 'new_key_equals_old_key [$ni,$oi]');
       }
-    }
+    });
   }
 }
 

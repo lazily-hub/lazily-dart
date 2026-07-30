@@ -65,13 +65,13 @@ void main() {
           expect(lease.tick(now), equals(step['returns']));
           break;
       }
-      expect(lease.holder(now), equals(expected['holder']));
-      expect(lease.isHeld(now), equals(expected['held']));
-      expect(lease.fence(), equals(expected['fence']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['holder'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'holder invalidation');
+      assertKey(expected, 'holder', lease.holder(now));
+      assertKey(expected, 'held', lease.isHeld(now));
+      assertKey(expected, 'fence', lease.fence());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['holder']),
+            reason: 'holder invalidation');
+      });
     }
   });
 
@@ -97,17 +97,19 @@ void main() {
         default:
           role = leader.tick(now);
       }
-      final wantRole = {
-        'Leader': LeaderRole.leader,
-        'Follower': LeaderRole.follower,
-        'Candidate': LeaderRole.candidate,
-      }[expected['role']];
-      expect(role, equals(wantRole));
-      expect(leader.currentLeader(now), equals(expected['current_leader']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['current_leader'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'current_leader invalidation');
+      assertKeyWith(expected, 'role', (v) {
+        final wantRole = {
+          'Leader': LeaderRole.leader,
+          'Follower': LeaderRole.follower,
+          'Candidate': LeaderRole.candidate,
+        }[v];
+        expect(role, equals(wantRole));
+      });
+      assertKey(expected, 'current_leader', leader.currentLeader(now));
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['current_leader']),
+            reason: 'current_leader invalidation');
+      });
     }
   });
 
@@ -133,12 +135,12 @@ void main() {
           expect(lock.tick(now), equals(step['returns']));
           break;
       }
-      expect(lock.isLocked(now), equals(expected['is_locked']));
-      expect(lock.fence(), equals(expected['fence']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['is_locked'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'is_locked invalidation');
+      assertKey(expected, 'is_locked', lock.isLocked(now));
+      assertKey(expected, 'fence', lock.fence());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['is_locked']),
+            reason: 'is_locked invalidation');
+      });
     }
   });
 
@@ -157,11 +159,12 @@ void main() {
       } else {
         sem.release();
       }
-      expect(sem.permitsAvailable(), equals(expected['permits_available']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['permits_available'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'permits_available invalidation');
+      assertKey(expected, 'permits_available', sem.permitsAvailable());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed),
+            equals((v as Map)['permits_available']),
+            reason: 'permits_available invalidation');
+      });
     }
   });
 
@@ -176,12 +179,12 @@ void main() {
       final op = step['op'] as Map<String, dynamic>;
       final expected = assertionsOf(step['expected']);
       expect(q.arrive(op['peer'] as int), equals(step['returns']));
-      expect(q.count(), equals(expected['votes']));
-      expect(q.isOpen(), equals(expected['is_open']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['is_open'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'is_open invalidation');
+      assertKey(expected, 'votes', q.count());
+      assertKey(expected, 'is_open', q.isOpen());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['is_open']),
+            reason: 'is_open invalidation');
+      });
     }
   });
 }

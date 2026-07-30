@@ -46,9 +46,11 @@ bool _invalidated(Context ctx, Slot slot) {
 /// Assert the projected output and invalidation flag for one step.
 void _check(Context ctx, Slot observed, Map<String, dynamic> step, Object? out) {
   final expected = assertionsOf(step['expected']);
-  expect(out, equals(expected['output']), reason: 'output');
-  final wantInv = (expected['invalidates'] as Map<String, dynamic>)['output'];
-  expect(_invalidated(ctx, observed), equals(wantInv), reason: 'invalidation');
+  assertKey(expected, 'output', out);
+  assertKeyWith(expected, 'invalidates', (v) {
+    expect(_invalidated(ctx, observed), equals((v as Map)['output']),
+        reason: 'invalidation');
+  });
 }
 
 void main() {

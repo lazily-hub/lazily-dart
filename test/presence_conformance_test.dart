@@ -64,11 +64,11 @@ void main() {
         case 'tick':
           cell.tick(op['now'] as int);
       }
-      expect(cell.value(), equals(expected['value']), reason: 'value');
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['value'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'invalidation');
+      assertKey(expected, 'value', cell.value());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['value']),
+            reason: 'invalidation');
+      });
     }
   });
 
@@ -90,13 +90,15 @@ void main() {
         case 'tick':
           cell.tick(op['now'] as int);
       }
-      expect(cell.present(),
-          equals(_expectedPresent(expected['present'] as Map<String, dynamic>)),
-          reason: 'present');
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['present'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'invalidation');
+      assertKeyWith(expected, 'present', (v) {
+        expect(cell.present(),
+            equals(_expectedPresent((v as Map).cast<String, dynamic>())),
+            reason: 'present');
+      });
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['present']),
+            reason: 'invalidation');
+      });
     }
   });
 
@@ -116,13 +118,15 @@ void main() {
         case 'tick':
           cell.tick(op['now'] as int);
       }
-      expect(cell.present(),
-          equals(_expectedPresent(expected['present'] as Map<String, dynamic>)),
-          reason: 'present');
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['present'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'invalidation');
+      assertKeyWith(expected, 'present', (v) {
+        expect(cell.present(),
+            equals(_expectedPresent((v as Map).cast<String, dynamic>())),
+            reason: 'present');
+      });
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['present']),
+            reason: 'invalidation');
+      });
     }
   });
 }

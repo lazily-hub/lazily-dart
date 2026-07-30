@@ -273,61 +273,62 @@ void _replay(_Flavor flavor, String fixtureName) {
     }
 
     final gotOrder = flavor.keysUntracked();
-    expect(gotOrder, (expected['order'] as List).cast<String>(),
-        reason: '${where(i)}: order diverged');
+    assertKeyWith(expected, 'order', (v) {
+      expect(gotOrder, (v as List).cast<String>(),
+          reason: '${where(i)}: order diverged');
+    });
 
-    if (expected['membership'] != null) {
-      expect(gotOrder.toSet(),
-          (expected['membership'] as List).cast<String>().toSet(),
+    assertKeyIfPresent(expected, 'membership', (v) {
+      expect(gotOrder.toSet(), (v as List).cast<String>().toSet(),
           reason: '${where(i)}: membership set diverged');
-    }
+    });
 
-    final wantValues = expected['values'] as Map<String, dynamic>?;
-    if (wantValues != null) {
-      wantValues.forEach((key, want) {
-        expect(flavor.valueUntracked(key), want,
+    assertKeyIfPresent(expected, 'values', (v) {
+      (v as Map).forEach((key, want) {
+        expect(flavor.valueUntracked(key as String), want,
             reason: '${where(i)}: value for $key diverged');
       });
-    }
+    });
 
     // The invalidation matrix, read from expected.invalidates - where the
     // fixtures actually nest it. lazily-rs read it off the step instead, so its
     // assertion never ran once.
-    final invalidates = expected['invalidates'] as Map<String, dynamic>?;
-    expect(invalidates, isNotNull,
+    expect(expected['invalidates'], isNotNull,
         reason: '${where(i)}: expected.invalidates is missing - '
             'the matrix is the contract');
     matrices += 1;
 
-    final dirty = ((invalidates!['value'] as List?) ?? []).cast<String>().toSet();
-    final survivors = gotOrder.toSet();
-    valueReaders.forEach((key, drive) {
-      if (!survivors.contains(key)) return; // removed: no entry left to read
-      final recomputed = drive() != baseline[key];
-      if (dirty.contains(key)) {
-        expect(recomputed, isTrue,
-            reason: '${where(i)}: value reader for $key '
-                'should have been invalidated');
-      } else {
-        expect(recomputed, isFalse,
-            reason: '${where(i)}: value reader for $key should have stayed '
-                'cached - per-entry independence is the whole point');
-      }
-    });
+    assertKeyWith(expected, 'invalidates', (v) {
+      final invalidates = v as Map;
+      final dirty = ((invalidates['value'] as List?) ?? []).cast<String>().toSet();
+      final survivors = gotOrder.toSet();
+      valueReaders.forEach((key, drive) {
+        if (!survivors.contains(key)) return; // removed: no entry left to read
+        final recomputed = drive() != baseline[key];
+        if (dirty.contains(key)) {
+          expect(recomputed, isTrue,
+              reason: '${where(i)}: value reader for $key '
+                  'should have been invalidated');
+        } else {
+          expect(recomputed, isFalse,
+              reason: '${where(i)}: value reader for $key should have stayed '
+                  'cached - per-entry independence is the whole point');
+        }
+      });
 
-    expect(membership() != membershipBase, invalidates['membership'] == true,
-        reason: '${where(i)}: membership reader invalidation mismatch - '
-            'a pure reorder must NOT invalidate set-identity readers');
-    expect(order() != orderBase, invalidates['order'] == true,
-        reason: '${where(i)}: order reader invalidation mismatch');
+      expect(membership() != membershipBase, invalidates['membership'] == true,
+          reason: '${where(i)}: membership reader invalidation mismatch - '
+              'a pure reorder must NOT invalidate set-identity readers');
+      expect(order() != orderBase, invalidates['order'] == true,
+          reason: '${where(i)}: order reader invalidation mismatch');
+    });
 
     // Handle stability: the law separating an atomic move from a remove +
     // re-mint. A reorder keeps the entry's node, so dependents and lineage
     // survive.
-    final stable = expected['handle_stable'] as Map<String, dynamic>?;
-    if (stable != null) {
-      stable.forEach((key, wantStable) {
-        final after = flavor.entryIdentity(key);
+    assertKeyIfPresent(expected, 'handle_stable', (v) {
+      (v as Map).forEach((key, wantStable) {
+        final after = flavor.entryIdentity(key as String);
         final before = idsBefore[key];
         if (wantStable == true) {
           expect(before != null && identical(after, before), isTrue,
@@ -338,7 +339,7 @@ void _replay(_Flavor flavor, String fixtureName) {
               reason: '${where(i)}: handle for $key should have changed');
         }
       });
-    }
+    });
   }
 
   expect(matrices, greaterThan(0),

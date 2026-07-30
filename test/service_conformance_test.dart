@@ -64,11 +64,12 @@ void main() {
       final op = step['op'] as Map<String, dynamic>;
       final expected = assertionsOf(step['expected']);
       h.set(op['name'] as String, op['up'] as bool, op['critical'] as bool);
-      expect(h.health(), equals(_health(expected['health'] as String)));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['health'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'health invalidation');
+      assertKeyWith(expected, 'health',
+          (v) => expect(h.health(), equals(_health(v as String))));
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['health']),
+            reason: 'health invalidation');
+      });
     }
   });
 
@@ -82,11 +83,11 @@ void main() {
       final op = step['op'] as Map<String, dynamic>;
       final expected = assertionsOf(step['expected']);
       r.set(op['name'] as String, op['ready'] as bool);
-      expect(r.ready(), equals(expected['ready']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['ready'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'ready invalidation');
+      assertKey(expected, 'ready', r.ready());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['ready']),
+            reason: 'ready invalidation');
+      });
     }
   });
 
@@ -110,12 +111,13 @@ void main() {
         case 'resolve':
           expect(d.resolve(op['service'] as String), equals(step['returns']));
       }
-      expect(d.discovery(),
-          equals((expected['discovery'] as Map).cast<String, String>()));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['discovery'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'discovery invalidation');
+      assertKeyWith(expected, 'discovery', (v) {
+        expect(d.discovery(), equals((v as Map).cast<String, String>()));
+      });
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['discovery']),
+            reason: 'discovery invalidation');
+      });
     }
   });
 
@@ -136,12 +138,13 @@ void main() {
         case 'replay':
           reg.replay();
       }
-      expect(reg.projection(),
-          equals((expected['projection'] as Map).cast<String, String>()));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['projection'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'projection invalidation');
+      assertKeyWith(expected, 'projection', (v) {
+        expect(reg.projection(), equals((v as Map).cast<String, String>()));
+      });
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['projection']),
+            reason: 'projection invalidation');
+      });
     }
   });
 }

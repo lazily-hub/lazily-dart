@@ -111,15 +111,12 @@ bool _sameState(Map<NodeId, List<int>> a, Map<NodeId, List<int>> b) =>
           List.generate(x.length, (i) => x[i] == y[i]).every((v) => v);
     });
 
-/// Check a boolean property the fixture DECLARES against what the replay
-/// actually observed.
-///
-/// Deliberately not `expect(observed, isTrue)` guarded by the declared value: a
-/// fixture that flips the claim to `false` must then require the property to be
-/// absent, or the assertion only ever tests one polarity.
-void _declares(Object? declared, bool observed, String what) {
-  expect(observed, declared, reason: what);
-}
+// A boolean property the fixture DECLARES is now checked through
+// `assertKey(block, key, observed, what)`, which both marks the key asserted
+// and keeps the original polarity rule: deliberately not
+// `expect(observed, isTrue)` guarded by the declared value, because a fixture
+// that flips the claim to `false` must then require the property to be ABSENT,
+// or the assertion only ever tests one polarity.
 
 /// A reference file-backed [DurableOutbox] (crash-replay test helper): one
 /// `[epoch, wire]` JSON row per line, reopened from disk to model a crash.
@@ -264,12 +261,12 @@ void main() {
       final start = sc['receiver_last_epoch'] as int;
       final coord = ResyncCoordinator(start);
       final action = coord.ingestDelta(delta);
-      expect(_actionName(action), ex['action']);
-      _declares(ex['applied'], action.isApply, 'delta applied');
-      expect(coord.lastEpoch, ex['receiver_last_epoch_after']);
+      assertKey(ex, 'action', _actionName(action));
+      assertKey(ex, 'applied', action.isApply, 'delta applied');
+      assertKey(ex, 'receiver_last_epoch_after', coord.lastEpoch);
       // `atomic_advance`: the whole span lands in ONE ingest — the cursor never
       // rests on an intermediate epoch.
-      _declares(ex['atomic_advance'], coord.lastEpoch - start == delta.span,
+      assertKey(ex, 'atomic_advance', coord.lastEpoch - start == delta.span,
           'span advanced the cursor atomically, not epoch by epoch');
       // `fold_equivalent`: folding the same span as unit deltas leaves the
       // receiver on the same cursor, so a span is an optimization and not a
@@ -279,7 +276,7 @@ void main() {
         expect(unit.ingestDelta(Delta(baseEpoch: e, epoch: e + 1)).isApply,
             isTrue);
       }
-      _declares(ex['fold_equivalent'], unit.lastEpoch == coord.lastEpoch,
+      assertKey(ex, 'fold_equivalent', unit.lastEpoch == coord.lastEpoch,
           'span fold equals the unit fold');
 
       final gap = _scenario(fx, 'gap_rule_unchanged_under_span');
@@ -289,11 +286,11 @@ void main() {
       final res = gc.ingestDelta(
           Delta(baseEpoch: gd['base_epoch'] as int, epoch: gd['epoch'] as int));
       expect(res, isA<ResyncActionRequestSnapshot>());
-      expect(_actionName(res), gapEx['action']);
-      _declares(gapEx['applied'], res.isApply, 'gap delta is not applied');
-      expect((res as ResyncActionRequestSnapshot).fromEpoch,
-          gapEx['request_from']);
-      expect(gc.lastEpoch, gapEx['receiver_last_epoch_after']);
+      assertKey(gapEx, 'action', _actionName(res));
+      assertKey(gapEx, 'applied', res.isApply, 'gap delta is not applied');
+      assertKey(gapEx, 'request_from',
+          (res as ResyncActionRequestSnapshot).fromEpoch);
+      assertKey(gapEx, 'receiver_last_epoch_after', gc.lastEpoch);
       expect(gc.lastEpoch, gap['receiver_last_epoch']);
     });
 
@@ -332,10 +329,11 @@ void main() {
         if (m.isSnapshot) _fold(sender, m);
         expect(coord.lastEpoch, frame['last_epoch_after']);
       }
-      expect(coord.lastEpoch, ex['final_last_epoch']);
-      expect(requests, ex['resync_requests_emitted']);
-      expect(state, _stateOf(ex['converged_nodes']));
-      _declares(ex['equals_no_drop_receiver'], _sameState(state, sender),
+      assertKey(ex, 'final_last_epoch', coord.lastEpoch);
+      assertKey(ex, 'resync_requests_emitted', requests);
+      assertKeyWith(ex, 'converged_nodes',
+          (v) => expect(state, _stateOf(v)));
+      assertKey(ex, 'equals_no_drop_receiver', _sameState(state, sender),
           'gap recovery is state-equivalent, not lossy');
       expect(_sameState(deltasOnly, sender), isFalse,
           reason: 'the deltas this receiver saw are MISSING the dropped '
@@ -350,8 +348,8 @@ void main() {
           in (single['inbound'] as List).cast<Map<String, dynamic>>()) {
         if (c2.ingest(_msg(frame['frame'])).isRequestSnapshot) req2++;
       }
-      expect(req2, singleEx['resync_requests_emitted']);
-      expect(c2.lastEpoch, singleEx['final_last_epoch']);
+      assertKey(singleEx, 'resync_requests_emitted', req2);
+      assertKey(singleEx, 'final_last_epoch', c2.lastEpoch);
     });
 
     test('idempotent_redelivery.json', () {
@@ -380,9 +378,9 @@ void main() {
           if (res.isApply) _fold(state, m);
           expect(coord.lastEpoch, frame['last_epoch_after']);
         }
-        expect(coord.lastEpoch, ex['final_last_epoch']);
-        expect(state, _stateOf(ex['state_after']));
-        _declares(ex['net_effect_unchanged'], _sameState(state, before),
+        assertKey(ex, 'final_last_epoch', coord.lastEpoch);
+        assertKeyWith(ex, 'state_after', (v) => expect(state, _stateOf(v)));
+        assertKey(ex, 'net_effect_unchanged', _sameState(state, before),
             'at-least-once delivery, exactly-once effect ($name)');
       }
     });
@@ -408,8 +406,8 @@ void main() {
         mem.ackThrough(ack);
         file.ackThrough(ack);
 
-        final retainedAfterAck =
-            (expect_['retained_after_ack'] as List).cast<int>();
+        final retainedAfterAck = assertKeyWith(expect_, 'retained_after_ack',
+            (v) => (v as List).cast<int>());
         expect(mem.retainedEpochs(), retainedAfterAck);
         expect(file.retainedEpochs(), retainedAfterAck);
 
@@ -417,19 +415,22 @@ void main() {
         file = _FileOutbox(path);
         final replay = file.replayFrom(cursor);
         final replayed = replay.map((e) => e.$1).toList();
-        expect(replayed, (expect_['replayed_from_cursor'] as List).cast<int>());
+        assertKeyWith(expect_, 'replayed_from_cursor',
+            (v) => expect(replayed, (v as List).cast<int>()));
         // `replay_order` is not a duplicate of `replayed_from_cursor`: the set
         // can be right while the ORDER is wrong, and a receiver that folds a
         // later epoch first sees a gap it can never close.
-        expect(replayed, (expect_['replay_order'] as List).cast<int>());
+        assertKeyWith(expect_, 'replay_order',
+            (v) => expect(replayed, (v as List).cast<int>()));
 
         final coord = ResyncCoordinator(cursor);
         final applied = <int>[];
         for (final (_, m) in replay) {
           if (coord.ingest(m).isApply) applied.add(coord.lastEpoch);
         }
-        expect(applied, (expect_['receiver_applies'] as List).cast<int>());
-        expect(coord.lastEpoch, expect_['receiver_last_epoch_after']);
+        assertKeyWith(expect_, 'receiver_applies',
+            (v) => expect(applied, (v as List).cast<int>()));
+        assertKey(expect_, 'receiver_last_epoch_after', coord.lastEpoch);
 
         // At-least-once on the wire, exactly-once in effect: every frame the
         // sender still owed lands, and none lands twice.
@@ -439,9 +440,9 @@ void main() {
         ];
         final lost = owed.where((e) => !applied.contains(e)).length;
         final doubled = applied.length - applied.toSet().length;
-        expect(lost, expect_['ops_lost']);
-        expect(doubled, expect_['ops_doubled']);
-        _declares(expect_['exactly_once_effect'], lost == 0 && doubled == 0,
+        assertKey(expect_, 'ops_lost', lost);
+        assertKey(expect_, 'ops_doubled', doubled);
+        assertKey(expect_, 'exactly_once_effect', lost == 0 && doubled == 0,
             'crash replay is at-least-once delivery with exactly-once effect');
       } finally {
         dir.deleteSync(recursive: true);
@@ -450,24 +451,27 @@ void main() {
       // send_failure_retains_frame_for_next_tick
       final sc2 = _scenario(fx, 'send_failure_retains_frame_for_next_tick');
       final ex2 = assertionsOf(sc2['expect']);
-      final retained = (ex2['retained'] as List).cast<int>();
+      final retained =
+          assertKeyWith(ex2, 'retained', (v) => (v as List).cast<int>());
       final mem2 = InMemoryOutbox();
       for (final (e, m) in _framesOf(sc2, 'appended')) {
         mem2.append(e, m);
       }
       expect(mem2.retainedEpochs(), retained);
       // The send failed and nothing was acked, so the frame is still owed.
-      _declares(
-          ex2['frame_retained_after_failed_send'],
+      assertKey(
+          ex2,
+          'frame_retained_after_failed_send',
           sc2['send_fails_first_attempt'] == true &&
               sc2['ack_through'] == null &&
               mem2.retainedEpochs().isNotEmpty,
           'a failed send retains the frame');
       final resent = mem2.replayFrom(retained[0] - 1).map((e) => e.$1).toList();
-      expect(resent, (ex2['resent_on_next_tick'] as List).cast<int>());
+      assertKeyWith(ex2, 'resent_on_next_tick',
+          (v) => expect(resent, (v as List).cast<int>()));
       // A retained frame is a DELAY, not a hole: the next tick replays it, so
       // the receiver never sees an epoch it can no longer obtain.
-      _declares(ex2['permanent_gap'], resent.isEmpty,
+      assertKey(ex2, 'permanent_gap', resent.isEmpty,
           'a retained frame is redeliverable, so there is no permanent gap');
     });
 
@@ -490,7 +494,7 @@ void main() {
       }
 
       final set = replayOrSet(addOps);
-      expect(set.present(), addEx['present']);
+      assertKey(addEx, 'present', set.present());
 
       // `reason` is the corpus's prose for WHY the set stays present. Holding
       // it to the tag the replay actually computes stops the explanation from
@@ -506,22 +510,26 @@ void main() {
       final unobserved = addedTags.difference(observedTags);
       expect(set.present(), unobserved.isNotEmpty,
           reason: 'present iff some added tag outlived every remove');
-      for (final tag in unobserved) {
-        expect(addEx['reason'], contains(tag),
-            reason: 'the fixture explains presence by a tag no remove '
-                'observed; the replay computed $unobserved');
-      }
+      assertKeyWith(addEx, 'reason', (v) {
+        for (final tag in unobserved) {
+          expect(v, contains(tag),
+              reason: 'the fixture explains presence by a tag no remove '
+                  'observed; the replay computed $unobserved');
+        }
+      });
       // `order_independent`: an OrSet join is commutative, so the reversed
       // transcript must reach the same verdict.
-      _declares(addEx['order_independent'],
+      assertKey(addEx, 'order_independent',
           replayOrSet(addOps.reversed).present() == set.present(),
           'OrSet outcome is order-independent');
       // `redeliver_applied_count`: re-delivering the whole transcript applies
       // nothing new.
       final redelivered = replayOrSet(addOps)..join(set);
-      _declares(addEx['redeliver_applied_count'] == 0,
-          redelivered.present() == set.present() && redelivered == set,
-          'a re-delivered transcript is a no-op');
+      assertKeyWith(addEx, 'redeliver_applied_count', (v) {
+        expect(redelivered.present() == set.present() && redelivered == set,
+            v == 0,
+            reason: 'a re-delivered transcript is a no-op');
+      });
 
       final lww = _scenario(fx, 'lww_alive_highest_stamp_wins');
       final lwwEx = assertionsOf(lww['expect']);
@@ -538,11 +546,14 @@ void main() {
       }
 
       final reg = replayLww(ops);
-      expect(reg.value, lwwEx['value']);
+      assertKey(lwwEx, 'value', reg.value);
       // `resolution`: the corpus names the conflict rule. Assert the rule, not
       // the label — the surviving value must be the one carried by the op with
-      // the maximum stamp.
-      expect(lwwEx['resolution'], 'max_stamp');
+      // the maximum stamp. The label is still compared against the fixture's
+      // own value, so a corpus that switches rules reddens here rather than
+      // replaying against a runner that models only this one.
+      assertKey(lwwEx, 'resolution', 'max_stamp',
+          'this runner models max-stamp resolution only');
       // Stamp order is (wall_time, logical, peer) lexicographically — the same
       // total order the register uses to break ties.
       List<int> stampKey(Map<String, dynamic> op) {
@@ -561,7 +572,7 @@ void main() {
           (a, b) => higher(stampKey(b), stampKey(a)) ? b : a);
       expect(reg.value, maxStamped['value'],
           reason: 'max_stamp resolution: the highest-stamp write survives');
-      _declares(lwwEx['order_independent'],
+      assertKey(lwwEx, 'order_independent',
           replayLww(ops.reversed.toList()).value == reg.value,
           'LWW outcome is order-independent');
 
@@ -588,15 +599,18 @@ void main() {
       }.toList()
         ..sort();
       final deathEx = assertionsOf(death['expect']);
-      expect(live,
-          (deathEx['live_docs_after'] as List).cast<String>().toList()..sort());
+      assertKeyWith(deathEx, 'live_docs_after',
+          (v) => expect(live, (v as List).cast<String>().toList()..sort()));
       // `live_docs_before` is the aggregate this replay started from — assert it
       // rather than assume it, or the "after" set could be right for the wrong
       // reason (a doc that was never live cannot demonstrate a cascade).
       final liveBefore = <String>{for (final (doc, _) in open) doc}.toList()
         ..sort();
-      expect(liveBefore,
-          (deathEx['live_docs_before'] as List).cast<String>().toList()..sort());
+      assertKeyWith(
+          deathEx,
+          'live_docs_before',
+          (v) => expect(
+              liveBefore, (v as List).cast<String>().toList()..sort()));
       // `cascade`: ONE pid death dropped MORE THAN ONE doc, and left the docs
       // of every other pid alone. That pair is the cascade; either half on its
       // own is satisfied by an unrelated single drop.
@@ -605,8 +619,9 @@ void main() {
         for (final (doc, p) in open)
           if (p != pid) doc,
       ];
-      _declares(
-          deathEx['cascade'],
+      assertKey(
+          deathEx,
+          'cascade',
           dropped.length > 1 && otherPidDocs.every(live.contains),
           'one pid death cascades across its docs and isolates the others');
     });

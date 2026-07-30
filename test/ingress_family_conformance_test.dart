@@ -658,59 +658,63 @@ int _replay(_Flavor flavor, String name) {
 
 void _assertState(_IngressModel model, Map<String, dynamic> step, String where) {
   final expected = assertionsOf(step['expected']);
-  final scopes = expected['scopes'] as Map<String, dynamic>;
-  for (final entry in scopes.entries) {
-    final key = entry.key;
-    final want = entry.value as Map<String, dynamic>;
-    final view = model.view(key);
-    expect(view, isNotNull, reason: '$where: scope $key absent');
-    expect(view!.lifecycle, _lifecycle(want['lifecycle'] as String),
-        reason: '$where: $key lifecycle');
-    expect(view.generation, want['generation'],
-        reason: '$where: $key generation');
-    expect(view.deliveredThrough, want['delivered_through'],
-        reason: '$where: $key watermark');
-    expect(view.buffered, want['buffered'], reason: '$where: $key buffered');
-    expect(view.consecutiveErrors, want['consecutive_errors'],
-        reason: '$where: $key consecutive errors');
-    expect(model.value(key), want['window'], reason: '$where: $key window');
-    expect(model.readiness(key), _readiness(want['readiness'] as String),
-        reason: '$where: $key readiness');
+  assertKeyWith(expected, 'scopes', (v) {
+    final scopes = (v as Map).cast<String, dynamic>();
+    for (final entry in scopes.entries) {
+      final key = entry.key;
+      final want = entry.value as Map<String, dynamic>;
+      final view = model.view(key);
+      expect(view, isNotNull, reason: '$where: scope $key absent');
+      expect(view!.lifecycle, _lifecycle(want['lifecycle'] as String),
+          reason: '$where: $key lifecycle');
+      expect(view.generation, want['generation'],
+          reason: '$where: $key generation');
+      expect(view.deliveredThrough, want['delivered_through'],
+          reason: '$where: $key watermark');
+      expect(view.buffered, want['buffered'], reason: '$where: $key buffered');
+      expect(view.consecutiveErrors, want['consecutive_errors'],
+          reason: '$where: $key consecutive errors');
+      expect(model.value(key), want['window'], reason: '$where: $key window');
+      expect(model.readiness(key), _readiness(want['readiness'] as String),
+          reason: '$where: $key readiness');
 
-    final wantAuthority = want['authority'] as Map<String, dynamic>?;
-    expect(
-      model.authority(key),
-      wantAuthority == null
-          ? isNull
-          : IngressAuthority(
-              generation: wantAuthority['generation'] as int,
-              deliveredThrough: wantAuthority['delivered_through'] as int?,
-              stampedAt: wantAuthority['stamped_at'] as int,
-            ),
-      reason: '$where: $key authority',
-    );
+      final wantAuthority = want['authority'] as Map<String, dynamic>?;
+      expect(
+        model.authority(key),
+        wantAuthority == null
+            ? isNull
+            : IngressAuthority(
+                generation: wantAuthority['generation'] as int,
+                deliveredThrough: wantAuthority['delivered_through'] as int?,
+                stampedAt: wantAuthority['stamped_at'] as int,
+              ),
+        reason: '$where: $key authority',
+      );
 
-    final wantRetry = want['retry'] as Map<String, dynamic>?;
-    expect(
-      model.retry(key),
-      wantRetry == null
-          ? isNull
-          : IngressRetry(
-              attempt: wantRetry['attempt'] as int,
-              backoff: wantRetry['backoff'] as int,
-              resumeFrom: wantRetry['resume_from'] as int,
-            ),
-      reason: '$where: $key retry',
-    );
-  }
+      final wantRetry = want['retry'] as Map<String, dynamic>?;
+      expect(
+        model.retry(key),
+        wantRetry == null
+            ? isNull
+            : IngressRetry(
+                attempt: wantRetry['attempt'] as int,
+                backoff: wantRetry['backoff'] as int,
+                resumeFrom: wantRetry['resume_from'] as int,
+              ),
+        reason: '$where: $key retry',
+      );
+    }
+  });
 
-  final receipts = expected['receipts'] as Map<String, dynamic>;
-  expect(model.acceptedLen(), receipts['accepted'],
-      reason: '$where: accepted receipts');
-  expect(model.droppedLen(), receipts['dropped'],
-      reason: '$where: dropped receipts');
-  expect(model.errorsLen(), receipts['error'],
-      reason: '$where: error receipts');
+  assertKeyWith(expected, 'receipts', (v) {
+    final receipts = v as Map;
+    expect(model.acceptedLen(), receipts['accepted'],
+        reason: '$where: accepted receipts');
+    expect(model.droppedLen(), receipts['dropped'],
+        reason: '$where: dropped receipts');
+    expect(model.errorsLen(), receipts['error'],
+        reason: '$where: error receipts');
+  });
 }
 
 /// Assert `invalidates` in both directions. `true` means the reader's cache went
@@ -724,30 +728,32 @@ void _assertInvalidation(
 ) {
   const kinds = ['value', 'readiness', 'authority', 'retry'];
   const channels = ['accepted', 'dropped', 'error'];
-  final want =
-      assertionsOf(step['expected'])['invalidates'] as Map<String, dynamic>;
-  final wantScopes = want['scopes'] as Map<String, dynamic>;
-  for (final entry in wantScopes.entries) {
-    final key = entry.key;
-    expect(keys, contains(key),
-        reason: '$where: $key was never probed; the expectation is vacuous');
-    final wantScope = entry.value as Map<String, dynamic>;
-    for (var slot = 0; slot < kinds.length; slot++) {
-      final expected = wantScope[kinds[slot]] as bool;
-      final invalidated = before.scopes[key]![slot] && !after.scopes[key]![slot];
-      expect(invalidated, expected,
-          reason: '$where: $key.${kinds[slot]} invalidation '
-              '(was valid=${before.scopes[key]![slot]}, '
-              'now valid=${after.scopes[key]![slot]})');
+  assertKeyWith(assertionsOf(step['expected']), 'invalidates', (v) {
+    final want = v as Map;
+    final wantScopes = want['scopes'] as Map<String, dynamic>;
+    for (final entry in wantScopes.entries) {
+      final key = entry.key;
+      expect(keys, contains(key),
+          reason: '$where: $key was never probed; the expectation is vacuous');
+      final wantScope = entry.value as Map<String, dynamic>;
+      for (var slot = 0; slot < kinds.length; slot++) {
+        final expected = wantScope[kinds[slot]] as bool;
+        final invalidated =
+            before.scopes[key]![slot] && !after.scopes[key]![slot];
+        expect(invalidated, expected,
+            reason: '$where: $key.${kinds[slot]} invalidation '
+                '(was valid=${before.scopes[key]![slot]}, '
+                'now valid=${after.scopes[key]![slot]})');
+      }
     }
-  }
-  final wantReceipts = want['receipts'] as Map<String, dynamic>;
-  for (var slot = 0; slot < channels.length; slot++) {
-    final expected = wantReceipts[channels[slot]] as bool;
-    final invalidated = before.receipts[slot] && !after.receipts[slot];
-    expect(invalidated, expected,
-        reason: '$where: receipts.${channels[slot]} invalidation');
-  }
+    final wantReceipts = want['receipts'] as Map<String, dynamic>;
+    for (var slot = 0; slot < channels.length; slot++) {
+      final expected = wantReceipts[channels[slot]] as bool;
+      final invalidated = before.receipts[slot] && !after.receipts[slot];
+      expect(invalidated, expected,
+          reason: '$where: receipts.${channels[slot]} invalidation');
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

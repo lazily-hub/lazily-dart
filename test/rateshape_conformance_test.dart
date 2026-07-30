@@ -55,10 +55,11 @@ void _replay(
     final expected = assertionsOf(step['expected']);
     final emitted = drive(step);
     expect(emitted, equals(step['returns']), reason: 'emit');
-    expect(cell.output(), equals(expected['output']), reason: 'output');
-    final wantInv = (expected['invalidates'] as Map<String, dynamic>)['output'];
-    expect(_invalidated(ctx, observed), equals(wantInv),
-        reason: 'invalidation');
+    assertKey(expected, 'output', cell.output());
+    assertKeyWith(expected, 'invalidates', (v) {
+      expect(_invalidated(ctx, observed), equals((v as Map)['output']),
+          reason: 'invalidation');
+    });
   }
 }
 

@@ -76,12 +76,13 @@ void main() {
         expect(cb.allow(op['now'] as int), equals(step['returns']),
             reason: 'allow');
       }
-      expect(cb.state(), equals(_breakerState(expected['state'] as String)),
-          reason: 'state');
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['state'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'state invalidation');
+      assertKeyWith(expected, 'state', (v) {
+        expect(cb.state(), equals(_breakerState(v as String)), reason: 'state');
+      });
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['state']),
+            reason: 'state invalidation');
+      });
     }
   });
 
@@ -95,11 +96,11 @@ void main() {
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final expected = assertionsOf(step['expected']);
       expect(r.nextDelay(), equals(step['returns']), reason: 'delay');
-      expect(r.delay(), equals(expected['delay']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['delay'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'delay invalidation');
+      assertKey(expected, 'delay', r.delay());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['delay']),
+            reason: 'delay invalidation');
+      });
     }
   });
 
@@ -118,11 +119,11 @@ void main() {
       } else {
         b.release();
       }
-      expect(b.permitsInUse(), equals(expected['in_use']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['in_use'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'in_use invalidation');
+      assertKey(expected, 'in_use', b.permitsInUse());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['in_use']),
+            reason: 'in_use invalidation');
+      });
     }
   });
 
@@ -143,11 +144,11 @@ void main() {
         edge = t.tick(op['now'] as int);
       }
       expect(edge, equals(step['returns']), reason: 'edge');
-      expect(t.isTimedOut(), equals(expected['is_timed_out']));
-      final wantInv =
-          (expected['invalidates'] as Map<String, dynamic>)['is_timed_out'];
-      expect(_invalidated(ctx, observed), equals(wantInv),
-          reason: 'is_timed_out invalidation');
+      assertKey(expected, 'is_timed_out', t.isTimedOut());
+      assertKeyWith(expected, 'invalidates', (v) {
+        expect(_invalidated(ctx, observed), equals((v as Map)['is_timed_out']),
+            reason: 'is_timed_out invalidation');
+      });
     }
   });
 }

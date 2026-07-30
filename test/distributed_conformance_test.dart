@@ -99,48 +99,50 @@ void _playAntiEntropy(Map<String, dynamic> scenario) {
   final applied = runtime.ingestOps(ops);
   final expect_ = assertionsOf(scenario['expect']);
 
-  expect(applied, expect_['applied_count'] as int, reason: 'applied_count');
+  assertKey(expect_, 'applied_count', applied);
 
   if (scenario['redeliver'] == true) {
     final reapplied = runtime.ingestOps(ops);
-    expect(reapplied, expect_['redeliver_applied_count'] as int,
-        reason: 'redeliver_applied_count');
+    assertKey(expect_, 'redeliver_applied_count', reapplied);
   }
 
-  final orderIndependent = expect_['order_independent'];
-  if (orderIndependent != null || scenario['reverse_order_equivalent'] == true) {
+  if (scenario['reverse_order_equivalent'] == true) {
     final runtime2 = CrdtPlaneRuntime(1);
     runtime2.ingestOps(ops.reversed.toList());
     final reversedWire = runtime2.converged().map((e) => e.toWire()).toList();
     final forwardWire = runtime.converged().map((e) => e.toWire()).toList();
-    if (orderIndependent != null) {
-      expect(reversedWire.toString() == forwardWire.toString(),
-          orderIndependent, reason: 'order_independent');
-    } else {
-      expect(reversedWire, forwardWire, reason: 'order_independent');
-    }
+    expect(reversedWire, forwardWire, reason: 'reverse_order_equivalent');
   }
+  assertKeyIfPresent(expect_, 'order_independent', (v) {
+    final runtime2 = CrdtPlaneRuntime(1);
+    runtime2.ingestOps(ops.reversed.toList());
+    final reversedWire = runtime2.converged().map((e) => e.toWire()).toList();
+    final forwardWire = runtime.converged().map((e) => e.toWire()).toList();
+    expect(reversedWire.toString() == forwardWire.toString(), v,
+        reason: 'order_independent');
+  });
 
-  final convergedExpected =
-      (expect_['converged'] as List).cast<Map<String, dynamic>>();
   final actual = runtime.converged();
-  expect(actual.length, convergedExpected.length, reason: 'converged length');
-  for (var i = 0; i < actual.length; i++) {
-    final aw = actual[i].toWire();
-    final ew = convergedExpected[i];
-    expect(aw['node'], ew['node'], reason: 'converged[$i].node');
-    expect(aw['state'], ew['state'], reason: 'converged[$i].state');
-    if (ew['key'] != null) {
-      expect(aw['key'], ew['key'], reason: 'converged[$i].key');
+  assertKeyWith(expect_, 'converged', (v) {
+    final convergedExpected = (v as List).cast<Map<String, dynamic>>();
+    expect(actual.length, convergedExpected.length, reason: 'converged length');
+    for (var i = 0; i < actual.length; i++) {
+      final aw = actual[i].toWire();
+      final ew = convergedExpected[i];
+      expect(aw['node'], ew['node'], reason: 'converged[$i].node');
+      expect(aw['state'], ew['state'], reason: 'converged[$i].state');
+      if (ew['key'] != null) {
+        expect(aw['key'], ew['key'], reason: 'converged[$i].key');
+      }
     }
-  }
+  });
 
   // `resolution` names the conflict rule the plane applies. Assert the RULE,
   // not the label: every converged entry must carry the state of the
   // highest-stamped op for its (node, key). Comparing the label alone would
   // pass against a plane that resolved by arrival order and happened to agree.
-  expect(expect_['resolution'], 'max_stamp',
-      reason: 'this runner models max-stamp resolution only');
+  assertKey(expect_, 'resolution', 'max_stamp',
+      'this runner models max-stamp resolution only');
   for (final entry in actual) {
     final rivals = ops.where((o) => o.node == entry.node).toList();
     expect(rivals, isNotEmpty, reason: 'converged entry with no source op');
@@ -173,34 +175,37 @@ void _playCausalReceipts(Map<String, dynamic> fixture) {
     'receipts': receiptsList,
   });
 
-  expect(cr.receipts.length, assertions['receipt_count'] as int,
-      reason: 'receipt_count');
+  assertKey(assertions, 'receipt_count', cr.receipts.length);
 
+  final generation = assertions['current_generation'] as int;
   final projection = ReceiptProjection();
   for (final receipt in cr.receipts) {
-    projection.observe(assertions['current_generation'] as int, receipt);
+    projection.observe(generation, receipt);
   }
 
-  expect(projection.currentGeneration, assertions['current_generation'] as int,
-      reason: 'current_generation');
+  assertKey(assertions, 'current_generation', projection.currentGeneration);
 
-  final terminal = projection.terminalFor(assertions['causation_id'] as String);
-  expect(terminal, isNotNull, reason: 'terminal exists');
-  expect(terminal!.outcome.wire, assertions['terminal_outcome'] as String,
-      reason: 'terminal_outcome');
+  final terminal =
+      assertKeyWith(assertions, 'causation_id', (v) {
+    final t = projection.terminalFor(v as String);
+    expect(t, isNotNull, reason: 'terminal exists for causation_id $v');
+    return t!;
+  });
+  assertKey(assertions, 'terminal_outcome', terminal.outcome.wire);
 
-  final staleIds = (assertions['stale_receipt_ids'] as List).cast<String>();
-  for (final id in staleIds) {
-    expect(projection.containsReceipt(id), isTrue,
-        reason: 'stale receipt $id is known');
-  }
+  assertKeyWith(assertions, 'stale_receipt_ids', (v) {
+    for (final id in (v as List).cast<String>()) {
+      expect(projection.containsReceipt(id), isTrue,
+          reason: 'stale receipt $id is known');
+    }
+  });
 
-  final nonTerminal =
-      (assertions['nonterminal_outcomes'] as List).cast<String>();
-  for (final outcome in nonTerminal) {
-    expect(ReceiptOutcome.fromWire(outcome).isTerminal, isFalse,
-        reason: '$outcome is non-terminal');
-  }
+  assertKeyWith(assertions, 'nonterminal_outcomes', (v) {
+    for (final outcome in (v as List).cast<String>()) {
+      expect(ReceiptOutcome.fromWire(outcome).isTerminal, isFalse,
+          reason: '$outcome is non-terminal');
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------

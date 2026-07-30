@@ -221,21 +221,21 @@ void main() {
 
       final assertions = assertionsOf(fixture['assertions']);
       final delta = (msg as IpcMessageDelta).value;
-      expect(delta.baseEpoch, assertions['base_epoch']);
-      expect(delta.epoch, assertions['epoch']);
-      expect(delta.ops.length, assertions['op_count']);
+      assertKey(assertions, 'base_epoch', delta.baseEpoch);
+      assertKey(assertions, 'epoch', delta.epoch);
+      assertKey(assertions, 'op_count', delta.ops.length);
       final op = delta.ops[0] as DeltaOpSlotValue;
-      expect((op.toWire() as Map).keys.single, assertions['first_op_kind']);
+      assertKey(assertions, 'first_op_kind', (op.toWire() as Map).keys.single);
       final blob = (op.payload as IpcValueSharedBlob).blob;
-      expect((op.payload.toWire() as Map).keys.single,
-          assertions['first_op_payload_kind']);
+      assertKey(assertions, 'first_op_payload_kind',
+          (op.payload.toWire() as Map).keys.single);
       // The whole point of this fixture: the SharedBlob descriptor carries a
       // `backend` discriminator selecting which pluggable zero-copy backend the
       // receiver resolves. Reading it FROM the assertions rather than
       // hard-coding `arrow` is what makes replaying the fixture prove anything
       // — a hard-coded expectation passes even when the decoder drops the field
       // and defaults it.
-      expect(blob.backend.wire, assertions['first_op_payload_backend']);
+      assertKey(assertions, 'first_op_payload_backend', blob.backend.wire);
 
       // Re-encode must reproduce the fixture wire exactly (backend='arrow'
       // preserved).

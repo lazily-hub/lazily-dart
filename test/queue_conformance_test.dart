@@ -109,26 +109,20 @@ void _assertState(
   QueueCell<String> q,
   Map<String, dynamic> expected,
 ) {
-  if (expected.containsKey('elements')) {
-    expect(q.elements(), equals((expected['elements'] as List).cast<String>()),
+  assertKeyIfPresent(expected, 'elements', (v) {
+    expect(q.elements(), equals((v as List).cast<String>()),
         reason: 'elements mismatch');
-  }
-  if (expected.containsKey('head')) {
-    expect(q.head(), equals(expected['head']),
-        reason: 'head mismatch');
-  }
-  if (expected.containsKey('len')) {
-    expect(q.len(), expected['len'], reason: 'len mismatch');
-  }
-  if (expected.containsKey('is_empty')) {
-    expect(q.isEmpty(), expected['is_empty'], reason: 'is_empty mismatch');
-  }
-  if (expected.containsKey('is_full')) {
-    expect(q.isFull(), expected['is_full'], reason: 'is_full mismatch');
-  }
-  if (expected.containsKey('closed')) {
-    expect(q.isClosed(), expected['closed'], reason: 'closed mismatch');
-  }
+  });
+  assertKeyIfPresent(expected, 'head',
+      (v) => expect(q.head(), equals(v), reason: 'head mismatch'));
+  assertKeyIfPresent(expected, 'len',
+      (v) => expect(q.len(), v, reason: 'len mismatch'));
+  assertKeyIfPresent(expected, 'is_empty',
+      (v) => expect(q.isEmpty(), v, reason: 'is_empty mismatch'));
+  assertKeyIfPresent(expected, 'is_full',
+      (v) => expect(q.isFull(), v, reason: 'is_full mismatch'));
+  assertKeyIfPresent(expected, 'closed',
+      (v) => expect(q.isClosed(), v, reason: 'closed mismatch'));
 }
 
 /// Extract the `returns` label or value from a pop/push result for fixture
@@ -153,7 +147,6 @@ void _runFixture(String name) {
     final step = steps[i];
     final op = step['op'] as Map<String, dynamic>;
     final expected = assertionsOf(step['expected']);
-    final invalidates = (expected['invalidates'] ?? {}) as Map<String, dynamic>;
 
     // Prime readers from the CURRENT state so each step's invalidation is
     // measured in isolation.
@@ -195,7 +188,10 @@ void _runFixture(String name) {
     _assertState(q, expected);
 
     // Assert per-reader-kind invalidation.
-    _assertInvalidation(name, i, op['type'] as String, readers, ctx, invalidates);
+    assertKeyIfPresent(expected, 'invalidates', (v) {
+      _assertInvalidation(name, i, op['type'] as String, readers, ctx,
+          (v as Map).cast<String, dynamic>());
+    });
   }
 }
 

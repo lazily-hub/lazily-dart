@@ -40,9 +40,10 @@ void main() {
     for (final epoch in (ordered['put_epochs'] as List<dynamic>).cast<int>()) {
       store.put(epoch, Uint8List.fromList([epoch]));
     }
-    expect(
-      store.scanAfter(ordered['scan_after'] as int).map((entry) => entry.$1),
-      (assertionsOf(ordered['expect']))['epochs'],
+    assertKey(
+      assertionsOf(ordered['expect']),
+      'epochs',
+      store.scanAfter(ordered['scan_after'] as int).map((e) => e.$1).toList(),
     );
 
     final monotone = _scenario('ack cursor is monotone and prune-safe');
@@ -55,9 +56,10 @@ void main() {
       outbox.ackThrough(epoch);
     }
     final expectMap = assertionsOf(monotone['expect']);
-    expect(outbox.ackedThrough, expectMap['cursor']);
-    expect(outbox.retainedEpochs(), expectMap['retained']);
-    expect(_replayEpochs(outbox.replayFrom(0)), expectMap['replay_from_zero']);
+    assertKey(expectMap, 'cursor', outbox.ackedThrough);
+    assertKey(expectMap, 'retained', outbox.retainedEpochs());
+    assertKey(expectMap, 'replay_from_zero',
+        _replayEpochs(outbox.replayFrom(0)));
   });
 
   test('file outbox reloads durable cursor and suffix', () {
@@ -75,9 +77,9 @@ void main() {
 
     final reopened = FileOutbox(path);
     final expectMap = assertionsOf(restart['expect']);
-    expect(reopened.ackedThrough, expectMap['loaded_cursor']);
-    expect(reopened.retainedEpochs(), expectMap['retained']);
-    expect(_replayEpochs(reopened.replayFrom(0)), expectMap['replay']);
+    assertKey(expectMap, 'loaded_cursor', reopened.ackedThrough);
+    assertKey(expectMap, 'retained', reopened.retainedEpochs());
+    assertKey(expectMap, 'replay', _replayEpochs(reopened.replayFrom(0)));
   });
 
   test('stale file handle cannot regress serialized cursor', () {
@@ -93,9 +95,8 @@ void main() {
         .cast<Map<String, dynamic>>()) {
       handles[save['handle']]!.ackThrough(save['epoch'] as int);
     }
-    final expected =
-        (assertionsOf(scenario['expect']))['loaded_cursor'];
-    expect(handles['stale']!.ackedThrough, expected);
-    expect(FileOutboxStore(path).loadCursor(), expected);
+    final expect_ = assertionsOf(scenario['expect']);
+    assertKey(expect_, 'loaded_cursor', handles['stale']!.ackedThrough);
+    assertKey(expect_, 'loaded_cursor', FileOutboxStore(path).loadCursor());
   });
 }

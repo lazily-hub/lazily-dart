@@ -73,19 +73,21 @@ void main() {
       }
 
       // Per-peer state.
-      final states = expected['states'] as Map<String, dynamic>;
-      states.forEach((peer, want) {
-        expect(m.state(int.parse(peer))?.label, equals(want),
-            reason: 'state of peer $peer');
+      assertKeyWith(expected, 'states', (v) {
+        (v as Map).forEach((peer, want) {
+          expect(m.state(int.parse(peer as String))?.label, equals(want),
+              reason: 'state of peer $peer');
+        });
       });
 
       // Alive set (the reactive `PeerSet`).
-      final wantSet = (expected['alive_set'] as List).cast<int>();
-      expect(m.peerSet(), equals(wantSet), reason: 'alive_set');
+      assertKeyWith(expected, 'alive_set', (v) {
+        expect(m.peerSet(), equals((v as List).cast<int>()), reason: 'alive_set');
+      });
 
       // `PeerSet` invalidation — only on a set change.
-      expect(_invalidated(ctx, observed), equals(expected['invalidates']),
-          reason: 'invalidation');
+      assertKey(expected, 'invalidates', _invalidated(ctx, observed),
+          'invalidation');
     }
   });
 }

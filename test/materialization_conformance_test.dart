@@ -98,8 +98,11 @@ Map<String, dynamic> _checkValFixture(String name) {
   final expected = assertionsOf(fixture['expected']);
   final lookup = (Compute cx, String k) => spec.values[k]!;
 
-  // default_mode_eager.
-  expect(expected['default_mode'], 'eager');
+  // default_mode_eager. Asserted against the fixture's own value rather than
+  // read-and-dropped: this runner models the eager default only, so a corpus
+  // that flips the field must redden here instead of replaying silently.
+  assertKey(expected, 'default_mode', 'eager',
+      'this runner models the eager default only');
 
   final ctx = Context();
 
@@ -107,19 +110,22 @@ Map<String, dynamic> _checkValFixture(String name) {
   final eager = ComputedMap<String, int>(ctx)..materializeAll(spec.keys, lookup);
   expect(eager.entryKind, EntryKind.computed);
   expect(eager.presentCount(), spec.keys.length, reason: 'eager_materializes_all');
-  expect(_asSet(eager.presentKeys()), _asSet(_strArray(expected, 'eager_present')));
+  assertKeyWith(expected, 'eager_present',
+      (v) => expect(_asSet(eager.presentKeys()), _asSet((v as List).cast<String>())));
 
   // lazy: empty, mint-on-access.
   final lazy = ComputedMap<String, int>(ctx);
   expect(lazy.presentCount(), 0, reason: 'lazy defers every derived slot');
 
   // observe_canonical / eager_lazy_observationally_equivalent.
-  final observe = expected['observe'] as Map<String, dynamic>;
-  for (final e in observe.entries) {
-    expect(eager.get(e.key), e.value, reason: 'eager observe ${e.key}');
-    expect(lazy.getOrInsertWith(e.key, lookup), e.value,
-        reason: 'lazy observe ${e.key}');
-  }
+  assertKeyWith(expected, 'observe', (v) {
+    for (final e in (v as Map).entries) {
+      final k = e.key as String;
+      expect(eager.get(k), e.value, reason: 'eager observe $k');
+      expect(lazy.getOrInsertWith(k, lookup), e.value,
+          reason: 'lazy observe $k');
+    }
+  });
 
   return fixture;
 }
@@ -138,8 +144,9 @@ void main() {
       for (final k in _strArray(fixture, 'reads')) {
         lazy.getOrInsertWith(k, lookup);
       }
-      expect(_asSet(lazy.presentKeys()),
-          _asSet(_strArray(expected, 'lazy_present_after_reads')));
+      assertKeyWith(expected, 'lazy_present_after_reads', (v) {
+        expect(_asSet(lazy.presentKeys()), _asSet((v as List).cast<String>()));
+      });
     });
 
     test('deferral_not_deallocation replays identically', () {
@@ -157,13 +164,16 @@ void main() {
         lazy.getOrInsertWith(k, lookup);
         gotSizes.add(lazy.presentCount());
       }
-      expect(gotSizes, (expected['present_after_each_read'] as List).cast<int>(),
-          reason: 'cumulative present-set sizes');
+      assertKeyWith(expected, 'present_after_each_read', (v) {
+        expect(gotSizes, (v as List).cast<int>(),
+            reason: 'cumulative present-set sizes');
+      });
 
       // lazy_present_after_reads is a subset of eager_present
       // (lazy_present_subset_eager).
       final lazyPresent = _asSet(lazy.presentKeys());
-      expect(lazyPresent, _asSet(_strArray(expected, 'lazy_present_after_reads')));
+      assertKeyWith(expected, 'lazy_present_after_reads',
+          (v) => expect(lazyPresent, _asSet((v as List).cast<String>())));
       final eagerPresent = _asSet(_strArray(expected, 'eager_present'));
       expect(lazyPresent.difference(eagerPresent), isEmpty,
           reason: 'lazy present set must be a subset of eager present set');
@@ -196,7 +206,8 @@ void main() {
       final fixture = _load('entry_kind_orthogonal_to_mode.json');
       expect(_computedMapModels, contains(fixture['model']));
       final expected = assertionsOf(fixture['expected']);
-      expect(expected['default_mode'], 'eager');
+      assertKey(expected, 'default_mode', 'eager',
+          'this runner models the eager default only');
 
       final entries = (fixture['spec'] as Map<String, dynamic>)['entries']
           as Map<String, dynamic>;
@@ -230,7 +241,8 @@ void main() {
       expect(eagerSlots.entryKind, EntryKind.computed);
       final eagerPresent = _asSet(eagerCells.presentKeys())
         ..addAll(eagerSlots.presentKeys());
-      expect(eagerPresent, _asSet(_strArray(expected, 'eager_present')));
+      assertKeyWith(expected, 'eager_present',
+          (v) => expect(eagerPresent, _asSet((v as List).cast<String>())));
 
       // Lazy build: cells present at build (always materialized), slots deferred.
       final lazyCells = SourceMap<String, int>(ctx);
@@ -239,8 +251,10 @@ void main() {
       }
       final lazySlots = ComputedMap<String, int>(ctx);
       expect(lazySlots.presentKeys(), isEmpty, reason: 'slots deferred at build');
-      expect(_asSet(lazyCells.presentKeys()),
-          _asSet(_strArray(expected, 'lazy_present_at_build')));
+      assertKeyWith(expected, 'lazy_present_at_build', (v) {
+        expect(_asSet(lazyCells.presentKeys()),
+            _asSet((v as List).cast<String>()));
+      });
 
       // Reads (slot pulls) grow only the slot present set.
       for (final k in _strArray(fixture, 'reads')) {
@@ -252,19 +266,22 @@ void main() {
       }
       final lazyAfter = _asSet(lazyCells.presentKeys())
         ..addAll(lazySlots.presentKeys());
-      expect(lazyAfter, _asSet(_strArray(expected, 'lazy_present_after_reads')));
+      assertKeyWith(expected, 'lazy_present_after_reads',
+          (v) => expect(lazyAfter, _asSet((v as List).cast<String>())));
 
       // Observational transparency across kinds.
-      final observe = expected['observe'] as Map<String, dynamic>;
-      for (final e in observe.entries) {
-        if (cellKeys.contains(e.key)) {
-          expect(eagerCells.get(e.key), e.value);
-          expect(lazyCells.get(e.key), e.value);
-        } else {
-          expect(eagerSlots.get(e.key), e.value);
-          expect(lazySlots.getOrInsertWith(e.key, (_, key) => lookup(key)), e.value);
+      assertKeyWith(expected, 'observe', (v) {
+        for (final e in (v as Map).entries) {
+          final k = e.key as String;
+          if (cellKeys.contains(k)) {
+            expect(eagerCells.get(k), e.value);
+            expect(lazyCells.get(k), e.value);
+          } else {
+            expect(eagerSlots.get(k), e.value);
+            expect(lazySlots.getOrInsertWith(k, (_, key) => lookup(key)), e.value);
+          }
         }
-      }
+      });
     });
   });
 }
