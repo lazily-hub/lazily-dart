@@ -73,17 +73,24 @@ jobs:
           lint: false
 
       # lean-action installs elan but leaves it off PATH for the steps that
-      # follow, so `lake` was invisible to tool/formal_check.dart — which SKIPs
-      # by design when the toolchain is absent, so pub.dev consumers and shallow
-      # clones still run the Dart-only tests. On this runner that meant the Lean
-      # proofs were never built and formal_check_test passed on the SKIP branch:
-      # a false green the CI-reachability guard (#lzcheckcireachguard) surfaced.
+      # follow, and installs the toolchain without making it elan's default. Both
+      # make `lake` unusable from tool/formal_check.dart, which SKIPs by design
+      # when the toolchain is absent so pub.dev consumers and shallow clones still
+      # run the Dart-only tests. On this runner that meant the Lean proofs were
+      # never built and formal_check_test passed on the SKIP branch: a false green
+      # the CI-reachability guard (#lzcheckcireachguard) surfaced.
+      #
+      # The default matters because formal_check probes with `lake --version` from
+      # the package root, which has no lean-toolchain file — with no default, elan
+      # has nothing to resolve and the probe fails exactly like a missing install.
       # Assert the shim before exporting it, so a moved install fails here rather
       # than reappearing as a silent skip.
       - name: Put the Lean toolchain on PATH (#lzcheckcireachguard)
         run: |
           test -x "$HOME/.elan/bin/lake" || { echo "::error::elan installed no lake at \$HOME/.elan/bin — formal-check would SKIP and prove nothing"; exit 1; }
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          "$HOME/.elan/bin/elan" default "$(cat "$GITHUB_WORKSPACE/_lazily-formal/lean-toolchain")"
+          "$HOME/.elan/bin/lake" --version
 
       - run: dart pub get
       - run: dart analyze --fatal-infos
