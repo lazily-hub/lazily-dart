@@ -32,18 +32,6 @@ jobs:
         with:
           sdk: ${{ matrix.sdk }}
 
-      # The formatting gate (#lazilydartzig). `stable` ONLY, unlike the zig
-      # binding where the gate runs on every pinned toolchain. The difference is
-      # that zig's three toolchains were verified to format identically, whereas
-      # `dart format` genuinely evolves — the SDK ships the formatter, so a beta
-      # SDK carries a formatter this tree has never been run through. Gating on
-      # beta would redden the build for an unreleased style change rather than
-      # for anything a contributor did, which is how a gate teaches people to
-      # ignore it. `stable` is the pin; beta still runs every other job step.
-      - name: Format gate (make fmt)
-        if: matrix.sdk == 'stable'
-        working-directory: lazily-dart
-        run: make fmt
 
       # Sibling lazily-spec so the conformance tests (statechart / message-passing
       # / distributed / collections) resolve `../lazily-spec/conformance/...`
@@ -106,6 +94,25 @@ jobs:
           "$HOME/.elan/bin/lake" --version
 
       - run: dart pub get
+
+      # The formatting gate (#lazilydartzig). Two placement constraints, both
+      # learned the hard way when this step first went red in CI while `make fmt`
+      # was green locally:
+      #
+      # 1. AFTER `dart pub get`, never before. `dart format` reads the package's
+      #    language version from .dart_tool/package_config.json to choose between
+      #    the pre-3.7 style and the 3.7+ tall style. With no package_config it
+      #    silently picks the other one and reports 105 of 117 files "changed" on
+      #    a tree that is clean — the same SDK version giving opposite verdicts
+      #    purely on build state. A formatter that reads resolved metadata is a
+      #    gate that needs a resolved workspace.
+      # 2. `stable` ONLY. The SDK ships the formatter, so a beta SDK carries one
+      #    this tree has never been run through; gating on beta would redden the
+      #    build for an unreleased style change rather than for anything a
+      #    contributor did. Beta still runs every other step.
+      - name: Format gate (make fmt)
+        if: matrix.sdk == 'stable'
+        run: make fmt
       - run: dart analyze --fatal-infos
 
       # Two of the four conformance guards execute INSIDE `dart test` (the
