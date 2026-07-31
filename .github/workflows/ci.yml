@@ -111,6 +111,20 @@ jobs:
           LAZILY_CONFORMANCE_SCENARIOS: ${{ github.workspace }}/lazily-dart/build/conformance-scenarios-replayed.txt
         run: dart test
 
+      # Two gates `make check` runs that CI never reached (#lzinteroppeerci). The
+      # interop peer is the cross-binding wire-compatibility check — nine
+      # bindings must agree on a byte layout — and the browser compile catches
+      # accidental dart:io/VM-only dependencies creeping into the portable
+      # stdlib. Both ran on a laptop and nowhere else, which is how they rot.
+      - name: Interop peer self-check (#lzinteroppeerci)
+        run: dart run bin/interop_peer.dart --self-check
+
+      - name: stdlib browser compile check (#lzinteroppeerci)
+        run: |
+          mkdir -p build
+          dart compile js -O1 -o build/stdlib_browser_check.js tool/stdlib_browser_check.dart
+          node build/stdlib_browser_check.js
+
       # Rungs 1 and 4: canonical-fixture coverage and per-scenario replay. Runs
       # AFTER the suite, never before — the script reads the evidence the run
       # just wrote, so ordering it first would only ever see the previous run's
