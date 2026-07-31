@@ -72,6 +72,19 @@ jobs:
           test: false
           lint: false
 
+      # lean-action installs elan but leaves it off PATH for the steps that
+      # follow, so `lake` was invisible to tool/formal_check.dart — which SKIPs
+      # by design when the toolchain is absent, so pub.dev consumers and shallow
+      # clones still run the Dart-only tests. On this runner that meant the Lean
+      # proofs were never built and formal_check_test passed on the SKIP branch:
+      # a false green the CI-reachability guard (#lzcheckcireachguard) surfaced.
+      # Assert the shim before exporting it, so a moved install fails here rather
+      # than reappearing as a silent skip.
+      - name: Put the Lean toolchain on PATH (#lzcheckcireachguard)
+        run: |
+          test -x "$HOME/.elan/bin/lake" || { echo "::error::elan installed no lake at \$HOME/.elan/bin — formal-check would SKIP and prove nothing"; exit 1; }
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
       - run: dart pub get
       - run: dart analyze --fatal-infos
 
