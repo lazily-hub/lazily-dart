@@ -148,6 +148,42 @@ jobs:
           command -v jq >/dev/null 2>&1 || { echo "::error::jq is not installed on this runner — the scenario replay guard cannot read the corpus's scenario ids"; exit 1; }
           ./scripts/check-conformance-coverage.sh
 
+      # `make check` runs `formal-check` as its own gate, and CI reached the Lean
+      # proofs only through `dart test`'s formal_check_test — which accepts a SKIP
+      # as a pass, by design, so pub.dev consumers and shallow clones still run.
+      # On a runner that acceptance is exactly the vacuous green this ladder
+      # rejects: a checkout that landed in the wrong place, or an elan install
+      # that quietly failed, would print SKIP and the suite would stay green.
+      # Run the target's own command and demand the verdict line.
+      - name: Lean proof verification (#lzcheckcireachguard)
+        env:
+          LAZILY_FORMAL_PATH: ${{ github.workspace }}/_lazily-formal
+        run: |
+          out=$(dart tool/formal_check.dart 2>&1) || { echo "$out"; echo "::error::lazily-formal Lean proofs failed to build"; exit 1; }
+          echo "$out"
+          if echo "$out" | grep -q "SKIP —"; then
+            echo "::error::formal-check skipped instead of building the Lean model — it proved nothing"
+            exit 1
+          fi
+          echo "$out" | grep -q "OK — all Lean proofs in lazily-formal compile." || {
+            echo "::error::formal-check exited 0 without reaching its verdict"
+            exit 1
+          }
+
+      # The gate that keeps every step above honest (#lzcheckcireachguard). It
+      # compares `make check`'s prerequisite closure against the run: bodies in
+      # this file and fails on any target CI does not reach. Comments inside run:
+      # bodies are stripped first — a naive grep for "make check" reported all
+      # nine bindings as covered and every one of those hits was a comment.
+      - name: CI-reachability guard (#lzcheckcireachguard)
+        run: |
+          out=$(./scripts/check-ci-reach.sh 2>&1) || { echo "$out"; echo "::error::a make check gate is unreachable from CI"; exit 1; }
+          echo "$out"
+          echo "$out" | grep -q "check-ci-reach: OK" || {
+            echo "::error::the CI-reachability guard exited 0 without reaching its verdict"
+            exit 1
+          }
+
   lean:
     name: Lean formal models (#lzleanformal)
     runs-on: ubuntu-latest

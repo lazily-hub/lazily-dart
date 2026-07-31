@@ -1,4 +1,4 @@
-.PHONY: check analyze test test-interop-peer stdlib-browser-check conformance-coverage formal-check
+.PHONY: check analyze test test-interop-peer stdlib-browser-check conformance-coverage formal-check ci-reach
 
 # lazily-dart had no Makefile; verification was ad-hoc `dart analyze` + `dart test`.
 # The conformance-coverage guard needs somewhere to hang, and a named `check` makes
@@ -7,8 +7,15 @@
 # `conformance-coverage` runs AFTER `test`, not before: the guard now reads the
 # runtime manifest the suite writes, so ordering it first would only ever see the
 # previous run's evidence, or none at all.
-check: analyze test test-interop-peer stdlib-browser-check conformance-coverage formal-check
+check: analyze test test-interop-peer stdlib-browser-check conformance-coverage formal-check ci-reach
 	@echo "lazily-dart: check OK"
+
+# CI-reachability guard (#lzcheckcireachguard). Fails when a target above runs a
+# gate no CI workflow step reaches — the drift that hid #lzinteroppeerci in every
+# binding for months. It guards itself: `ci-reach` is in `check`, so CI has to run
+# it too or this target reports itself missing.
+ci-reach:
+	./scripts/check-ci-reach.sh
 
 analyze:
 	dart analyze --fatal-infos
