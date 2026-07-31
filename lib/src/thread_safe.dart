@@ -104,7 +104,8 @@ class ThreadSafeContext {
   Source<T> source<T>(T value) => read((ctx) => Source<T>(ctx, value));
 
   /// Deprecated alias for [source] (`#lzcellkernel`).
-  @Deprecated('Use source — the canonical source-cell constructor (#lzcellkernel)')
+  @Deprecated(
+      'Use source — the canonical source-cell constructor (#lzcellkernel)')
   Source<T> cell<T>(T value) => source<T>(value);
 
   /// Create a guarded [Computed] under the guard.

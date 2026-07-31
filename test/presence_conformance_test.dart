@@ -20,7 +20,8 @@ final _specDir = Directory('../lazily-spec/conformance/presence');
 
 Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
+      ? File(_specDir.resolveSymbolicLinksSync() + '/$name')
+          .specReadAsStringSync()
       : File('test/conformance/presence/$name').specReadAsStringSync();
   return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
@@ -44,7 +45,8 @@ bool _invalidated(Context ctx, Slot slot) {
 /// use integer peers, so re-key to `int` for comparison with `present()`.
 Map<int, String> _expectedPresent(Map<String, dynamic> present) {
   return {
-    for (final entry in present.entries) int.parse(entry.key): entry.value as String,
+    for (final entry in present.entries)
+      int.parse(entry.key): entry.value as String,
   };
 }
 
@@ -84,7 +86,8 @@ void main() {
       final expected = assertionsOf(step['expected']);
       switch (op['type']) {
         case 'heartbeat':
-          cell.heartbeat(op['peer'] as int, op['value'] as String, op['now'] as int);
+          cell.heartbeat(
+              op['peer'] as int, op['value'] as String, op['now'] as int);
         case 'evict':
           cell.evict(op['peer'] as int, op['now'] as int);
         case 'tick':

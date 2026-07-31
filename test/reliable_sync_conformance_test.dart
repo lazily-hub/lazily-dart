@@ -34,9 +34,9 @@ String _fixturePath(String name) {
   throw StateError('fixture not found: $name (looked in $local, $sibling)');
 }
 
-Map<String, dynamic> _load(String name) =>
-    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
-        as Map<String, dynamic>;
+Map<String, dynamic> _load(String name) => attributeFixture(
+        jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
+    as Map<String, dynamic>;
 
 /// By-id lookup through the scenario ledger (`#lzscenariocoverage`).
 ///
@@ -232,14 +232,13 @@ class _FileOutbox implements DurableOutbox {
   int _ackedThrough = 0;
 
   List<OutboxFrame> _readAll() => File(path)
-      .specReadAsStringSync()
-      .split('\n')
-      .where((l) => l.trim().isNotEmpty)
-      .map((l) {
+          .specReadAsStringSync()
+          .split('\n')
+          .where((l) => l.trim().isNotEmpty)
+          .map((l) {
         final row = jsonDecode(l) as List;
         return (row[0] as int, IpcMessage.fromWire(row[1]));
-      })
-      .toList();
+      }).toList();
 
   @override
   void append(int epoch, IpcMessage msg) {
@@ -358,7 +357,8 @@ void main() {
       final d = sc['delta'] as Map<String, dynamic>;
       final base = d['base_epoch'] as int;
       final epoch = d['epoch'] as int;
-      expect(epoch > base + 1, isTrue, reason: 'fixture pins a multi-epoch span');
+      expect(epoch > base + 1, isTrue,
+          reason: 'fixture pins a multi-epoch span');
       final delta = Delta(baseEpoch: base, epoch: epoch);
       expect(delta.span, epoch - base);
       final start = sc['receiver_last_epoch'] as int;
@@ -410,7 +410,8 @@ void main() {
       final deltasOnly = <NodeId, List<int>>{};
       final sender = <NodeId, List<int>>{};
       var requests = 0;
-      for (final frame in (sc['inbound'] as List).cast<Map<String, dynamic>>()) {
+      for (final frame
+          in (sc['inbound'] as List).cast<Map<String, dynamic>>()) {
         if (frame['dropped'] == true) continue;
         final m = _msg(frame['frame']);
         final res = coord.ingest(m);
@@ -434,8 +435,7 @@ void main() {
       }
       assertKey(ex, 'final_last_epoch', coord.lastEpoch);
       assertKey(ex, 'resync_requests_emitted', requests);
-      assertKeyWith(ex, 'converged_nodes',
-          (v) => expect(state, _stateOf(v)));
+      assertKeyWith(ex, 'converged_nodes', (v) => expect(state, _stateOf(v)));
       assertKey(ex, 'equals_no_drop_receiver', _sameState(state, sender),
           'gap recovery is state-equivalent, not lossy');
       expect(_sameState(deltasOnly, sender), isFalse,
@@ -490,7 +490,8 @@ void main() {
 
     test('outbox_replay_after_crash.json', () {
       final fx = _load('outbox_replay_after_crash.json');
-      final sc = _scenario(fx, 'crash_between_append_and_ack_replays_on_reconnect');
+      final sc =
+          _scenario(fx, 'crash_between_append_and_ack_replays_on_reconnect');
       final appended = _framesOf(sc, 'appended');
       final ack = sc['ack_through'] as int;
       final cursor = sc['reconnect_cursor'] as int;
@@ -509,8 +510,8 @@ void main() {
         mem.ackThrough(ack);
         file.ackThrough(ack);
 
-        final retainedAfterAck = assertKeyWith(expect_, 'retained_after_ack',
-            (v) => (v as List).cast<int>());
+        final retainedAfterAck = assertKeyWith(
+            expect_, 'retained_after_ack', (v) => (v as List).cast<int>());
         expect(mem.retainedEpochs(), retainedAfterAck);
         expect(file.retainedEpochs(), retainedAfterAck);
 
@@ -608,7 +609,8 @@ void main() {
       };
       final observedTags = {
         for (final op in addOps)
-          if (op['op'] == 'remove') ...(op['observed_tags'] as List).cast<String>(),
+          if (op['op'] == 'remove')
+            ...(op['observed_tags'] as List).cast<String>(),
       };
       final unobserved = addedTags.difference(observedTags);
       expect(set.present(), unobserved.isNotEmpty,
@@ -622,7 +624,9 @@ void main() {
       });
       // `order_independent`: an OrSet join is commutative, so the reversed
       // transcript must reach the same verdict.
-      assertKey(addEx, 'order_independent',
+      assertKey(
+          addEx,
+          'order_independent',
           replayOrSet(addOps.reversed).present() == set.present(),
           'OrSet outcome is order-independent');
       // `redeliver_applied_count`: re-delivering the whole transcript applies
@@ -642,8 +646,8 @@ void main() {
             _stamp(os[0]['stamp'] as Map<String, dynamic>),
             os[0]['value'] as bool);
         for (final op in os.skip(1)) {
-          r.set(_stamp(op['stamp'] as Map<String, dynamic>),
-              op['value'] as bool);
+          r.set(
+              _stamp(op['stamp'] as Map<String, dynamic>), op['value'] as bool);
         }
         return r;
       }
@@ -671,11 +675,13 @@ void main() {
         return false;
       }
 
-      final maxStamped = ops.reduce(
-          (a, b) => higher(stampKey(b), stampKey(a)) ? b : a);
+      final maxStamped =
+          ops.reduce((a, b) => higher(stampKey(b), stampKey(a)) ? b : a);
       expect(reg.value, maxStamped['value'],
           reason: 'max_stamp resolution: the highest-stamp write survives');
-      assertKey(lwwEx, 'order_independent',
+      assertKey(
+          lwwEx,
+          'order_independent',
           replayLww(ops.reversed.toList()).value == reg.value,
           'LWW outcome is order-independent');
 
@@ -693,9 +699,10 @@ void main() {
             const WireStamp(wallTime: 1, logical: 0, peer: 1), v as bool);
       });
       final op = death['op'] as Map<String, dynamic>;
-      final pid = int.parse((op['key'] as String).replaceFirst('alive/pid', ''));
-      alive[pid]!.set(_stamp(op['stamp'] as Map<String, dynamic>),
-          op['value'] as bool);
+      final pid =
+          int.parse((op['key'] as String).replaceFirst('alive/pid', ''));
+      alive[pid]!.set(
+          _stamp(op['stamp'] as Map<String, dynamic>), op['value'] as bool);
       final live = <String>{
         for (final (doc, p) in open)
           if (alive[p]?.value == true) doc
@@ -712,8 +719,8 @@ void main() {
       assertKeyWith(
           deathEx,
           'live_docs_before',
-          (v) => expect(
-              liveBefore, (v as List).cast<String>().toList()..sort()));
+          (v) =>
+              expect(liveBefore, (v as List).cast<String>().toList()..sort()));
       // `cascade`: ONE pid death dropped MORE THAN ONE doc, and left the docs
       // of every other pid alone. That pair is the cascade; either half on its
       // own is satisfied by an unrelated single drop.
@@ -839,11 +846,13 @@ void main() {
       var p = d.tick();
       expect(p.sent, 2, reason: 'both fresh frames pushed to the sink');
       expect(wire.sent.length, 2);
-      expect(p.retained, 2, reason: 'appended-before-send, retained until acked');
+      expect(p.retained, 2,
+          reason: 'appended-before-send, retained until acked');
       expect(d.isStalled(), isFalse);
 
       // Peer proves receipt → the outbox prunes and the resume cursor advances.
-      wire.inbound.add(IpcMessage.ofOutboxAck(const OutboxAck(throughEpoch: 2)));
+      wire.inbound
+          .add(IpcMessage.ofOutboxAck(const OutboxAck(throughEpoch: 2)));
       p = d.tick();
       expect(p.peerAckedThrough, 2);
       expect(p.retained, 0, reason: 'acked frames pruned');
@@ -869,8 +878,7 @@ void main() {
       p = d.tick();
       expect(d.isStalled(), isFalse);
       expect(p.sent, 1, reason: 'the retained frame is replayed');
-      expect(
-          wire.sent.any((m) => m.isDelta && m.delta!.epoch == 1), isTrue,
+      expect(wire.sent.any((m) => m.isDelta && m.delta!.epoch == 1), isTrue,
           reason: 'the replayed delta reached the sink');
     });
 
@@ -909,8 +917,8 @@ void main() {
       expect(p.resyncRequested, isTrue);
       expect(p.applied.length, 0, reason: 'the gapped delta is not applied');
       expect(
-          wire.sent.any(
-              (m) => m.isResyncRequest && m.resyncRequest!.fromEpoch == 2),
+          wire.sent
+              .any((m) => m.isResyncRequest && m.resyncRequest!.fromEpoch == 2),
           isTrue,
           reason: 'a ResyncRequest at the current cursor was emitted');
     });
@@ -922,8 +930,8 @@ void main() {
           .add(IpcMessage.ofResyncRequest(const ResyncRequest(fromEpoch: 2)));
       final p = d.tick();
       expect(p.snapshotsServed, 1);
-      expect(wire.sent.any((m) => m.isSnapshot && m.snapshot!.epoch == 7),
-          isTrue,
+      expect(
+          wire.sent.any((m) => m.isSnapshot && m.snapshot!.epoch == 7), isTrue,
           reason: 'a covering snapshot (from + 5) was sent');
     });
 
@@ -931,10 +939,8 @@ void main() {
       final wire = _Wire();
       final d = _driverAt(wire, 0);
       wire.sourceErr = true;
-      expect(
-          () => d.tick(),
-          throwsA(isA<DriverError>()
-              .having((e) => e.kind, 'kind', 'Source')));
+      expect(() => d.tick(),
+          throwsA(isA<DriverError>().having((e) => e.kind, 'kind', 'Source')));
     });
 
     test('gap then covering snapshot converges', () {

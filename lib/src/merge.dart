@@ -38,8 +38,8 @@ class MergePolicy<T> {
 }
 
 /// Keep-latest band (`old ⊕ op = op`) — the policy behind a plain [Cell].
-MergePolicy<T> keepLatest<T>() =>
-    MergePolicy('KeepLatest', (old, op) => op, commutative: false, idempotent: true);
+MergePolicy<T> keepLatest<T>() => MergePolicy('KeepLatest', (old, op) => op,
+    commutative: false, idempotent: true);
 
 /// Additive commutative monoid (`old + op`). Not idempotent.
 MergePolicy<int> sum() =>
@@ -78,7 +78,8 @@ MergePolicy<List<E>> rawFifo<E>() => MergePolicy(
 /// (free dedup) and store-without-cascade still applies. It is a standalone
 /// policy wrapper over a [Source] (no shared interface — v2 `#lzcellkernel`).
 class MergeCell<T> {
-  MergeCell(Context ctx, T initial, this.policy) : cell = Source<T>(ctx, initial);
+  MergeCell(Context ctx, T initial, this.policy)
+      : cell = Source<T>(ctx, initial);
 
   /// The underlying reactive source cell (for wiring derived readers).
   final Source<T> cell;

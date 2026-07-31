@@ -388,8 +388,8 @@ class CommandProjectionEntry {
       terminalReceiptId == other.terminalReceiptId &&
       lastEventId == other.lastEventId;
   @override
-  int get hashCode => Object.hash(
-      commandId, status, terminal, generation, reason, terminalReceiptId, lastEventId);
+  int get hashCode => Object.hash(commandId, status, terminal, generation,
+      reason, terminalReceiptId, lastEventId);
 }
 
 /// A whole projection image (a checkpoint / reconnect snapshot).
@@ -411,9 +411,8 @@ class CommandProjectionImage {
     final m = v as Map<String, dynamic>;
     return CommandProjectionImage(
       generation: m['generation'] as int,
-      commands: (m['commands'] as List)
-          .map(CommandProjectionEntry.fromWire)
-          .toList(),
+      commands:
+          (m['commands'] as List).map(CommandProjectionEntry.fromWire).toList(),
     );
   }
 
@@ -436,8 +435,7 @@ sealed class CommandMessage {
   /// Encode to a JSON byte string (parity with sibling bindings).
   String encodeJson() => jsonEncode(toWire());
 
-  static CommandMessage decodeJson(String data) =>
-      fromWire(jsonDecode(data));
+  static CommandMessage decodeJson(String data) => fromWire(jsonDecode(data));
 
   static CommandMessage fromWire(Object? v) {
     final m = v as Map<String, dynamic>;
@@ -542,7 +540,8 @@ class CommandApplyStaleGeneration extends CommandApplyStatus {
 }
 
 class CommandApplyTerminalConflict extends CommandApplyStatus {
-  const CommandApplyTerminalConflict(this.commandId, this.existing, this.incoming);
+  const CommandApplyTerminalConflict(
+      this.commandId, this.existing, this.incoming);
   final String commandId;
   final CommandStatus existing;
   final CommandStatus incoming;
@@ -553,7 +552,8 @@ class CommandApplyTerminalConflict extends CommandApplyStatus {
       existing == other.existing &&
       incoming == other.incoming;
   @override
-  int get hashCode => Object.hash('TerminalConflict', commandId, existing, incoming);
+  int get hashCode =>
+      Object.hash('TerminalConflict', commandId, existing, incoming);
 }
 
 /// Map a terminal receipt outcome + reason to a folded [CommandStatus].
@@ -748,8 +748,8 @@ class CommandProjection {
   /// The whole projection image (entries sorted by command id).
   CommandProjectionImage toImage() => CommandProjectionImage(
         generation: _generation,
-        commands: _entries.values.toList()..sort((a, b) =>
-            a.commandId.compareTo(b.commandId)),
+        commands: _entries.values.toList()
+          ..sort((a, b) => a.commandId.compareTo(b.commandId)),
       );
 }
 

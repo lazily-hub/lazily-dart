@@ -23,8 +23,9 @@ String _fixturePath(String name) {
 }
 
 Map<String, Object?> _loadFixture(String name) {
-  final fixture =
-      attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync())) as Map<String, Object?>;
+  final fixture = attributeFixture(
+          jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
+      as Map<String, Object?>;
   expect(fixture['protocol_version'], 1, reason: '$name protocol_version');
   return fixture;
 }
@@ -65,8 +66,8 @@ const allOpKinds = {
 /// silent drift between `wire` and `assertions` is caught. An unknown assertion
 /// key throws, mirroring the lazily-js/lazily-kt conformance harness.
 void assertFixtureAssertions(IpcMessage message, Map<String, Object?> fixture) {
-  final a =
-      fixture['assertions'] as Map<String, Object?>?; // ignore: unnecessary_cast
+  final a = fixture['assertions']
+      as Map<String, Object?>?; // ignore: unnecessary_cast
   expect(a, isNotNull,
       reason: 'fixture missing assertions: ${fixture['description']}');
 
@@ -139,7 +140,8 @@ void assertFixtureAssertions(IpcMessage message, Map<String, Object?> fixture) {
           actual = delta.ops.length;
           break;
         case 'has_all_op_variants':
-          actual = allOpKinds.every(delta.ops.map(deltaOpKind).toSet().contains);
+          actual =
+              allOpKinds.every(delta.ops.map(deltaOpKind).toSet().contains);
           break;
         case 'resync_after_epoch_10':
           actual = delta.applyStatus(10).isResyncRequired;
@@ -187,8 +189,8 @@ void main() {
       expect(() => NodeKey('/a'), throwsArgumentError);
       expect(() => NodeKey('a/'), throwsArgumentError);
       expect(() => NodeKey('a//b'), throwsArgumentError);
-      expect(() => NodeKey(List.filled(33, 's').join('/')),
-          throwsArgumentError);
+      expect(
+          () => NodeKey(List.filled(33, 's').join('/')), throwsArgumentError);
       expect(() => NodeKey('x' * 1025), throwsArgumentError);
     });
   });
@@ -231,8 +233,8 @@ void main() {
     });
 
     test('shared-blob carries the descriptor', () {
-      final state = NodeStateSharedBlob(ShmBlobRef(
-          offset: 7, len: 4, generation: 1, epoch: 2, checksum: 9));
+      final state = NodeStateSharedBlob(
+          ShmBlobRef(offset: 7, len: 4, generation: 1, epoch: 2, checksum: 9));
       expect(NodeState.fromWire(state.toWire()), state);
     });
 
@@ -315,7 +317,9 @@ void main() {
 
   group('Delta', () {
     test('Delta.next advances the epoch by exactly one', () {
-      final delta = Delta.next(40, [DeltaOp.cellSet(1, [10])]);
+      final delta = Delta.next(40, [
+        DeltaOp.cellSet(1, [10])
+      ]);
       expect(delta.baseEpoch, 40);
       expect(delta.epoch, 41);
       expect(delta.isNextAfter(40), isTrue);
@@ -427,7 +431,8 @@ void main() {
       ],
     ));
 
-    final resync = IpcMessage.ofResyncRequest(const ResyncRequest(fromEpoch: 9));
+    final resync =
+        IpcMessage.ofResyncRequest(const ResyncRequest(fromEpoch: 9));
     final ack = IpcMessage.ofOutboxAck(const OutboxAck(throughEpoch: 12));
 
     final messages = {
@@ -439,7 +444,8 @@ void main() {
     };
 
     for (final entry in messages.entries) {
-      test('${entry.key}.encodeJsonStreaming() matches encodeJson() byte-for-byte',
+      test(
+          '${entry.key}.encodeJsonStreaming() matches encodeJson() byte-for-byte',
           () {
         final canonical = entry.value.encodeJson();
         final streamed = entry.value.encodeJsonStreaming();
@@ -463,7 +469,8 @@ void main() {
 
     test('empty Snapshot/Delta/CrdtSync still match', () {
       final emptySnap = IpcMessage.ofSnapshot(const Snapshot(epoch: 0));
-      final emptyDelta = IpcMessage.ofDelta(const Delta(baseEpoch: 0, epoch: 1));
+      final emptyDelta =
+          IpcMessage.ofDelta(const Delta(baseEpoch: 0, epoch: 1));
       final emptySync = IpcMessage.ofCrdtSync(const CrdtSync());
       for (final m in [emptySnap, emptyDelta, emptySync]) {
         expect(m.encodeJsonStreaming(), m.encodeJson());
@@ -495,17 +502,23 @@ void main() {
     });
 
     // lean `equal_cell_set_is_silent` / `changed_cell_set_emits_cell_set`
-    test('PartialEq guard: equal cell write is silent, changed emits CellSet', () {
+    test('PartialEq guard: equal cell write is silent, changed emits CellSet',
+        () {
       expect(cellSetOps(1, _inline([1]), _inline([1])), const <DeltaOp>[],
           reason: 'equal_cell_set_is_silent');
-      expect(cellSetOps(1, _inline([1]), _inline([2])),
-          [DeltaOpCellSet(1, _inline([2]))],
+      expect(
+          cellSetOps(1, _inline([1]), _inline([2])),
+          [
+            DeltaOpCellSet(1, _inline([2]))
+          ],
           reason: 'changed_cell_set_emits_cell_set');
     });
 
     // lean `equal_memo_suppresses_downstream` /
     //      `changed_memo_publishes_then_invalidates`
-    test('memo equality: equal recompute is silent, changed publishes+invalidates', () {
+    test(
+        'memo equality: equal recompute is silent, changed publishes+invalidates',
+        () {
       expect(memoOps(2, _inline([1]), _inline([1]), const [3, 4]),
           const <DeltaOp>[],
           reason: 'equal_memo_suppresses_downstream');
@@ -525,8 +538,11 @@ void main() {
     test('eager Signal materializes SlotValue, never a bare Invalidate', () {
       expect(signalOps(7, _inline([1]), _inline([1])), const <DeltaOp>[],
           reason: 'equal_signal_is_silent');
-      expect(signalOps(7, _inline([1]), _inline([2])),
-          [DeltaOpSlotValue(7, _inline([2]))],
+      expect(
+          signalOps(7, _inline([1]), _inline([2])),
+          [
+            DeltaOpSlotValue(7, _inline([2]))
+          ],
           reason: 'changed_signal_materializes_slot_value');
       for (final ops in [
         signalOps(7, _inline([1]), _inline([1])),
@@ -548,13 +564,11 @@ void main() {
       // frontier is deduped, order-preserving (Nodup).
       expect(flush.frontier, [3, 4, 5]);
       // ops = frontier.map(invalidate).
-      expect(
-          flush.ops,
-          [
-            const DeltaOpInvalidate(3),
-            const DeltaOpInvalidate(4),
-            const DeltaOpInvalidate(5),
-          ]);
+      expect(flush.ops, [
+        const DeltaOpInvalidate(3),
+        const DeltaOpInvalidate(4),
+        const DeltaOpInvalidate(5),
+      ]);
       // one delta, epoch advances once.
       final delta = flush.toDelta(10);
       expect(delta.epoch, 11);
@@ -635,7 +649,8 @@ void main() {
       driftedAssertions['node_count'] =
           (driftedAssertions['node_count'] as int) + 999;
       drifted['assertions'] = driftedAssertions;
-      expect(() => assertFixtureAssertions(message, drifted),
+      expect(
+          () => assertFixtureAssertions(message, drifted),
           throwsA(predicate((Object? e) =>
               e.toString().contains('snapshot assertion "node_count"'))));
 

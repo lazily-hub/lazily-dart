@@ -245,8 +245,7 @@ void main() {
       final ctx = Context();
       final m = trafficLight(ctx);
       final transitions = <(String, String)>[];
-      final dispose =
-          m.onTransition((old, now) => transitions.add((old, now)));
+      final dispose = m.onTransition((old, now) => transitions.add((old, now)));
       m.send('advance'); // Red -> Green
       dispose();
       m.send('advance'); // Green -> Yellow, unobserved

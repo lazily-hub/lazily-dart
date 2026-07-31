@@ -10,10 +10,14 @@ import 'conformance_manifest.dart';
 /// so the canonical fixture was never consulted even when checked out.
 Map<String, dynamic> _fixture() {
   const name = 'crdt-tree/algebra.json';
-  for (final path in ['../lazily-spec/conformance/$name', 'test/conformance/$name']) {
+  for (final path in [
+    '../lazily-spec/conformance/$name',
+    'test/conformance/$name'
+  ]) {
     final file = File(path);
     if (file.existsSync()) {
-      return attributeFixture(jsonDecode(file.specReadAsStringSync())) as Map<String, dynamic>;
+      return attributeFixture(jsonDecode(file.specReadAsStringSync()))
+          as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: $name');

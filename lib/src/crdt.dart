@@ -67,8 +67,7 @@ class HlcStamp implements Comparable<HlcStamp> {
   int get hashCode => Object.hash(wallTime, logical, peer);
 
   @override
-  String toString() =>
-      'HlcStamp(wall=$wallTime, logical=$logical, peer=$peer)';
+  String toString() => 'HlcStamp(wall=$wallTime, logical=$logical, peer=$peer)';
 }
 
 /// A hybrid logical clock (Karger-Shrinkman-Levine).
@@ -79,7 +78,9 @@ class HlcStamp implements Comparable<HlcStamp> {
 /// [observe] always produces a stamp strictly greater than the remote one
 /// (theorem `hlc_send_is_monotonic_and_recv_observes_remote`).
 class Hlc {
-  Hlc(this._peer) : _lastWall = 0, _lastLogical = 0;
+  Hlc(this._peer)
+      : _lastWall = 0,
+        _lastLogical = 0;
 
   final PeerId _peer;
   int _lastWall;
@@ -190,7 +191,9 @@ class StampFrontier {
   /// observed peer, sorted by peer id for deterministic output).
   List<StampFrontierEntry> toWire() {
     final peers = _stamps.keys.toList()..sort();
-    return peers.map((p) => StampFrontierEntry(p, _stamps[p]!.toWire())).toList();
+    return peers
+        .map((p) => StampFrontierEntry(p, _stamps[p]!.toWire()))
+        .toList();
   }
 }
 

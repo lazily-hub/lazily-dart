@@ -77,8 +77,7 @@ class TreeNodeId implements Comparable<TreeNodeId> {
   int compareTo(TreeNodeId other) => op.compareTo(other.op);
 
   @override
-  bool operator ==(Object other) =>
-      other is TreeNodeId && op == other.op;
+  bool operator ==(Object other) => other is TreeNodeId && op == other.op;
 
   @override
   int get hashCode => op.hashCode;
@@ -89,8 +88,7 @@ class TreeNodeId implements Comparable<TreeNodeId> {
   /// Node ids serialize as bare op ids (newtype transparent).
   Map<String, dynamic> toWire() => op.toWire();
 
-  static TreeNodeId fromWire(Object? v) =>
-      TreeNodeId(TreeOpId.fromWire(v));
+  static TreeNodeId fromWire(Object? v) => TreeNodeId(TreeOpId.fromWire(v));
 }
 
 /// Classification of a leaf's exact source span.
@@ -104,9 +102,8 @@ enum LeafKind {
 
   final String wire;
 
-  static LeafKind fromWire(String v) =>
-      values.firstWhere((k) => k.wire == v,
-          orElse: () => throw FormatException('unknown leaf kind: $v'));
+  static LeafKind fromWire(String v) => values.firstWhere((k) => k.wire == v,
+      orElse: () => throw FormatException('unknown leaf kind: $v'));
 }
 
 /// What a `CreateNode` materializes: an element shell or a seeded text leaf.
@@ -142,7 +139,9 @@ final class NodeSeedElement extends NodeSeed {
   final String kind;
 
   @override
-  Map<String, dynamic> toWire() => {'Element': {'kind': kind}};
+  Map<String, dynamic> toWire() => {
+        'Element': {'kind': kind}
+      };
 
   @override
   bool operator ==(Object other) =>
@@ -160,7 +159,9 @@ final class NodeSeedLeaf extends NodeSeed {
   final String text;
 
   @override
-  Map<String, dynamic> toWire() => {'Leaf': {'kind': kind.wire, 'text': text}};
+  Map<String, dynamic> toWire() => {
+        'Leaf': {'kind': kind.wire, 'text': text}
+      };
 
   @override
   bool operator ==(Object other) =>
@@ -196,9 +197,7 @@ class SortKey implements Comparable<SortKey> {
 
   @override
   bool operator ==(Object other) =>
-      other is SortKey &&
-      _listEquals(frac, other.frac) &&
-      peer == other.peer;
+      other is SortKey && _listEquals(frac, other.frac) && peer == other.peer;
 
   @override
   int get hashCode => Object.hash(Object.hashAll(frac), peer);
@@ -309,7 +308,9 @@ final class TreeOpKindTombstone extends TreeOpKind {
   final TreeNodeId node;
 
   @override
-  Map<String, dynamic> toWire() => {'Tombstone': {'node': node.toWire()}};
+  Map<String, dynamic> toWire() => {
+        'Tombstone': {'node': node.toWire()}
+      };
 
   @override
   bool operator ==(Object other) =>
@@ -364,7 +365,8 @@ final class TreeOpKindLeafEdit extends TreeOpKind {
 
 /// Split a leaf into two adjacent leaves of the same kind.
 final class TreeOpKindSplitLeaf extends TreeOpKind {
-  const TreeOpKindSplitLeaf(this.node, this.newNode, this.sort, this.atChar, this.prev);
+  const TreeOpKindSplitLeaf(
+      this.node, this.newNode, this.sort, this.atChar, this.prev);
   final TreeNodeId node;
   final TreeNodeId newNode;
   final SortKey sort;
@@ -391,12 +393,14 @@ final class TreeOpKindSplitLeaf extends TreeOpKind {
       atChar == other.atChar &&
       prev == other.prev;
   @override
-  int get hashCode => Object.hash('SplitLeaf', node, newNode, sort, atChar, prev);
+  int get hashCode =>
+      Object.hash('SplitLeaf', node, newNode, sort, atChar, prev);
 }
 
 /// Merge two adjacent live leaf siblings into one.
 final class TreeOpKindMergeLeaves extends TreeOpKind {
-  const TreeOpKindMergeLeaves(this.left, this.right, this.prevLeft, this.prevRight);
+  const TreeOpKindMergeLeaves(
+      this.left, this.right, this.prevLeft, this.prevRight);
   final TreeNodeId left;
   final TreeNodeId right;
   final TreeOpId prevLeft;
@@ -487,7 +491,8 @@ class _DotRange {
   int contiguous = 0;
   final Set<int> sparse = {};
 
-  bool contains(int counter) => counter <= contiguous || sparse.contains(counter);
+  bool contains(int counter) =>
+      counter <= contiguous || sparse.contains(counter);
 
   void observe(int counter) {
     if (counter <= contiguous) return;
@@ -750,9 +755,8 @@ class LosslessTreeCrdt {
       final idx = order.indexOf(after);
       if (idx >= 0) {
         loFrac = _nodes[after]!.sort.frac;
-        hiFrac = (idx + 1 < order.length)
-            ? _nodes[order[idx + 1]]!.sort.frac
-            : null;
+        hiFrac =
+            (idx + 1 < order.length) ? _nodes[order[idx + 1]]!.sort.frac : null;
       } else {
         // Anchor not a live child: append at the end.
         loFrac = order.isEmpty ? null : _nodes[order.last]!.sort.frac;
@@ -768,8 +772,7 @@ class LosslessTreeCrdt {
     final sort = _keyAfter(parent, after);
     final opId = _nextOpId();
     final node = TreeNodeId(opId);
-    _commitLocal(TreeOp(
-        opId, TreeOpKindCreateNode(node, parent, sort, seed)));
+    _commitLocal(TreeOp(opId, TreeOpKindCreateNode(node, parent, sort, seed)));
     return node;
   }
 
@@ -831,8 +834,8 @@ class LosslessTreeCrdt {
     final prev = rec.textHead;
     final opId = _nextOpId();
     final newNode = TreeNodeId(opId);
-    _commitLocal(TreeOp(
-        opId, TreeOpKindSplitLeaf(node, newNode, sort, atChar, prev)));
+    _commitLocal(
+        TreeOp(opId, TreeOpKindSplitLeaf(node, newNode, sort, atChar, prev)));
     return newNode;
   }
 
@@ -849,15 +852,13 @@ class LosslessTreeCrdt {
     final prevLeft = _nodes[left]!.textHead;
     final prevRight = _nodes[right]!.textHead;
     final opId = _nextOpId();
-    _commitLocal(TreeOp(
-        opId, TreeOpKindMergeLeaves(left, right, prevLeft, prevRight)));
+    _commitLocal(
+        TreeOp(opId, TreeOpKindMergeLeaves(left, right, prevLeft, prevRight)));
   }
 
   /// Ops this replica holds that [their] frontier lacks, ordered by dotted id.
   TreeUpdate diff(TreeVersionFrontier their) {
-    final ops = _log
-        .where((op) => !their.contains(op.id))
-        .toList()
+    final ops = _log.where((op) => !their.contains(op.id)).toList()
       ..sort((a, b) {
         final c = a.id.counter.compareTo(b.id.counter);
         if (c != 0) return c;
@@ -907,11 +908,10 @@ class LosslessTreeCrdt {
         _nodes.containsKey(k.node) && _frontier.contains(k.prev),
       TreeOpKindSplitLeaf() =>
         _nodes.containsKey(k.node) && _frontier.contains(k.prev),
-      TreeOpKindMergeLeaves() =>
-        _nodes.containsKey(k.left) &&
-            _nodes.containsKey(k.right) &&
-            _frontier.contains(k.prevLeft) &&
-            _frontier.contains(k.prevRight),
+      TreeOpKindMergeLeaves() => _nodes.containsKey(k.left) &&
+          _nodes.containsKey(k.right) &&
+          _frontier.contains(k.prevLeft) &&
+          _frontier.contains(k.prevRight),
     };
   }
 
@@ -972,8 +972,8 @@ class LosslessTreeCrdt {
     }
   }
 
-  void _applySplit(
-      TreeNodeId node, TreeNodeId newNode, SortKey sort, int atChar, TreeOpId opId) {
+  void _applySplit(TreeNodeId node, TreeNodeId newNode, SortKey sort,
+      int atChar, TreeOpId opId) {
     final rec = _nodes[node];
     if (rec == null) return;
     final leaf = rec.body;

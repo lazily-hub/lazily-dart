@@ -74,9 +74,9 @@ class Hlc {
     ].reduce((a, b) => a > b ? a : b);
     if (wall == _lastWall && wall == remote.wallTime) {
       _lastLogical = [
-        _lastLogical,
-        remote.logical,
-      ].reduce((a, b) => a > b ? a : b) +
+            _lastLogical,
+            remote.logical,
+          ].reduce((a, b) => a > b ? a : b) +
           1;
     } else if (wall == _lastWall) {
       _lastLogical++;
@@ -191,7 +191,8 @@ class _SeqEntry<V> {
       HlcStamp.max(value.stamp, HlcStamp.max(position.stamp, deleted.stamp));
 
   _SeqEntry<V> copy() {
-    final e = _SeqEntry<V>(value.copy(), position.copy(), deleted.copy(), value.stamp);
+    final e = _SeqEntry<V>(
+        value.copy(), position.copy(), deleted.copy(), value.stamp);
     e.valueStamp = valueStamp;
     e.posStamp = posStamp;
     e.delStamp = delStamp;
@@ -347,8 +348,7 @@ class SeqCrdt<Id, V> {
   }
 
   /// Count of tombstoned elements.
-  int tombstoneCount() =>
-      _entries.values.where((e) => e.deleted.value).length;
+  int tombstoneCount() => _entries.values.where((e) => e.deleted.value).length;
 
   /// Total entry count including tombstones.
   int entryCount() => _entries.length;
@@ -406,6 +406,5 @@ class SeqCrdt<Id, V> {
   }
 
   /// GC entries tombstoned at or before [watermark].
-  int gc(HlcStamp watermark) =>
-      gcWith((s) => s.compareTo(watermark) <= 0);
+  int gc(HlcStamp watermark) => gcWith((s) => s.compareTo(watermark) <= 0);
 }

@@ -105,7 +105,8 @@ const expectedFixtures = {
 /// than mis-replayed against a key the runner cannot check.
 const expectedSkips = {
   'exact_fold_paths_stay_exact.json': 'merge_cell',
-  'feedback_drain_bound_reports_exhaustion.json': 'drain_exhausted (#lzmergefeed)',
+  'feedback_drain_bound_reports_exhaustion.json':
+      'drain_exhausted (#lzmergefeed)',
   'merge_cell_acquires_no_dependency_edge.json': 'merge_cell',
   'merge_feed_through_a_formula_coalesces.json': 'merge_cell',
   'merge_folds_synchronously_in_batch.json': 'merge_cell',
@@ -117,7 +118,8 @@ const expectedSkips = {
 /// filter so the recorded reason is the parked one rather than a spurious
 /// "no unsupported op". See [expectedSkips].
 const parkedFixtures = {
-  'feedback_drain_bound_reports_exhaustion.json': 'drain_exhausted (#lzmergefeed)',
+  'feedback_drain_bound_reports_exhaustion.json':
+      'drain_exhausted (#lzmergefeed)',
 };
 
 /// Ops this package can model. Anything else in a fixture skips it, by name.
@@ -962,8 +964,8 @@ Future<_Report> _replay(
       check('final.readable.$id', ok, readable[id]);
       report.observation.readable[id] = ok;
     }
-    final reads = assertKeyWith(finalState, 'read',
-        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
+    final reads = assertKeyWith(
+        finalState, 'read', (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
     for (final id in reads.keys.toList()..sort()) {
       final (value, err) = await readId(id);
       final got = err ? 'read_after_dispose' : value;
@@ -989,8 +991,8 @@ Future<_Report> _replay(
     });
     // Order matches the reference runner: reads (which re-register edges in a
     // lazy binding) precede the degree assertions that count them.
-    final reads = assertKeyWith(publish, 'read',
-        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
+    final reads = assertKeyWith(
+        publish, 'read', (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
     for (final id in reads.keys.toList()..sort()) {
       final (value, err) = await readId(id);
       final got = err ? 'read_after_dispose' : value;
@@ -1056,7 +1058,8 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   var totalChecks = 0;
 
   for (final name in expectedFixtures.toList()..sort()) {
-    final fx = (attributeFixture(jsonDecode(File('$specDir/$name').specReadAsStringSync())) as Map)
+    final fx = (attributeFixture(
+            jsonDecode(File('$specDir/$name').specReadAsStringSync())) as Map)
         .cast<String, dynamic>();
     final unsupported = _opsOf(fx).difference(supportedOps).toList()..sort();
     // A parked fixture is skipped before the op filter (it uses only supported

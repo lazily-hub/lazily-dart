@@ -51,8 +51,8 @@ class ScaleGraph {
 /// Construct the graph (formulas not yet computed — lazy until first read).
 ScaleGraph buildScaleGraph(int n) {
   final ctx = Context();
-  final inputs = List<Cell<int>>.generate(n, (i) => Cell<int>(ctx, i),
-      growable: false);
+  final inputs =
+      List<Cell<int>>.generate(n, (i) => Cell<int>(ctx, i), growable: false);
   final formulas = List<Slot<int>>.generate(n, (i) {
     final a = inputs[i];
     final b = inputs[i - 1 < 0 ? 0 : i - 1];

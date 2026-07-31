@@ -201,7 +201,8 @@ void _replay(_Flavor flavor, String fixtureName) {
   expect(path, isNotNull,
       reason: 'canonical collections fixture missing: $fixtureName');
   final fixture =
-      attributeFixture(jsonDecode(File(path!).specReadAsStringSync())) as Map<String, dynamic>;
+      attributeFixture(jsonDecode(File(path!).specReadAsStringSync()))
+          as Map<String, dynamic>;
   String where(int i) => '${flavor.name} $fixtureName step $i';
 
   final initial = fixture['initial'] as Map<String, dynamic>?;
@@ -300,7 +301,8 @@ void _replay(_Flavor flavor, String fixtureName) {
 
     assertKeyWith(expected, 'invalidates', (v) {
       final invalidates = v as Map;
-      final dirty = ((invalidates['value'] as List?) ?? []).cast<String>().toSet();
+      final dirty =
+          ((invalidates['value'] as List?) ?? []).cast<String>().toSet();
       final survivors = gotOrder.toSet();
       valueReaders.forEach((key, drive) {
         if (!survivors.contains(key)) return; // removed: no entry left to read
@@ -378,24 +380,49 @@ void main() {
       }
 
       final cases = <(String, void Function(_Flavor), List<String>)>[
-        ('move_before, key precedes anchor', (f) => f.moveBefore('a', 'd'),
-            ['b', 'c', 'a', 'd']),
-        ('move_before, key follows anchor', (f) => f.moveBefore('d', 'b'),
-            ['a', 'd', 'b', 'c']),
-        ('move_after, key precedes anchor', (f) => f.moveAfter('a', 'c'),
-            ['b', 'c', 'a', 'd']),
-        ('move_after, key follows anchor', (f) => f.moveAfter('d', 'a'),
-            ['a', 'd', 'b', 'c']),
-        ('move_to past the end clamps', (f) => f.moveTo('a', 99),
-            ['b', 'c', 'd', 'a']),
-        ('move_to to -1 clamps to the front', (f) => f.moveTo('d', -1),
-            ['d', 'a', 'b', 'c']),
-        ('move_to far below zero clamps', (f) => f.moveTo('d', -5),
-            ['d', 'a', 'b', 'c']),
-        ('move on an absent key is a no-op', (f) {
-          f.moveBefore('zz', 'a');
-          f.moveTo('zz', 0);
-        }, seed),
+        (
+          'move_before, key precedes anchor',
+          (f) => f.moveBefore('a', 'd'),
+          ['b', 'c', 'a', 'd']
+        ),
+        (
+          'move_before, key follows anchor',
+          (f) => f.moveBefore('d', 'b'),
+          ['a', 'd', 'b', 'c']
+        ),
+        (
+          'move_after, key precedes anchor',
+          (f) => f.moveAfter('a', 'c'),
+          ['b', 'c', 'a', 'd']
+        ),
+        (
+          'move_after, key follows anchor',
+          (f) => f.moveAfter('d', 'a'),
+          ['a', 'd', 'b', 'c']
+        ),
+        (
+          'move_to past the end clamps',
+          (f) => f.moveTo('a', 99),
+          ['b', 'c', 'd', 'a']
+        ),
+        (
+          'move_to to -1 clamps to the front',
+          (f) => f.moveTo('d', -1),
+          ['d', 'a', 'b', 'c']
+        ),
+        (
+          'move_to far below zero clamps',
+          (f) => f.moveTo('d', -5),
+          ['d', 'a', 'b', 'c']
+        ),
+        (
+          'move on an absent key is a no-op',
+          (f) {
+            f.moveBefore('zz', 'a');
+            f.moveTo('zz', 0);
+          },
+          seed
+        ),
       ];
 
       for (final (what, run, want) in cases) {

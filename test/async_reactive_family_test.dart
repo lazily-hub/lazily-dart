@@ -83,7 +83,8 @@ void main() {
     test('resolved value == the synchronous (thread-safe) map value', () {
       // async_resolved_matches_sync
       final ctx = Context();
-      final asyncFam = AsyncComputedMap<int, int>(ctx)..materializeAll([1, 2, 3]);
+      final asyncFam = AsyncComputedMap<int, int>(ctx)
+        ..materializeAll([1, 2, 3]);
       final syncFam = ThreadSafeComputedMap<int, int>(ctx);
       for (final k in [1, 2, 3]) {
         expect(asyncFam.drive(k, (k) => k * 11),

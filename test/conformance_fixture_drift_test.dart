@@ -50,7 +50,8 @@ List<_Pair> _pairs() {
 void main() {
   final spec = Directory(specRoot);
   if (!spec.existsSync()) {
-    stderr.writeln('skipping: $specRoot absent - run with the lazily-spec sibling');
+    stderr.writeln(
+        'skipping: $specRoot absent - run with the lazily-spec sibling');
     test(
       'conformance fixture mirrors',
       () {},

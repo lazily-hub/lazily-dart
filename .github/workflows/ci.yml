@@ -32,6 +32,19 @@ jobs:
         with:
           sdk: ${{ matrix.sdk }}
 
+      # The formatting gate (#lazilydartzig). `stable` ONLY, unlike the zig
+      # binding where the gate runs on every pinned toolchain. The difference is
+      # that zig's three toolchains were verified to format identically, whereas
+      # `dart format` genuinely evolves — the SDK ships the formatter, so a beta
+      # SDK carries a formatter this tree has never been run through. Gating on
+      # beta would redden the build for an unreleased style change rather than
+      # for anything a contributor did, which is how a gate teaches people to
+      # ignore it. `stable` is the pin; beta still runs every other job step.
+      - name: Format gate (make fmt)
+        if: matrix.sdk == 'stable'
+        working-directory: lazily-dart
+        run: make fmt
+
       # Sibling lazily-spec so the conformance tests (statechart / message-passing
       # / distributed / collections) resolve `../lazily-spec/conformance/...`
       # fixtures that are not copied into `test/conformance/`.

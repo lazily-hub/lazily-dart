@@ -36,8 +36,7 @@ class Block {
   final String? anchor;
 
   @override
-  String toString() =>
-      anchor != null ? 'Block($anchor:$text)' : 'Block($text)';
+  String toString() => anchor != null ? 'Block($anchor:$text)' : 'Block($text)';
 }
 
 /// A manufactured block key: either anchored or content-derived.
@@ -59,8 +58,7 @@ class BlockKey {
   bool get isAnchored => !_isContent;
   bool get isContent => _isContent;
 
-  bool equals(BlockKey other) =>
-      kind == other.kind && value == other.value;
+  bool equals(BlockKey other) => kind == other.kind && value == other.value;
 
   /// Wire form: `a:<anchor>` or `c:` + 16-char zero-padded hex.
   String asString() {
@@ -200,8 +198,9 @@ class Match {
   final double similarity;
 
   @override
-  String toString() =>
-      kind == 'inserted' ? 'Inserted' : '${kind[0].toUpperCase()}${kind.substring(1)}:$oldIndex';
+  String toString() => kind == 'inserted'
+      ? 'Inserted'
+      : '${kind[0].toUpperCase()}${kind.substring(1)}:$oldIndex';
 }
 
 /// The alignment of new blocks against old, plus the set of removed indices.

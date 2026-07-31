@@ -362,7 +362,8 @@ class Outbox<T> {
     Overflow overflow = Overflow.conflate,
   }) : relay = RelayCell<T>(
           ctx,
-          BackpressurePolicy(ctx, dimension, highWater, highWater ~/ 2, overflow),
+          BackpressurePolicy(
+              ctx, dimension, highWater, highWater ~/ 2, overflow),
           mergePolicy,
         );
 
@@ -503,8 +504,10 @@ class ExpiryPolicy {
   }
 
   /// Retain only the live elements of a timestamped batch (drop the aged tail).
-  List<T> retainLive<T>(List<(int, T)> batch) =>
-      [for (final entry in batch) if (isLive(entry.$1)) entry.$2];
+  List<T> retainLive<T>(List<(int, T)> batch) => [
+        for (final entry in batch)
+          if (isLive(entry.$1)) entry.$2
+      ];
 }
 
 /// Case 11 — priority egress. Ingress carries a priority; egress pops the highest

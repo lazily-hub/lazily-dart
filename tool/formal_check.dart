@@ -30,7 +30,8 @@ Future<int> main(List<String> args) async {
   final here = File(Platform.script.toFilePath()).parent;
   final candidates = <String>[
     // Explicit override wins (CI sets this to a sibling checkout path).
-    if (Platform.environment['LAZILY_FORMAL_PATH'] case final path? when path.isNotEmpty)
+    if (Platform.environment['LAZILY_FORMAL_PATH'] case final path?
+        when path.isNotEmpty)
       path,
     // Layout: <pkg>/tool/formal_check.dart and <superproject>/src/lazily-formal.
     // From the published package root, `../lazily-formal` covers the in-repo
@@ -70,11 +71,13 @@ Future<int> main(List<String> args) async {
   stderr.write(result.stderr);
 
   if (result.exitCode != 0) {
-    stderr.writeln('[formal-check] FAIL — `lake build` exited ${result.exitCode}.');
+    stderr.writeln(
+        '[formal-check] FAIL — `lake build` exited ${result.exitCode}.');
     return result.exitCode;
   }
 
-  stdout.writeln('[formal-check] OK — all Lean proofs in lazily-formal compile.');
+  stdout
+      .writeln('[formal-check] OK — all Lean proofs in lazily-formal compile.');
   return 0;
 }
 
@@ -97,14 +100,17 @@ String? resolveFormalDir(List<String> candidates) {
 
 bool hasLake() {
   try {
-    return Process.runSync('lake', ['--version'], runInShell: true).exitCode == 0;
+    return Process.runSync('lake', ['--version'], runInShell: true).exitCode ==
+        0;
   } catch (_) {
     return false;
   }
 }
 
 String _join(String parent, String child) =>
-    parent.endsWith('/') || parent.endsWith('\\') ? '$parent$child' : '$parent/$child';
+    parent.endsWith('/') || parent.endsWith('\\')
+        ? '$parent$child'
+        : '$parent/$child';
 
 extension on FileSystemEntity {
   String childDir(String name) => _join(path, name);

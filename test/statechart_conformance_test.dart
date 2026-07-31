@@ -48,7 +48,8 @@ void main() {
     test('statechart fixture $name replays identically', () {
       final fixture = _loadFixture(name);
       final ctx = Context();
-      final chart = StateChart(ctx, ChartDef.fromJson(fixture['chart'] as Map<String, dynamic>));
+      final chart = StateChart(
+          ctx, ChartDef.fromJson(fixture['chart'] as Map<String, dynamic>));
 
       // initial_active (asserted once before any step).
       final wantInitial = _activeExpected(fixture['initial_active'])..sort();
@@ -56,9 +57,11 @@ void main() {
       expect(gotInitial, equals(wantInitial), reason: 'initial_active');
 
       // initial_actions (optional).
-      final initialActions = (fixture['initial_actions'] as List?)?.cast<String>() ?? const [];
+      final initialActions =
+          (fixture['initial_actions'] as List?)?.cast<String>() ?? const [];
       if (initialActions.isNotEmpty) {
-        expect(chart.lastActions(), equals(initialActions), reason: 'initial_actions');
+        expect(chart.lastActions(), equals(initialActions),
+            reason: 'initial_actions');
       }
 
       final steps = (fixture['steps'] as List).cast<Map<String, dynamic>>();
@@ -75,7 +78,8 @@ void main() {
             reason: 'step $i `$event` accepted');
 
         final wantActive = _activeExpected(step['active'])..sort();
-        expect(chart.activeLeaves(), equals(wantActive), reason: 'step $i `$event` active');
+        expect(chart.activeLeaves(), equals(wantActive),
+            reason: 'step $i `$event` active');
 
         final matches = step['matches'];
         if (matches is Map<String, dynamic>) {
@@ -109,10 +113,13 @@ void main() {
     ]) {
       final fixture = _loadFixture(name);
       final ctx = Context();
-      final chart = StateChart(ctx, ChartDef.fromJson(fixture['chart'] as Map<String, dynamic>));
+      final chart = StateChart(
+          ctx, ChartDef.fromJson(fixture['chart'] as Map<String, dynamic>));
       final wantInitial = _activeExpected(fixture['initial_active'])..sort();
-      expect(chart.activeLeaves(), equals(wantInitial), reason: '$name initial_active');
-      for (final step in (fixture['steps'] as List).cast<Map<String, dynamic>>()) {
+      expect(chart.activeLeaves(), equals(wantInitial),
+          reason: '$name initial_active');
+      for (final step
+          in (fixture['steps'] as List).cast<Map<String, dynamic>>()) {
         final event = step['event']! as String;
         final guards = (step['guards'] as Map<String, dynamic>?)?.map(
               (k, v) => MapEntry(k, v == true),
@@ -120,7 +127,8 @@ void main() {
             const <String, bool>{};
         chart.send(event, guards);
         final wantActive = _activeExpected(step['active'])..sort();
-        expect(chart.activeLeaves(), equals(wantActive), reason: '$name step `$event` active');
+        expect(chart.activeLeaves(), equals(wantActive),
+            reason: '$name step `$event` active');
       }
     }
   });

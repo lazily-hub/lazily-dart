@@ -34,7 +34,8 @@ void main() {
     final ctx = Context();
 
     expect(AsyncCellMap<String, int>(ctx), isA<AsyncSourceMap<String, int>>());
-    expect(AsyncSlotMap<String, int>(ctx), isA<AsyncComputedMap<String, int>>());
+    expect(
+        AsyncSlotMap<String, int>(ctx), isA<AsyncComputedMap<String, int>>());
     expect(ThreadSafeCellMap<String, int>(ctx),
         isA<ThreadSafeSourceMap<String, int>>());
     expect(ThreadSafeSlotMap<String, int>(ctx),

@@ -41,9 +41,9 @@ String _fixturePath(String name) {
   throw StateError('fixture not found: $name (looked in $local, $sibling)');
 }
 
-Map<String, dynamic> _load(String name) =>
-    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
-        as Map<String, dynamic>;
+Map<String, dynamic> _load(String name) => attributeFixture(
+        jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
+    as Map<String, dynamic>;
 
 Set<String> _asSet(Iterable<String> keys) => keys.toSet();
 
@@ -77,8 +77,8 @@ EntryKind _parseEntryKind(String raw) => switch (raw) {
 /// A `spec.val` fixture: ordered keys → canonical value.
 ({List<String> keys, Map<String, int> values}) _parseVal(
     Map<String, dynamic> fixture) {
-  final val = (fixture['spec'] as Map<String, dynamic>)['val']
-      as Map<String, dynamic>;
+  final val =
+      (fixture['spec'] as Map<String, dynamic>)['val'] as Map<String, dynamic>;
   final keys = <String>[];
   final values = <String, int>{};
   for (final e in val.entries) {
@@ -107,11 +107,16 @@ Map<String, dynamic> _checkValFixture(String name) {
   final ctx = Context();
 
   // eager: pre-mint the whole keyset.
-  final eager = ComputedMap<String, int>(ctx)..materializeAll(spec.keys, lookup);
+  final eager = ComputedMap<String, int>(ctx)
+    ..materializeAll(spec.keys, lookup);
   expect(eager.entryKind, EntryKind.computed);
-  expect(eager.presentCount(), spec.keys.length, reason: 'eager_materializes_all');
-  assertKeyWith(expected, 'eager_present',
-      (v) => expect(_asSet(eager.presentKeys()), _asSet((v as List).cast<String>())));
+  expect(eager.presentCount(), spec.keys.length,
+      reason: 'eager_materializes_all');
+  assertKeyWith(
+      expected,
+      'eager_present',
+      (v) => expect(
+          _asSet(eager.presentKeys()), _asSet((v as List).cast<String>())));
 
   // lazy: empty, mint-on-access.
   final lazy = ComputedMap<String, int>(ctx);
@@ -196,7 +201,8 @@ void main() {
           as Map<String, dynamic>)['entries'] as Map<String, dynamic>;
       expect(entries, isNotEmpty);
       final kinds = entries.values
-          .map((e) => _parseEntryKind((e as Map<String, dynamic>)['kind'] as String))
+          .map((e) =>
+              _parseEntryKind((e as Map<String, dynamic>)['kind'] as String))
           .toSet();
       expect(kinds, {EntryKind.source, EntryKind.computed},
           reason: 'the mixed-kind fixture must carry both entry kinds');
@@ -250,7 +256,8 @@ void main() {
         lazyCells.entry(k, lookup(k));
       }
       final lazySlots = ComputedMap<String, int>(ctx);
-      expect(lazySlots.presentKeys(), isEmpty, reason: 'slots deferred at build');
+      expect(lazySlots.presentKeys(), isEmpty,
+          reason: 'slots deferred at build');
       assertKeyWith(expected, 'lazy_present_at_build', (v) {
         expect(_asSet(lazyCells.presentKeys()),
             _asSet((v as List).cast<String>()));
@@ -278,7 +285,8 @@ void main() {
             expect(lazyCells.get(k), e.value);
           } else {
             expect(eagerSlots.get(k), e.value);
-            expect(lazySlots.getOrInsertWith(k, (_, key) => lookup(key)), e.value);
+            expect(
+                lazySlots.getOrInsertWith(k, (_, key) => lookup(key)), e.value);
           }
         }
       });

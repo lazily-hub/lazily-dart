@@ -69,7 +69,8 @@ void main() {
     test('observe keeps the per-peer max', () {
       final f = StampFrontier();
       expect(f.observe(1, HlcStamp(100, 0, 1)), isTrue);
-      expect(f.observe(1, HlcStamp(90, 5, 1)), isFalse, reason: 'older ignored');
+      expect(f.observe(1, HlcStamp(90, 5, 1)), isFalse,
+          reason: 'older ignored');
       expect(f.observe(1, HlcStamp(100, 1, 1)), isTrue, reason: 'newer kept');
       expect(f.get(1), HlcStamp(100, 1, 1));
     });
@@ -82,8 +83,12 @@ void main() {
         ..observe(2, HlcStamp(200, 0, 2))
         ..observe(3, HlcStamp(30, 0, 3));
 
-      final ab = StampFrontier()..merge(a)..merge(b);
-      final ba = StampFrontier()..merge(b)..merge(a);
+      final ab = StampFrontier()
+        ..merge(a)
+        ..merge(b);
+      final ba = StampFrontier()
+        ..merge(b)
+        ..merge(a);
       expect(ab.toWire(), ba.toWire(), reason: 'commutative');
 
       final abAgain = StampFrontier()..merge(ab);
@@ -154,7 +159,9 @@ void main() {
       final wire = {
         'node': 1,
         'stamp': WireStamp(wallTime: 1, logical: 0, peer: 1).toWire(),
-        'state': {'Inline': [1]}
+        'state': {
+          'Inline': [1]
+        }
       };
       final op = CrdtOp.fromWire(wire);
       expect(op.key, isNull);
@@ -187,8 +194,7 @@ void main() {
           StampFrontierEntry(1, WireStamp(wallTime: 9, logical: 0, peer: 1)),
         ],
         ops: [
-          CrdtOp.newOp(
-              1, WireStamp(wallTime: 9, logical: 0, peer: 1), [1, 2]),
+          CrdtOp.newOp(1, WireStamp(wallTime: 9, logical: 0, peer: 1), [1, 2]),
         ],
       );
       final encoded = jsonEncode(sync.toWire());
@@ -202,8 +208,7 @@ void main() {
           StampFrontierEntry(1, WireStamp(wallTime: 9, logical: 0, peer: 1)),
         ],
         ops: [
-          CrdtOp.newOp(
-              1, WireStamp(wallTime: 9, logical: 0, peer: 1), [1, 2]),
+          CrdtOp.newOp(1, WireStamp(wallTime: 9, logical: 0, peer: 1), [1, 2]),
         ],
       ));
       final wire = message.toWire();
@@ -231,21 +236,31 @@ void main() {
       final expected = {
         'CrdtSync': {
           'frontier': [
-            [1, {'wall_time': 200, 'logical': 0, 'peer': 1}],
-            [2, {'wall_time': 180, 'logical': 3, 'peer': 2}],
+            [
+              1,
+              {'wall_time': 200, 'logical': 0, 'peer': 1}
+            ],
+            [
+              2,
+              {'wall_time': 180, 'logical': 3, 'peer': 2}
+            ],
           ],
           'ops': [
             {
               'node': 1,
               'key': null,
               'stamp': {'wall_time': 200, 'logical': 0, 'peer': 1},
-              'state': {'Inline': [10, 20]},
+              'state': {
+                'Inline': [10, 20]
+              },
             },
             {
               'node': 2,
               'key': 'scores/alice',
               'stamp': {'wall_time': 180, 'logical': 3, 'peer': 2},
-              'state': {'Inline': [30]},
+              'state': {
+                'Inline': [30]
+              },
             },
           ],
         },
@@ -256,8 +271,7 @@ void main() {
 
   group('CrdtSync.filterReadable', () {
     test('omits ops for unreadable nodes; retains the full frontier', () {
-      final permissions = PeerPermissions()
-        ..allow(99, RemoteOp.read(1));
+      final permissions = PeerPermissions()..allow(99, RemoteOp.read(1));
       final sync = CrdtSync(
         frontier: [
           StampFrontierEntry(1, WireStamp(wallTime: 1, logical: 0, peer: 1)),
@@ -270,8 +284,7 @@ void main() {
       final filtered = sync.filterReadable(permissions, 99);
       expect(filtered.ops.length, 1);
       expect(filtered.ops.first.node, 1);
-      expect(filtered.frontier.length, 1,
-          reason: 'frontier retained in full');
+      expect(filtered.frontier.length, 1, reason: 'frontier retained in full');
     });
   });
 }

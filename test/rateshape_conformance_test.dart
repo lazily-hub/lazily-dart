@@ -22,7 +22,8 @@ final _specDir = Directory('../lazily-spec/conformance/rateshape');
 
 Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
+      ? File(_specDir.resolveSymbolicLinksSync() + '/$name')
+          .specReadAsStringSync()
       : File('test/conformance/rateshape/$name').specReadAsStringSync();
   return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }

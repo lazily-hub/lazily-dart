@@ -23,7 +23,8 @@ Map<String, dynamic> _loadFixture(String name) {
   for (final path in candidates) {
     final f = File(path);
     if (f.existsSync()) {
-      return attributeFixture(jsonDecode(f.specReadAsStringSync())) as Map<String, dynamic>;
+      return attributeFixture(jsonDecode(f.specReadAsStringSync()))
+          as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: $name');
@@ -88,7 +89,8 @@ void _playTextCrdtScenario(Map<String, dynamic> scenario) {
   final replicaSpec = scenario['replica'];
   if (seed != null) {
     if (seed is String) {
-      final peer = replicaSpec != null ? (replicaSpec as Map)['peer'] as int : 1;
+      final peer =
+          replicaSpec != null ? (replicaSpec as Map)['peer'] as int : 1;
       replicas['a'] = TextCrdt.fromStr(peer, seed);
     } else if (seed is Map) {
       final peer = seed['peer'] as int;
@@ -112,12 +114,14 @@ void _playTextCrdtScenario(Map<String, dynamic> scenario) {
   }
 }
 
-void _applyTextCrdtStep(Map<String, TextCrdt> replicas, Map<String, dynamic> step) {
+void _applyTextCrdtStep(
+    Map<String, TextCrdt> replicas, Map<String, dynamic> step) {
   final onReplica = step['on'] as String? ?? 'a';
   final forkName = step['fork'] as String?;
   final forkPeer = step['peer'];
   if (forkName != null) {
-    replicas[forkName] = (replicas[onReplica] ?? replicas['a']!).fork(forkPeer as int);
+    replicas[forkName] =
+        (replicas[onReplica] ?? replicas['a']!).fork(forkPeer as int);
     return;
   }
   final cloneName = step['clone'] as String?;
@@ -155,18 +159,20 @@ void _applyTextCrdtStep(Map<String, TextCrdt> replicas, Map<String, dynamic> ste
   }
 }
 
-void _checkTextCrdtExpect(Map<String, TextCrdt> replicas, Map<String, dynamic> expect_) {
-  assertKeyIfPresent(expect_, 'text',
-      (v) => expect(replicas['a']!.text(), v, reason: 'text'));
-  assertKeyIfPresent(expect_, 'len',
-      (v) => expect(replicas['a']!.len(), v, reason: 'len'));
+void _checkTextCrdtExpect(
+    Map<String, TextCrdt> replicas, Map<String, dynamic> expect_) {
+  assertKeyIfPresent(
+      expect_, 'text', (v) => expect(replicas['a']!.text(), v, reason: 'text'));
+  assertKeyIfPresent(
+      expect_, 'len', (v) => expect(replicas['a']!.len(), v, reason: 'len'));
   assertKeyIfPresent(expect_, 'texts_equal', (v) {
     // The fixture value names WHICH replicas must agree; it reaches the
     // comparison by selecting both operands.
     final pair = ((v as List)[0] as List);
     final a = pair[0] as String;
     final b = pair[1] as String;
-    expect(replicas[a]!.text(), replicas[b]!.text(), reason: 'texts_equal $a/$b');
+    expect(replicas[a]!.text(), replicas[b]!.text(),
+        reason: 'texts_equal $a/$b');
   });
   assertKeyIfPresent(expect_, 'a_starts_with',
       (v) => expect(replicas['a']!.text(), startsWith(v as String)));
@@ -195,7 +201,8 @@ void _playTextCrdtDeltaScenario(Map<String, dynamic> scenario) {
   }
 }
 
-void _applyTextCrdtDeltaStep(Map<String, TextCrdt> replicas, Map<String, dynamic> step) {
+void _applyTextCrdtDeltaStep(
+    Map<String, TextCrdt> replicas, Map<String, dynamic> step) {
   final onReplica = step['on'] as String? ?? 'a';
   final forkName = step['fork'] as String?;
   if (forkName != null) {
@@ -259,7 +266,8 @@ void _applyTextCrdtDeltaStep(Map<String, TextCrdt> replicas, Map<String, dynamic
   }
 }
 
-void _checkTextCrdtDeltaExpect(Map<String, TextCrdt> replicas, Map<String, dynamic> expect_) {
+void _checkTextCrdtDeltaExpect(
+    Map<String, TextCrdt> replicas, Map<String, dynamic> expect_) {
   assertKeyIfPresent(expect_, 'texts_equal', (v) {
     final pair = ((v as List)[0] as List);
     final a = pair[0] as String;
@@ -268,12 +276,14 @@ void _checkTextCrdtDeltaExpect(Map<String, TextCrdt> replicas, Map<String, dynam
   });
   assertKeyIfPresent(expect_, 'text_on', (v) {
     for (final entry in (v as Map).entries) {
-      expect(replicas[entry.key]!.text(), entry.value, reason: 'text_on ${entry.key}');
+      expect(replicas[entry.key]!.text(), entry.value,
+          reason: 'text_on ${entry.key}');
     }
   });
   assertKeyIfPresent(expect_, 'version_vector_on', (v) {
     for (final entry in (v as Map).entries) {
-      final expected = (entry.value as Map).map((k, v) => MapEntry(int.parse(k as String), v as int));
+      final expected = (entry.value as Map)
+          .map((k, v) => MapEntry(int.parse(k as String), v as int));
       expect(replicas[entry.key]!.versionVector(), expected,
           reason: 'version_vector_on ${entry.key}');
     }
@@ -293,7 +303,8 @@ void _playSeqCrdtScenario(Map<String, dynamic> scenario) {
     seedPeer = s['peer'] as int;
     replicas['a'] = SeqCrdt<String, dynamic>(seedPeer);
     for (final ins in (s['inserts'] as List).cast<Map<String, dynamic>>()) {
-      replicas['a']!.insertBack(ins['id'] as String, ins['value'], ins['now'] as int);
+      replicas['a']!
+          .insertBack(ins['id'] as String, ins['value'], ins['now'] as int);
     }
   } else {
     replicas['a'] = SeqCrdt<String, dynamic>(seedPeer);
@@ -309,7 +320,8 @@ void _playSeqCrdtScenario(Map<String, dynamic> scenario) {
   }
 }
 
-void _applySeqCrdtStep(Map<String, SeqCrdt<String, dynamic>> replicas, Map<String, dynamic> step) {
+void _applySeqCrdtStep(
+    Map<String, SeqCrdt<String, dynamic>> replicas, Map<String, dynamic> step) {
   final onReplica = step['on'] as String? ?? 'a';
   final forkName = step['fork'] as String?;
   if (forkName != null) {
@@ -353,7 +365,8 @@ void _applySeqCrdtStep(Map<String, SeqCrdt<String, dynamic>> replicas, Map<Strin
   }
 }
 
-void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas, Map<String, dynamic> expect_) {
+void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas,
+    Map<String, dynamic> expect_) {
   // Determine which replica to check for bare fields (order, len, get).
   String primaryReplica = 'a';
   final ordersEqual = expect_['orders_equal'];
@@ -365,12 +378,18 @@ void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas, Map<Str
     primaryReplica = orderOnRef.keys.first;
   }
 
-  assertKeyIfPresent(expect_, 'order',
-      (v) => expect(replicas[primaryReplica]!.order().map((s) => s.toString()).toList(), v));
-  assertKeyIfPresent(expect_, 'len', (v) => expect(replicas[primaryReplica]!.len(), v));
+  assertKeyIfPresent(
+      expect_,
+      'order',
+      (v) => expect(
+          replicas[primaryReplica]!.order().map((s) => s.toString()).toList(),
+          v));
+  assertKeyIfPresent(
+      expect_, 'len', (v) => expect(replicas[primaryReplica]!.len(), v));
   assertKeyIfPresent(expect_, 'get', (v) {
     for (final entry in (v as Map).entries) {
-      expect(replicas[primaryReplica]!.get(entry.key), entry.value, reason: 'get ${entry.key}');
+      expect(replicas[primaryReplica]!.get(entry.key), entry.value,
+          reason: 'get ${entry.key}');
     }
   });
   assertKeyIfPresent(expect_, 'orders_equal', (v) {
@@ -381,12 +400,14 @@ void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas, Map<Str
   });
   assertKeyIfPresent(expect_, 'contains_all', (v) {
     for (final id in (v as List)) {
-      expect(replicas[primaryReplica]!.contains(id.toString()), isTrue, reason: 'contains $id');
+      expect(replicas[primaryReplica]!.contains(id.toString()), isTrue,
+          reason: 'contains $id');
     }
   });
   assertKeyIfPresent(expect_, 'order_on', (v) {
     for (final entry in (v as Map).entries) {
-      expect(replicas[entry.key]!.order().map((s) => s.toString()).toList(), entry.value,
+      expect(replicas[entry.key]!.order().map((s) => s.toString()).toList(),
+          entry.value,
           reason: 'order_on ${entry.key}');
     }
   });
@@ -394,7 +415,8 @@ void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas, Map<Str
     for (final entry in (v as Map).entries) {
       final rep = replicas[entry.key]!;
       for (final kv in (entry.value as Map).entries) {
-        expect(rep.get(kv.key), kv.value, reason: 'get_on ${entry.key}/${kv.key}');
+        expect(rep.get(kv.key), kv.value,
+            reason: 'get_on ${entry.key}/${kv.key}');
       }
     }
   });
@@ -402,7 +424,8 @@ void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas, Map<Str
     for (final entry in (v as Map).entries) {
       final rep = replicas[entry.key]!;
       for (final id in (entry.value as List)) {
-        expect(rep.contains(id.toString()), isFalse, reason: 'not_contains ${entry.key}/$id');
+        expect(rep.contains(id.toString()), isFalse,
+            reason: 'not_contains ${entry.key}/$id');
       }
     }
   });
@@ -484,7 +507,8 @@ void _playSemTreeScenario(Map<String, dynamic> scenario) {
 
   final removeChild = scenario['remove_child'];
   if (removeChild is Map) {
-    tree.removeChild(removeChild['parent'] as String, removeChild['child'] as String);
+    tree.removeChild(
+        removeChild['parent'] as String, removeChild['child'] as String);
     final expectAfter = assertionsOfOrNull(scenario['expect_after']);
     if (expectAfter != null) {
       for (final key in expectAfter.keys.toList()) {
@@ -524,9 +548,8 @@ void _playStableIdScenario(Map<String, dynamic> scenario) {
   final blocksField = scenario['blocks'];
   if (blocksField is List) {
     // Key-equality scenarios: compute blockKey for each and compare.
-    final blocks = blocksField
-        .map((b) => _parseBlock(b as Map<String, dynamic>))
-        .toList();
+    final blocks =
+        blocksField.map((b) => _parseBlock(b as Map<String, dynamic>)).toList();
     final keys = blocks.map(blockKey).toList();
 
     final expect_ = assertionsOf(scenario['expect']);
@@ -541,7 +564,8 @@ void _playStableIdScenario(Map<String, dynamic> scenario) {
       for (final pair in (v as List).cast<List>()) {
         final i = pair[0] as int;
         final j = pair[1] as int;
-        expect(keys[i].equals(keys[j]), isFalse, reason: 'key_not_equal [$i,$j]');
+        expect(keys[i].equals(keys[j]), isFalse,
+            reason: 'key_not_equal [$i,$j]');
       }
     });
     return;
@@ -550,12 +574,10 @@ void _playStableIdScenario(Map<String, dynamic> scenario) {
   final oldField = scenario['old'];
   final newField = scenario['new'];
   if (oldField is List && newField is List) {
-    final oldBlocks = oldField
-        .map((b) => _parseBlock(b as Map<String, dynamic>))
-        .toList();
-    final newBlocks = newField
-        .map((b) => _parseBlock(b as Map<String, dynamic>))
-        .toList();
+    final oldBlocks =
+        oldField.map((b) => _parseBlock(b as Map<String, dynamic>)).toList();
+    final newBlocks =
+        newField.map((b) => _parseBlock(b as Map<String, dynamic>)).toList();
 
     final expect_ = assertionsOf(scenario['expect']);
 
@@ -579,7 +601,8 @@ void _playStableIdScenario(Map<String, dynamic> scenario) {
       final alignment = align(oldBlocks, newBlocks);
       for (final m in alignment.newMatches) {
         if (m.kind == 'edited') {
-          expect(m.similarity, greaterThanOrEqualTo(min), reason: 'similarity_min');
+          expect(m.similarity, greaterThanOrEqualTo(min),
+              reason: 'similarity_min');
         }
       }
     });
@@ -590,7 +613,8 @@ void _playStableIdScenario(Map<String, dynamic> scenario) {
       for (final pair in (v as List).cast<List>()) {
         final ni = pair[0] as int;
         final oi = pair[1] as int;
-        expect(keys[ni], oldKeys[oi], reason: 'new_key_equals_old_key [$ni,$oi]');
+        expect(keys[ni], oldKeys[oi],
+            reason: 'new_key_equals_old_key [$ni,$oi]');
       }
     });
   }

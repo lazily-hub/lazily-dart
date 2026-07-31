@@ -104,7 +104,8 @@ Directory _fixtureDir() {
 Map<String, dynamic> _fixture(String name) {
   final file = File('${_fixtureDir().path}/$name');
   expect(file.existsSync(), isTrue, reason: '$name is declared but absent');
-  return attributeFixture(jsonDecode(file.specReadAsStringSync())) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(file.specReadAsStringSync()))
+      as Map<String, dynamic>;
 }
 
 String _sources() {
@@ -318,9 +319,11 @@ final class _SyncModel implements _IngressModel {
   @override
   bool valueIsValid(String key) => ctx.contains(cell.readers(key).value);
   @override
-  bool readinessIsValid(String key) => ctx.contains(cell.readers(key).readiness);
+  bool readinessIsValid(String key) =>
+      ctx.contains(cell.readers(key).readiness);
   @override
-  bool authorityIsValid(String key) => ctx.contains(cell.readers(key).authority);
+  bool authorityIsValid(String key) =>
+      ctx.contains(cell.readers(key).authority);
   @override
   bool retryIsValid(String key) => ctx.contains(cell.readers(key).retry);
   @override
@@ -656,7 +659,8 @@ int _replay(_Flavor flavor, String name) {
   return steps.length;
 }
 
-void _assertState(_IngressModel model, Map<String, dynamic> step, String where) {
+void _assertState(
+    _IngressModel model, Map<String, dynamic> step, String where) {
   final expected = assertionsOf(step['expected']);
   assertKeyWith(expected, 'scopes', (v) {
     final scopes = (v as Map).cast<String, dynamic>();
@@ -820,7 +824,8 @@ void main() {
       );
       const key = 'alpha';
       model.value(key);
-      expect(model.valueIsValid(key), isTrue, reason: 'reading warms the cache');
+      expect(model.valueIsValid(key), isTrue,
+          reason: 'reading warms the cache');
 
       model.admit(const IngressEnvelope<String, int>(key, 1, 0, 0, 1));
       expect(model.valueIsValid(key), isFalse,

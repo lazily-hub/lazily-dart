@@ -164,7 +164,8 @@ void main() {
     expect(picked(), 10);
     // Took the `a` branch: depends on cond + a, not b.
     expect(ctx.dependencyCount(picked), 2);
-    expect(ctx.dependentCount(b), 0, reason: 'the untaken branch forms no edge');
+    expect(ctx.dependentCount(b), 0,
+        reason: 'the untaken branch forms no edge');
 
     // Flip to the `b` branch.
     ctx.set(cond, false);

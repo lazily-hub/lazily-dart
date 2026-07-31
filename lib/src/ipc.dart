@@ -59,7 +59,8 @@ class NodeKey {
       throw ArgumentError('NodeKey path must be non-empty');
     }
     if (bytes.length > 1024) {
-      throw ArgumentError('NodeKey path exceeds 1024 bytes (was ${bytes.length})');
+      throw ArgumentError(
+          'NodeKey path exceeds 1024 bytes (was ${bytes.length})');
     }
     final segments = path.split('/');
     if (segments.length > 32) {
@@ -83,7 +84,8 @@ class NodeKey {
   /// Parse a wire path string, re-validating the bounds.
   static NodeKey fromWire(Object? value) {
     if (value is! String) {
-      throw FormatException('NodeKey must be a string, got ${value.runtimeType}');
+      throw FormatException(
+          'NodeKey must be a string, got ${value.runtimeType}');
     }
     return NodeKey(value);
   }
@@ -280,7 +282,9 @@ final class NodeStatePayload extends NodeState {
   final Uint8List bytes;
 
   @override
-  Object toWire() => <String, Object>{'Payload': <int>[...bytes]};
+  Object toWire() => <String, Object>{
+        'Payload': <int>[...bytes]
+      };
 
   @override
   bool operator ==(Object other) =>
@@ -347,8 +351,7 @@ sealed class IpcValue {
     if (value is IpcValue) return value;
     if (value is ShmBlobRef) return IpcValueSharedBlob(value);
     if (value is List<int>) return IpcValueInline(value);
-    throw ArgumentError(
-        'cannot coerce ${value.runtimeType} into an IpcValue');
+    throw ArgumentError('cannot coerce ${value.runtimeType} into an IpcValue');
   }
 
   static IpcValue inline(List<int> bytes) => IpcValueInline(bytes);
@@ -362,7 +365,9 @@ final class IpcValueInline extends IpcValue {
   final Uint8List bytes;
 
   @override
-  Object toWire() => <String, Object>{'Inline': <int>[...bytes]};
+  Object toWire() => <String, Object>{
+        'Inline': <int>[...bytes]
+      };
 
   @override
   bool operator ==(Object other) =>
@@ -559,11 +564,9 @@ class Snapshot {
 
   /// Drop non-readable nodes/edges/roots before serialization (omission, not
   /// redaction — protocol.md § Permission Boundary).
-  Snapshot filterReadable(PeerPermissions permissions, PeerId peer) =>
-      Snapshot(
+  Snapshot filterReadable(PeerPermissions permissions, PeerId peer) => Snapshot(
         epoch: epoch,
-        nodes:
-            nodes.where((n) => permissions.canRead(peer, n.node)).toList(),
+        nodes: nodes.where((n) => permissions.canRead(peer, n.node)).toList(),
         edges: edges.where((e) => e.isReadableBy(permissions, peer)).toList(),
         roots: permissions.filterReadable(peer, roots),
       );
@@ -577,9 +580,8 @@ class Snapshot {
       _listEquals(other.roots, roots);
 
   @override
-  int get hashCode =>
-      Object.hash(epoch, Object.hashAll(nodes), Object.hashAll(edges),
-          Object.hashAll(roots));
+  int get hashCode => Object.hash(epoch, Object.hashAll(nodes),
+      Object.hashAll(edges), Object.hashAll(roots));
 }
 
 /// One incremental operation in a [Delta] (protocol.md § DeltaOp variants).
@@ -600,11 +602,11 @@ sealed class DeltaOp {
     final body = _asObject(entry.value, entry.key);
     switch (entry.key) {
       case 'CellSet':
-        return DeltaOpCellSet(_reqInt(body, 'node'),
-            IpcValue.fromWire(body['payload']));
+        return DeltaOpCellSet(
+            _reqInt(body, 'node'), IpcValue.fromWire(body['payload']));
       case 'SlotValue':
-        return DeltaOpSlotValue(_reqInt(body, 'node'),
-            IpcValue.fromWire(body['payload']));
+        return DeltaOpSlotValue(
+            _reqInt(body, 'node'), IpcValue.fromWire(body['payload']));
       case 'Invalidate':
         return DeltaOpInvalidate(_reqInt(body, 'node'));
       case 'NodeAdd':
@@ -635,8 +637,8 @@ sealed class DeltaOp {
   static DeltaOp slotValue(NodeId node, Object payload) =>
       DeltaOpSlotValue(node, IpcValue.of(payload));
   static DeltaOp invalidate(NodeId node) => DeltaOpInvalidate(node);
-  static DeltaOp nodeAdd(
-          NodeId node, String typeTag, NodeState state, {NodeKey? key}) =>
+  static DeltaOp nodeAdd(NodeId node, String typeTag, NodeState state,
+          {NodeKey? key}) =>
       DeltaOpNodeAdd(node, typeTag, state, key: key);
   static DeltaOp nodeRemove(NodeId node) => DeltaOpNodeRemove(node);
   static DeltaOp edgeAdd(NodeId dependent, NodeId dependency) =>
@@ -885,12 +887,14 @@ final class DeltaApplyStatusResyncRequired extends DeltaApplyStatus {
       other.epoch == epoch;
 
   @override
-  int get hashCode => Object.hash('ResyncRequired', lastEpoch, baseEpoch, epoch);
+  int get hashCode =>
+      Object.hash('ResyncRequired', lastEpoch, baseEpoch, epoch);
 }
 
 /// An incremental change set (protocol.md § Delta).
 class Delta {
-  const Delta({required this.baseEpoch, required this.epoch, this.ops = const []});
+  const Delta(
+      {required this.baseEpoch, required this.epoch, this.ops = const []});
 
   final Epoch baseEpoch;
   final Epoch epoch;
@@ -1220,8 +1224,7 @@ class CrdtSync {
   /// [frontier] advertisement is retained in full: it names peers and stamps,
   /// not node content, and the receiver needs the whole frontier to compute a
   /// sound causal-stability watermark.
-  CrdtSync filterReadable(PeerPermissions permissions, PeerId peer) =>
-      CrdtSync(
+  CrdtSync filterReadable(PeerPermissions permissions, PeerId peer) => CrdtSync(
         frontier: List.of(frontier),
         ops: ops.where((op) => op.targetReadable(permissions, peer)).toList(),
       );
@@ -1354,7 +1357,8 @@ sealed class IpcMessage {
   void writeJson(StringSink sink);
 
   /// UTF-8 JSON bytes of [toWire].
-  Uint8List encodeJson() => Uint8List.fromList(utf8.encode(jsonEncode(toWire())));
+  Uint8List encodeJson() =>
+      Uint8List.fromList(utf8.encode(jsonEncode(toWire())));
 
   /// Streaming equivalent of [encodeJson] (`#lzdartstreamingjson`): builds the
   /// JSON via [writeJson] into a [StringBuffer] instead of `jsonEncode(toWire())`,
@@ -1581,8 +1585,10 @@ class PeerPermissions {
   final Map<PeerId, Map<OpKind, Set<NodeId>>> _peers = {};
 
   /// Grant [peer] the [op]; returns whether this added a new grant.
-  bool allow(PeerId peer, RemoteOp op) =>
-      _peers.putIfAbsent(peer, () => {}).putIfAbsent(op.kind, () => {}).add(op.node);
+  bool allow(PeerId peer, RemoteOp op) => _peers
+      .putIfAbsent(peer, () => {})
+      .putIfAbsent(op.kind, () => {})
+      .add(op.node);
 
   /// Grant [peer] every node in [nodes] for [kind].
   void allowMany(PeerId peer, OpKind kind, Iterable<NodeId> nodes) {
@@ -1606,7 +1612,8 @@ class PeerPermissions {
       _peers[peer]?[op.kind]?.contains(op.node) ?? false;
 
   /// Whether [peer] may read [node].
-  bool canRead(PeerId peer, NodeId node) => isAllowed(peer, RemoteOp.read(node));
+  bool canRead(PeerId peer, NodeId node) =>
+      isAllowed(peer, RemoteOp.read(node));
 
   /// Throw [PermissionDenied] unless [peer] holds [op].
   void check(PeerId peer, RemoteOp op) {
@@ -1723,7 +1730,8 @@ class BatchFlush {
 
 Map<String, Object?> _asObject(Object? value, String name) {
   if (value is! Map) {
-    throw FormatException('$name must be a JSON object, got ${value.runtimeType}');
+    throw FormatException(
+        '$name must be a JSON object, got ${value.runtimeType}');
   }
   return value.cast<String, Object?>();
 }
@@ -1794,7 +1802,8 @@ Uint8List _bytesOf(List<int> bytes) {
 
 Uint8List _bytesFromWire(Object? value) {
   if (value is! List) {
-    throw FormatException('byte payload must be an array, got ${value.runtimeType}');
+    throw FormatException(
+        'byte payload must be an array, got ${value.runtimeType}');
   }
   return _bytesOf(value.cast<int>());
 }

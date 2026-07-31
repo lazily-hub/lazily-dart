@@ -255,8 +255,8 @@ Future<void> drive(List<String> args) async {
     stdout.writeln('${names[c].padRight(20)} '
         'width $lo -> $hi: ${ratio.toStringAsFixed(1)}x');
   }
-  final wideOverControl = (rows[hi]![0] / rows[hi]![1]) /
-      (rows[lo]![0] / rows[lo]![1]);
+  final wideOverControl =
+      (rows[hi]![0] / rows[hi]![1]) / (rows[lo]![0] / rows[lo]![1]);
   stdout.writeln('publish wide/control ratio, $lo -> $hi: '
       '${wideOverControl.toStringAsFixed(1)}x');
 }

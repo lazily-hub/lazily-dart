@@ -199,7 +199,8 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
     _invalidateOrdered();
     for (final ch in str.runes) {
       final id = _nextId();
-      _elems[(id.counter, id.peer)] = _TextElem(id, String.fromCharCode(ch), origin, null);
+      _elems[(id.counter, id.peer)] =
+          _TextElem(id, String.fromCharCode(ch), origin, null);
       origin = id; // chain: next char's left-origin is this id
     }
   }
@@ -326,7 +327,8 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
     while (true) {
       final referenced = <(int, int)>{};
       for (final e in _elems.values) {
-        if (e.origin != null) referenced.add((e.origin!.counter, e.origin!.peer));
+        if (e.origin != null)
+          referenced.add((e.origin!.counter, e.origin!.peer));
       }
       final collectable = <(int, int)>[];
       for (final entry in _elems.entries) {
@@ -376,7 +378,8 @@ class TextCrdt implements CrdtTree<Map<int, int>, List<TextOp>, String> {
       final insertNew = !seen(id);
       final deleteNew = elem.deleted != null && !seen(elem.deleted!);
       if (insertNew || deleteNew) {
-        out.add(TextOp(id: id, ch: elem.ch, origin: elem.origin, deleted: elem.deleted));
+        out.add(TextOp(
+            id: id, ch: elem.ch, origin: elem.origin, deleted: elem.deleted));
       }
     }
     return out;

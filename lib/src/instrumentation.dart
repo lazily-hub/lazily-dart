@@ -111,8 +111,7 @@ List<BenchmarkResult> runBenchmarkSuite({int iterations = 10000}) {
     }, iterations: iterations ~/ 10),
     benchmark('contentHash realistic text', () {
       // #lzdarthashint — FNV-1a content hash over a ~300-char normalized block.
-      contentHash(
-          'the quick brown fox jumps over the lazy dog '
+      contentHash('the quick brown fox jumps over the lazy dog '
           'while a pack of hounds gives chase through the glen; '
           'reactive signals propagate invalidation downstream '
           'and slots recompute only when their dependencies change.');

@@ -208,12 +208,12 @@ class CapabilityHandshake {
           'protocol_id', 'remote protocol_id != lazily-ipc');
     }
     if (protocolMajorVersion != kProtocolMajorVersion) {
-      return CapabilityCheck.fail('protocol_major_version',
-          'local major != $kProtocolMajorVersion');
+      return CapabilityCheck.fail(
+          'protocol_major_version', 'local major != $kProtocolMajorVersion');
     }
     if (other.protocolMajorVersion != kProtocolMajorVersion) {
-      return CapabilityCheck.fail('protocol_major_version',
-          'remote major != $kProtocolMajorVersion');
+      return CapabilityCheck.fail(
+          'protocol_major_version', 'remote major != $kProtocolMajorVersion');
     }
     if (protocolMajorVersion != other.protocolMajorVersion) {
       return const CapabilityCheck.fail(
@@ -254,7 +254,8 @@ class CapabilityHandshake {
   /// false`, `ordered_reliable = true`, `features = []` when absent (mirrors
   /// the `lazily-rs` serde defaults).
   static CapabilityHandshake fromWire(Object? value) {
-    final obj = value is Map ? value.cast<String, Object?>() : <String, Object?>{};
+    final obj =
+        value is Map ? value.cast<String, Object?>() : <String, Object?>{};
     int field(Object? v, String name) {
       if (v is! int || v < 0) {
         throw FormatException(
@@ -270,8 +271,8 @@ class CapabilityHandshake {
       protocolMajorVersion:
           (obj['protocol_major_version'] ?? kProtocolMajorVersion) as int,
       codec: (obj['codec'] ?? kDefaultCodec) as String,
-      maxFrameSize:
-          field(obj['max_frame_size'] ?? kDefaultMaxFrameSize, 'max_frame_size'),
+      maxFrameSize: field(
+          obj['max_frame_size'] ?? kDefaultMaxFrameSize, 'max_frame_size'),
       fragmentationSupported: (obj['fragmentation_supported'] ?? false) as bool,
       orderedReliable: (obj['ordered_reliable'] ?? true) as bool,
       features: obj['features'] is List

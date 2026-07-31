@@ -15,7 +15,8 @@ Map<String, dynamic> _loadFixture(List<String> segments) {
   for (final path in candidates) {
     final f = File(path);
     if (f.existsSync()) {
-      return attributeFixture(jsonDecode(f.specReadAsStringSync())) as Map<String, dynamic>;
+      return attributeFixture(jsonDecode(f.specReadAsStringSync()))
+          as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: ${segments.join('/')}');
@@ -184,8 +185,7 @@ void _playCausalReceipts(Map<String, dynamic> fixture) {
 
   assertKey(assertions, 'current_generation', projection.currentGeneration);
 
-  final terminal =
-      assertKeyWith(assertions, 'causation_id', (v) {
+  final terminal = assertKeyWith(assertions, 'causation_id', (v) {
     final t = projection.terminalFor(v as String);
     expect(t, isNotNull, reason: 'terminal exists for causation_id $v');
     return t!;

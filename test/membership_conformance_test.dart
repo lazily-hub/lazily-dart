@@ -21,7 +21,8 @@ final _specDir = Directory('../lazily-spec/conformance/membership');
 
 Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
+      ? File(_specDir.resolveSymbolicLinksSync() + '/$name')
+          .specReadAsStringSync()
       : File('test/conformance/membership/$name').specReadAsStringSync();
   return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
@@ -82,12 +83,13 @@ void main() {
 
       // Alive set (the reactive `PeerSet`).
       assertKeyWith(expected, 'alive_set', (v) {
-        expect(m.peerSet(), equals((v as List).cast<int>()), reason: 'alive_set');
+        expect(m.peerSet(), equals((v as List).cast<int>()),
+            reason: 'alive_set');
       });
 
       // `PeerSet` invalidation — only on a set change.
-      assertKey(expected, 'invalidates', _invalidated(ctx, observed),
-          'invalidation');
+      assertKey(
+          expected, 'invalidates', _invalidated(ctx, observed), 'invalidation');
     }
   });
 }

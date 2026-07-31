@@ -39,13 +39,14 @@ void main() {
   group('validate', () {
     test('ok for a well-formed Snapshot frame', () {
       final message = IpcMessage.ofSnapshot(const Snapshot(epoch: 1));
-      final status = lazilyFfiValidateJson(LazilyFfiBytes(message.encodeJson()));
+      final status =
+          lazilyFfiValidateJson(LazilyFfiBytes(message.encodeJson()));
       expect(status, LazilyFfiStatus.ok);
     });
 
     test('invalidMessage for malformed bytes', () {
-      final status = lazilyFfiValidateJson(
-          LazilyFfiBytes(utf8.encode('not json at all')));
+      final status =
+          lazilyFfiValidateJson(LazilyFfiBytes(utf8.encode('not json at all')));
       expect(status, LazilyFfiStatus.invalidMessage);
     });
   });
@@ -67,12 +68,10 @@ void main() {
     test('classifies a CrdtSync frame (CrdtSync = 3)', () {
       final message = IpcMessage.ofCrdtSync(CrdtSync(
         frontier: [
-          StampFrontierEntry(
-              1, WireStamp(wallTime: 9, logical: 0, peer: 1)),
+          StampFrontierEntry(1, WireStamp(wallTime: 9, logical: 0, peer: 1)),
         ],
         ops: [
-          CrdtOp.newOp(
-              1, WireStamp(wallTime: 9, logical: 0, peer: 1), [1, 2]),
+          CrdtOp.newOp(1, WireStamp(wallTime: 9, logical: 0, peer: 1), [1, 2]),
         ],
       ));
       final c = lazilyFfiKindJson(LazilyFfiBytes(message.encodeJson()));
@@ -94,8 +93,7 @@ void main() {
     test('round-trips a CrdtSync frame', () {
       final message = IpcMessage.ofCrdtSync(CrdtSync(
         frontier: [
-          StampFrontierEntry(
-              2, WireStamp(wallTime: 5, logical: 1, peer: 2)),
+          StampFrontierEntry(2, WireStamp(wallTime: 5, logical: 1, peer: 2)),
         ],
         ops: [
           CrdtOp.keyed(7, NodeKey('docs/x'),
@@ -108,8 +106,8 @@ void main() {
     });
 
     test('invalidMessage for a malformed frame', () {
-      final result = lazilyFfiCloneJson(
-          LazilyFfiBytes(utf8.encode('{ nope }')));
+      final result =
+          lazilyFfiCloneJson(LazilyFfiBytes(utf8.encode('{ nope }')));
       expect(result.status, LazilyFfiStatus.invalidMessage);
       expect(result.output, isNull);
     });
@@ -130,8 +128,8 @@ void main() {
 
     test('sendJsonFrame rejects malformed bytes', () {
       final channel = LazilyFfiChannel();
-      final status = channel.sendJsonFrame(
-          LazilyFfiBytes(utf8.encode('garbage')));
+      final status =
+          channel.sendJsonFrame(LazilyFfiBytes(utf8.encode('garbage')));
       expect(status, LazilyFfiStatus.invalidMessage);
       expect(channel.isEmpty, isTrue);
     });
@@ -141,7 +139,8 @@ void main() {
       // Build bytes from a message, then pass them as a raw frame: the channel
       // decodes + re-encodes canonical JSON.
       final message = IpcMessage.ofSnapshot(const Snapshot(epoch: 1));
-      final status = channel.sendJsonFrame(LazilyFfiBytes(message.encodeJson()));
+      final status =
+          channel.sendJsonFrame(LazilyFfiBytes(message.encodeJson()));
       expect(status, LazilyFfiStatus.ok);
       expect(channel.recv(), message);
     });

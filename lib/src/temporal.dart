@@ -73,8 +73,7 @@ class IntervalCore {
   int next;
   int count = 0;
 
-  int _firesThisTick(int now) =>
-      now < next ? 0 : ((now - next) ~/ period) + 1;
+  int _firesThisTick(int now) => now < next ? 0 : ((now - next) ~/ period) + 1;
 
   bool tick(int now) {
     final fires = _firesThisTick(now);

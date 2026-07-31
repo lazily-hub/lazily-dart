@@ -37,7 +37,8 @@ void main() {
       // Same bucket (0..9): dependent stays cached.
       input.value = 3;
       expect(observer.value, 0, reason: 'suppressed: proxy bucket unchanged');
-      expect(recomputes, base, reason: 'no dependent recompute within a bucket');
+      expect(recomputes, base,
+          reason: 'no dependent recompute within a bucket');
 
       // Crossing a bucket boundary propagates.
       input.value = 12;
@@ -118,8 +119,7 @@ void main() {
       expect(obsA.value, 1);
       expect(obsB.value, 1);
       expect(a, baseA + 1, reason: 'computed suppressed equal recompute');
-      expect(b, baseB + 1,
-          reason: 'computedRippleWhen(!=) matches computed');
+      expect(b, baseB + 1, reason: 'computedRippleWhen(!=) matches computed');
     });
 
     test('pass-through always propagates (changed == true)', () {

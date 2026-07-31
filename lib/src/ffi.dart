@@ -224,7 +224,8 @@ LazilyFfiCloneResult lazilyFfiCloneJson(LazilyFfiBytes frame) {
   try {
     final message = IpcMessage.decodeJson(frame.bytes);
     final reencoded = message.encodeJson();
-    return LazilyFfiCloneResult(LazilyFfiStatus.ok, LazilyFfiBytes.fromUint8List(reencoded));
+    return LazilyFfiCloneResult(
+        LazilyFfiStatus.ok, LazilyFfiBytes.fromUint8List(reencoded));
   } on FormatException {
     return const LazilyFfiCloneResult(LazilyFfiStatus.invalidMessage, null);
   } on ArgumentError {

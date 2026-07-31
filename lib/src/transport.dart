@@ -256,7 +256,8 @@ SpillResult spillMessage(
     for (final op in sync.ops) {
       final (state, spilled) = spillValue(op.state, backend, threshold);
       total += spilled;
-      ops.add(CrdtOp(node: op.node, stamp: op.stamp, state: state, key: op.key));
+      ops.add(
+          CrdtOp(node: op.node, stamp: op.stamp, state: state, key: op.key));
     }
     return SpillResult(
       IpcMessageCrdtSync(CrdtSync(frontier: sync.frontier, ops: ops)),

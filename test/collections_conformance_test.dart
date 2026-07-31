@@ -37,14 +37,16 @@ String _fixturePath(String name) {
   throw StateError('collections fixture not found: $name');
 }
 
-Map<String, dynamic> _loadFixture(String name) =>
-    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync())) as Map<String, dynamic>;
+Map<String, dynamic> _loadFixture(String name) => attributeFixture(
+        jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
+    as Map<String, dynamic>;
 
 /// Whether a [Slot]'s cache is still warm (not invalidated) — mirrors
 /// `ctx.is_set(reader)` in lazily-rs.
 bool _isWarm(Slot<dynamic> reader, Context ctx) => ctx.contains(reader);
 
-void _seedInitial(Context ctx, SourceMap<String, int> map, Map<String, dynamic> initial) {
+void _seedInitial(
+    Context ctx, SourceMap<String, int> map, Map<String, dynamic> initial) {
   final order = (initial['order'] as List).cast<String>();
   final values = (initial['values'] as Map).cast<String, dynamic>();
   for (final k in order) {
@@ -53,7 +55,8 @@ void _seedInitial(Context ctx, SourceMap<String, int> map, Map<String, dynamic> 
 }
 
 /// Apply a fixture step op to the live map.
-void _applyOp(Context ctx, SourceMap<String, int> map, Map<String, dynamic> op) {
+void _applyOp(
+    Context ctx, SourceMap<String, int> map, Map<String, dynamic> op) {
   switch (op['type'] as String) {
     case 'set_value':
       map.set(op['key'] as String, op['value'] as int);
@@ -117,8 +120,10 @@ void _runStepsFixture(String name) {
       slot(); // prime
       valueReaders[k] = slot;
     }
-    final membershipReader = Slot<int>(ctx, (cx) => map.len(cx))..call(); // prime
-    final orderReader = Slot<List<String>>(ctx, (cx) => map.keys(cx))..call(); // prime
+    final membershipReader = Slot<int>(ctx, (cx) => map.len(cx))
+      ..call(); // prime
+    final orderReader = Slot<List<String>>(ctx, (cx) => map.keys(cx))
+      ..call(); // prime
 
     // Snapshot handles for the keys this step checks handle_stability on. The
     // snapshot has to be taken BEFORE the op, so the key is read here and the
@@ -184,7 +189,8 @@ void _runStepsFixture(String name) {
       for (final e in (v as Map).entries) {
         final k = e.key as String;
         final after = map.cell(k);
-        expect(after, isNotNull, reason: '$name step $i `$k` handle still present');
+        expect(after, isNotNull,
+            reason: '$name step $i `$k` handle still present');
         expect(identical(handleStableBefore[k], after), equals(e.value),
             reason: '$name step $i `${op['type']}` `$k` handle_stable');
       }
@@ -209,10 +215,9 @@ void _runReconcileFixture(String name) {
   final target = pairs(reconcile['target'] as Map<String, dynamic>);
   final ops = reconcileDiff(prior, target);
 
-  final expectedOps = assertKeyWith(expected, 'ops',
-      (v) => (v as List).cast<Map<String, dynamic>>());
-  expect(ops.length, expectedOps.length,
-      reason: '$name minimal op set size');
+  final expectedOps = assertKeyWith(
+      expected, 'ops', (v) => (v as List).cast<Map<String, dynamic>>());
+  expect(ops.length, expectedOps.length, reason: '$name minimal op set size');
 
   for (var i = 0; i < expectedOps.length; i++) {
     final want = expectedOps[i];
@@ -228,14 +233,13 @@ void _runReconcileFixture(String name) {
         final move = got as DiffOpMove<String, int>;
         expect(move.key, want['key'], reason: '$name op[$i] move key');
         // Resolve the fixture's relative anchor to the expected final index.
-        final wantOrder = (expected['result_order'] as List).cast<String>();  // asserted below
+        final wantOrder =
+            (expected['result_order'] as List).cast<String>(); // asserted below
         final anchor = want['after'] ?? want['before'];
         if (anchor != null) {
           final anchorIdx = wantOrder.indexOf(anchor as String);
-          final expectedIdx =
-              want['after'] != null ? anchorIdx + 1 : anchorIdx;
-          expect(move.to, expectedIdx,
-              reason: '$name op[$i] move target');
+          final expectedIdx = want['after'] != null ? anchorIdx + 1 : anchorIdx;
+          expect(move.to, expectedIdx, reason: '$name op[$i] move target');
         }
       case 'insert':
         expect(got, isA<DiffOpInsert<String, int>>(),
@@ -361,7 +365,8 @@ void main() {
       final root = SourceTree<String, int>(ctx, 'root', 0);
       root.insertChild('a', 1);
       root.insertChild('b', 2);
-      final childIds = Slot<List<String>>(ctx, (cx) => root.childIds(cx))..call();
+      final childIds = Slot<List<String>>(ctx, (cx) => root.childIds(cx))
+        ..call();
       expect(root.childIds(), equals(['a', 'b']));
       root.moveChildTo('b', 0);
       expect(root.childIds(), equals(['b', 'a']));

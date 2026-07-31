@@ -39,8 +39,9 @@ String _fixturePath(String name) {
   throw StateError('lossless-tree fixture not found: $name');
 }
 
-Map<String, dynamic> _loadFixture(String name) =>
-    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync())) as Map<String, dynamic>;
+Map<String, dynamic> _loadFixture(String name) => attributeFixture(
+        jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
+    as Map<String, dynamic>;
 
 class _World {
   final Map<String, LosslessTreeCrdt> replicas = {};
@@ -160,9 +161,11 @@ void _applyOp(_World world, String on, Map<String, dynamic> op) {
   }
 }
 
-void _assertExpect(_World world, Map<String, dynamic> expectSpec, String scenario) {
+void _assertExpect(
+    _World world, Map<String, dynamic> expectSpec, String scenario) {
   assertKeyIfPresent(expectSpec, 'render', (v) {
-    expect(world.replicas['a']!.render(), v, reason: '$scenario: render on `a`');
+    expect(world.replicas['a']!.render(), v,
+        reason: '$scenario: render on `a`');
   });
   assertKeyIfPresent(expectSpec, 'render_on', (v) {
     for (final entry in (v as Map).entries) {
@@ -209,29 +212,31 @@ void _runFixture(String name) {
 }
 
 void main() {
-  test('conformance exact roundtrip', () => _runFixture('exact_roundtrip.json'));
+  test(
+      'conformance exact roundtrip', () => _runFixture('exact_roundtrip.json'));
 
-  test('conformance one leaf edit delta', () => _runFixture('one_leaf_edit_delta.json'));
+  test('conformance one leaf edit delta',
+      () => _runFixture('one_leaf_edit_delta.json'));
 
   test('conformance split merge', () => _runFixture('split_merge.json'));
 
-  test('conformance concurrent insert same parent', () =>
-      _runFixture('concurrent_insert_same_parent.json'));
+  test('conformance concurrent insert same parent',
+      () => _runFixture('concurrent_insert_same_parent.json'));
 
-  test('conformance concurrent reorder and leaf edit', () =>
-      _runFixture('concurrent_reorder_and_leaf_edit.json'));
+  test('conformance concurrent reorder and leaf edit',
+      () => _runFixture('concurrent_reorder_and_leaf_edit.json'));
 
-  test('conformance non contiguous anti entropy', () =>
-      _runFixture('non_contiguous_anti_entropy.json'));
+  test('conformance non contiguous anti entropy',
+      () => _runFixture('non_contiguous_anti_entropy.json'));
 
-  test('conformance token trivia preservation', () =>
-      _runFixture('token_trivia_preservation.json'));
+  test('conformance token trivia preservation',
+      () => _runFixture('token_trivia_preservation.json'));
 
-  test('conformance invalid source roundtrip', () =>
-      _runFixture('invalid_source_roundtrip.json'));
+  test('conformance invalid source roundtrip',
+      () => _runFixture('invalid_source_roundtrip.json'));
 
-  test('conformance concurrent conflict preserves text', () =>
-      _runFixture('concurrent_conflict_preserves_text.json'));
+  test('conformance concurrent conflict preserves text',
+      () => _runFixture('concurrent_conflict_preserves_text.json'));
 
   group('wire round-trip parity', () {
     test('TreeUpdate toWire/fromWire is byte-stable', () {

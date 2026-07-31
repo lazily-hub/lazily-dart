@@ -38,9 +38,9 @@ String _fixturePath(String name) {
   throw StateError('fixture not found: $name (looked in $local, $sibling)');
 }
 
-Map<String, dynamic> _load(String name) =>
-    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
-        as Map<String, dynamic>;
+Map<String, dynamic> _load(String name) => attributeFixture(
+        jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
+    as Map<String, dynamic>;
 
 /// The suffix after the last `/` of a full family key path.
 String _suffixOf(String key) {

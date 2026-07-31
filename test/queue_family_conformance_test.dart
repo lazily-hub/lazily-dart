@@ -101,7 +101,8 @@ Directory _fixtureDir() {
 Map<String, dynamic> _fixture(String name) {
   final file = File('${_fixtureDir().path}/$name');
   expect(file.existsSync(), isTrue, reason: '$name is declared but absent');
-  return attributeFixture(jsonDecode(file.specReadAsStringSync())) as Map<String, dynamic>;
+  return attributeFixture(jsonDecode(file.specReadAsStringSync()))
+      as Map<String, dynamic>;
 }
 
 String _sources() {

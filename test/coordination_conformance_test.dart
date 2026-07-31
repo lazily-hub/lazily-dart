@@ -21,7 +21,8 @@ final _specDir = Directory('../lazily-spec/conformance/coordination');
 
 Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
+      ? File(_specDir.resolveSymbolicLinksSync() + '/$name')
+          .specReadAsStringSync()
       : File('test/conformance/coordination/$name').specReadAsStringSync();
   return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
@@ -107,7 +108,8 @@ void main() {
       });
       assertKey(expected, 'current_leader', leader.currentLeader(now));
       assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['current_leader']),
+        expect(
+            _invalidated(ctx, observed), equals((v as Map)['current_leader']),
             reason: 'current_leader invalidation');
       });
     }

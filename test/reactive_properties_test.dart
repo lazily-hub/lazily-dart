@@ -18,7 +18,9 @@ void main() {
   // "Writing an equal value into a cell leaves the entire reactive graph
   //  byte-identical — no value update, no downstream invalidation."
   // ===========================================================================
-  test('Lean setCell_equal_preserves_graph: equal setCell invalidates no dependent', () {
+  test(
+      'Lean setCell_equal_preserves_graph: equal setCell invalidates no dependent',
+      () {
     final ctx = Context();
     final a = Source<int>(ctx, 2);
 
@@ -42,8 +44,10 @@ void main() {
     a.value = 2; // equal value — must be a no-op
 
     expect(dependent(), 2); // pull again — should NOT recompute
-    expect(slotFires, slotFiresBefore, reason: 'slot must not recompute on equal setCell');
-    expect(effectFires, effectFiresBefore, reason: 'effect must not rerun on equal setCell');
+    expect(slotFires, slotFiresBefore,
+        reason: 'slot must not recompute on equal setCell');
+    expect(effectFires, effectFiresBefore,
+        reason: 'effect must not rerun on equal setCell');
     expect(a.value, 2);
   });
 
@@ -51,7 +55,9 @@ void main() {
   // setCell_different_invalidates_dependents (Reactive.lean)
   // "A strictly-different cell write marks every direct dependent dirty."
   // ===========================================================================
-  test('Lean setCell_different_invalidates_dependents: different setCell invalidates every direct dependent', () {
+  test(
+      'Lean setCell_different_invalidates_dependents: different setCell invalidates every direct dependent',
+      () {
     final ctx = Context();
     final a = Source<int>(ctx, 1);
 
@@ -75,7 +81,9 @@ void main() {
   //  recomputes on dependency change, and the signal only cascades downstream
   //  if its own value changed (the `!=` guard).
   // ===========================================================================
-  test('Lean recomputeSlot_equal_preserves_dependents: a signal that recomputes to an equal value leaves downstream untouched', () {
+  test(
+      'Lean recomputeSlot_equal_preserves_dependents: a signal that recomputes to an equal value leaves downstream untouched',
+      () {
     final ctx = Context();
     final toggle = Source<String>(ctx, 'x');
     // A signal whose OUTPUT is stable even when its input flips: it derives
@@ -101,7 +109,8 @@ void main() {
     expect(
       downstreamFires,
       firesBefore,
-      reason: 'downstream must not recompute when the signal recomputes to an equal value',
+      reason:
+          'downstream must not recompute when the signal recomputes to an equal value',
     );
   });
 
@@ -109,7 +118,9 @@ void main() {
   // recomputeSlot_different_invalidates_dependents (Reactive.lean)
   // "A strictly-different signal recompute marks every direct dependent dirty."
   // ===========================================================================
-  test('Lean recomputeSlot_different_invalidates_dependents: a strictly-different signal recompute invalidates every direct dependent', () {
+  test(
+      'Lean recomputeSlot_different_invalidates_dependents: a strictly-different signal recompute invalidates every direct dependent',
+      () {
     final ctx = Context();
     final src = Source<int>(ctx, 1);
     final sig = computed<int>(ctx, (cx) => cx.get(src) * 2).eager();
@@ -129,7 +140,9 @@ void main() {
   //  cached value and is not dirty — readers never observe an unset
   //  intermediate."
   // ===========================================================================
-  test('Lean signal_materialized_after_recompute: after a dependency change the signal is already materialized (not lazy)', () {
+  test(
+      'Lean signal_materialized_after_recompute: after a dependency change the signal is already materialized (not lazy)',
+      () {
     final ctx = Context();
     final a = Source<int>(ctx, 1);
     final sig = computed<int>(ctx, (cx) => cx.get(a) + 100).eager();

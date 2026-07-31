@@ -169,7 +169,9 @@ void main() {
   });
 
   group('entry / exit ordering', () {
-    test('exits run innermost-first, entries run outermost-first, across the LCA', () {
+    test(
+        'exits run innermost-first, entries run outermost-first, across the LCA',
+        () {
       final ctx = Context();
       final chart = _chart(ctx, {
         'initial': 'a',
@@ -221,7 +223,10 @@ void main() {
             'entry': ['enterA1'],
             'exit': ['exitA1'],
             'on': {
-              'LEAVE': {'target': 'b', 'action': ['leaveA']},
+              'LEAVE': {
+                'target': 'b',
+                'action': ['leaveA']
+              },
             },
           },
           'b': {
@@ -317,7 +322,8 @@ void main() {
       expect(chart.activeLeaves(), ['b']);
       expect(chart.send('POWER_OFF'), isTrue); // records shallow = b
       expect(chart.activeLeaves(), ['off']);
-      expect(chart.send('POWER_ON_HISTORY'), isTrue); // resume b (not initial a)
+      expect(
+          chart.send('POWER_ON_HISTORY'), isTrue); // resume b (not initial a)
       expect(chart.activeLeaves(), ['b']);
     });
 
@@ -362,7 +368,8 @@ void main() {
       });
       expect(chart.send('BUFFER'), isTrue); // ready -> buffering
       expect(chart.activeLeaves(), ['buffering']);
-      expect(chart.send('POWER_OFF'), isTrue); // deep record = {playing, buffering}
+      expect(chart.send('POWER_OFF'),
+          isTrue); // deep record = {playing, buffering}
       expect(chart.activeLeaves(), ['off']);
       expect(chart.send('POWER_ON'), isTrue); // resume all the way to buffering
       expect(chart.activeLeaves(), ['buffering']);
@@ -409,7 +416,8 @@ void main() {
     // re-entered, so both flavors fire the entry action; the `internal` flag's
     // observable effect is on transitions handled by a compound source.
 
-    test('an internal transition on a compound source keeps the source active', () {
+    test('an internal transition on a compound source keeps the source active',
+        () {
       // C (initial=a) holds siblings a, b. A transition on C to b, taken while
       // leaf=a is active. Internal ⇒ lca=C; exit={a}; enter={b}; C is never
       // exited or re-entered (C has no entry/exit in the trace).
@@ -423,7 +431,9 @@ void main() {
             'initial': 'a',
             'entry': ['enterC'],
             'exit': ['exitC'],
-            'on': {'GO': {'target': 'b', 'internal': true}},
+            'on': {
+              'GO': {'target': 'b', 'internal': true}
+            },
           },
           'a': {
             'parent': 'C',
@@ -445,7 +455,9 @@ void main() {
       expect(chart.matches('C'), isTrue);
     });
 
-    test('an internal self-transition fires its action and re-enters the target', () {
+    test(
+        'an internal self-transition fires its action and re-enters the target',
+        () {
       final ctx = Context();
       final chart = _chart(ctx, {
         'initial': 's',
@@ -456,7 +468,11 @@ void main() {
             'entry': ['enterS'],
             'exit': ['exitS'],
             'on': {
-              'SELF': {'target': 's', 'internal': true, 'action': ['reSelf']},
+              'SELF': {
+                'target': 's',
+                'internal': true,
+                'action': ['reSelf']
+              },
             },
           },
         },
@@ -466,7 +482,8 @@ void main() {
       expect(chart.lastActions(), ['reSelf', 'enterS']);
     });
 
-    test('an external transition across a compound boundary exits the source', () {
+    test('an external transition across a compound boundary exits the source',
+        () {
       // Here the transition is handled by the root-level leaf 'off' targeting
       // 'on' (a compound). External ⇒ lca=root: the active leaf and its
       // ancestors up to root are exited, then the target subtree is entered.
@@ -571,7 +588,9 @@ void main() {
         () => ChartDef.fromJson(<String, dynamic>{
           'initial': 'a',
           'states': {
-            'a': {'run': ['x']},
+            'a': {
+              'run': ['x']
+            },
           },
         }),
         throwsA(isA<FormatException>()),
@@ -585,7 +604,10 @@ void main() {
           'states': {
             'a': {
               'on': {
-                'GO': {'target': 'a', 'guard': {'expr': 'x'}}
+                'GO': {
+                  'target': 'a',
+                  'guard': {'expr': 'x'}
+                }
               }
             },
           },
@@ -594,7 +616,8 @@ void main() {
       );
     });
 
-    test('final states are accepted as leaves without completion (done) events', () {
+    test('final states are accepted as leaves without completion (done) events',
+        () {
       final ctx = Context();
       final chart = _chart(ctx, {
         'initial': 'running',

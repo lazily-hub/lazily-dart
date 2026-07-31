@@ -23,7 +23,8 @@ enum ReceiptOutcome {
   static ReceiptOutcome fromWire(String v) => values.byName(v);
 
   /// Whether this outcome is terminal (no further transitions expected).
-  bool get isTerminal => this == ReceiptOutcome.applied || this == ReceiptOutcome.rejected;
+  bool get isTerminal =>
+      this == ReceiptOutcome.applied || this == ReceiptOutcome.rejected;
 }
 
 /// A single causal receipt.
@@ -71,17 +72,45 @@ class CausalReceipt {
     );
   }
 
-  static CausalReceipt observed(String receiptId, String causationId, String observer, int generation) =>
-      CausalReceipt(receiptId: receiptId, causationId: causationId, observer: observer, generation: generation, outcome: ReceiptOutcome.observed);
+  static CausalReceipt observed(String receiptId, String causationId,
+          String observer, int generation) =>
+      CausalReceipt(
+          receiptId: receiptId,
+          causationId: causationId,
+          observer: observer,
+          generation: generation,
+          outcome: ReceiptOutcome.observed);
 
-  static CausalReceipt accepted(String receiptId, String causationId, String observer, int generation) =>
-      CausalReceipt(receiptId: receiptId, causationId: causationId, observer: observer, generation: generation, outcome: ReceiptOutcome.accepted);
+  static CausalReceipt accepted(String receiptId, String causationId,
+          String observer, int generation) =>
+      CausalReceipt(
+          receiptId: receiptId,
+          causationId: causationId,
+          observer: observer,
+          generation: generation,
+          outcome: ReceiptOutcome.accepted);
 
-  static CausalReceipt applied(String receiptId, String causationId, String observer, int generation, [String? payloadHash]) =>
-      CausalReceipt(receiptId: receiptId, causationId: causationId, observer: observer, generation: generation, outcome: ReceiptOutcome.applied, payloadHash: payloadHash);
+  static CausalReceipt applied(
+          String receiptId, String causationId, String observer, int generation,
+          [String? payloadHash]) =>
+      CausalReceipt(
+          receiptId: receiptId,
+          causationId: causationId,
+          observer: observer,
+          generation: generation,
+          outcome: ReceiptOutcome.applied,
+          payloadHash: payloadHash);
 
-  static CausalReceipt rejected(String receiptId, String causationId, String observer, int generation, [String? reason]) =>
-      CausalReceipt(receiptId: receiptId, causationId: causationId, observer: observer, generation: generation, outcome: ReceiptOutcome.rejected, reason: reason);
+  static CausalReceipt rejected(
+          String receiptId, String causationId, String observer, int generation,
+          [String? reason]) =>
+      CausalReceipt(
+          receiptId: receiptId,
+          causationId: causationId,
+          observer: observer,
+          generation: generation,
+          outcome: ReceiptOutcome.rejected,
+          reason: reason);
 }
 
 /// The wire envelope for causal-receipts messages.
@@ -158,7 +187,8 @@ class ReceiptProjection {
 
     if (receipt.isTerminal) {
       final existingTerminal = _terminalByCausation[receipt.causationId];
-      if (existingTerminal != null && existingTerminal.outcome != receipt.outcome) {
+      if (existingTerminal != null &&
+          existingTerminal.outcome != receipt.outcome) {
         return ReceiptTerminalConflict(
           receipt.causationId,
           existingTerminal.outcome,
@@ -172,21 +202,22 @@ class ReceiptProjection {
   }
 
   /// The latest receipt for [causationId], or null.
-  CausalReceipt? latestFor(String causationId) => _latestByCausation[causationId];
+  CausalReceipt? latestFor(String causationId) =>
+      _latestByCausation[causationId];
 
   /// The terminal receipt for [causationId], or null.
-  CausalReceipt? terminalFor(String causationId) => _terminalByCausation[causationId];
+  CausalReceipt? terminalFor(String causationId) =>
+      _terminalByCausation[causationId];
 
   /// Whether [receiptId] has been observed.
-  bool containsReceipt(String receiptId) => _knownReceiptIds.contains(receiptId);
+  bool containsReceipt(String receiptId) =>
+      _knownReceiptIds.contains(receiptId);
 
   /// Receipt ids whose generation is below the current generation (stale).
   List<String> staleReceiptIds() {
-    return _knownReceiptIds
-        .where((id) {
-          // A receipt is stale if its causation id has a newer generation.
-          return false; // simplified — stale tracking is generation-based
-        })
-        .toList();
+    return _knownReceiptIds.where((id) {
+      // A receipt is stale if its causation id has a newer generation.
+      return false; // simplified — stale tracking is generation-based
+    }).toList();
   }
 }

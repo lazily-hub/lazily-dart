@@ -37,14 +37,16 @@ String _fixturePath(String name) {
   throw StateError('message-passing fixture not found: $name');
 }
 
-Map<String, dynamic> _load(String name) =>
-    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync())) as Map<String, dynamic>;
+Map<String, dynamic> _load(String name) => attributeFixture(
+        jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
+    as Map<String, dynamic>;
 
 List<Map<String, dynamic>> _frames(Map<String, dynamic> obj) =>
     (obj['frames'] as List).cast<Map<String, dynamic>>();
 
 /// Fold one fixture frame into [projection]. Returns the last apply status.
-CommandApplyStatus foldFrame(CommandProjection projection, Map<String, dynamic> frame) {
+CommandApplyStatus foldFrame(
+    CommandProjection projection, Map<String, dynamic> frame) {
   final schema = frame['schema'] as String;
   final wire = frame['wire'];
   switch (schema) {
@@ -65,7 +67,8 @@ CommandApplyStatus foldFrame(CommandProjection projection, Map<String, dynamic> 
   }
 }
 
-void _assertProjection(CommandProjection projection, Map<String, dynamic> expectSpec) {
+void _assertProjection(
+    CommandProjection projection, Map<String, dynamic> expectSpec) {
   assertKeyWith(expectSpec, 'projection', (v) {
     expect(projection.toImage(), CommandProjectionImage.fromWire(v),
         reason: 'projection image mismatch');
@@ -131,15 +134,16 @@ void main() {
   test('duplicate submit is idempotent', () {
     final p = CommandProjection();
     expect(p.submit(_submitFixture('cmd-1', 42)), const CommandApplyRecorded());
-    expect(p.submit(_submitFixture('cmd-1', 99)), const CommandApplyDuplicate());
+    expect(
+        p.submit(_submitFixture('cmd-1', 99)), const CommandApplyDuplicate());
     expect(p.entry('cmd-1')!.generation, 42);
   });
 
   test('conflicting terminal receipts fail closed', () {
     final p = CommandProjection();
     p.submit(_submitFixture('cmd-1', 42));
-    p.observeReceipt(
-        CausalReceipt.applied('rcpt-applied', 'cmd-1', 'project-controller', 42));
+    p.observeReceipt(CausalReceipt.applied(
+        'rcpt-applied', 'cmd-1', 'project-controller', 42));
     final status = p.observeReceipt(CausalReceipt.rejected(
         'rcpt-rejected', 'cmd-1', 'project-controller', 42, 'conflict'));
     expect(status, isA<CommandApplyTerminalConflict>());

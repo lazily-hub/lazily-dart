@@ -127,7 +127,9 @@ class ChartDef {
   /// Parse a chart definition from the declarative JSON form (a decoded
   /// `Map<String, Object?>` or a JSON string).
   factory ChartDef.fromJson(Object source) {
-    final obj = source is String ? jsonDecode(source) as Map<String, dynamic> : source as Map<String, dynamic>;
+    final obj = source is String
+        ? jsonDecode(source) as Map<String, dynamic>
+        : source as Map<String, dynamic>;
 
     // Validates chart.initial is present; descent uses each compound's own
     // `initial` from the root, so the value itself is not stored.
@@ -144,7 +146,8 @@ class ChartDef {
     var idx = 0;
     for (final entry in statesObj.entries) {
       docOrder[entry.key] = idx++;
-      stateDefs[entry.key] = _parseState(entry.key, entry.value as Map<String, dynamic>);
+      stateDefs[entry.key] =
+          _parseState(entry.key, entry.value as Map<String, dynamic>);
     }
 
     final kids = <String, List<String>>{};
@@ -162,7 +165,8 @@ class ChartDef {
     }
     // Sort children by document order for deterministic parallel descent.
     for (final list in kids.values) {
-      list.sort((a, b) => (docOrder[a] ?? 1 << 30).compareTo(docOrder[b] ?? 1 << 30));
+      list.sort(
+          (a, b) => (docOrder[a] ?? 1 << 30).compareTo(docOrder[b] ?? 1 << 30));
     }
     if (rootId == null) {
       throw StateError('chart has no root (parent-less state)');
@@ -224,7 +228,8 @@ _StateDef _parseState(String id, Map<String, dynamic> obj) {
   final defaultChild = _asStr(obj['default']);
 
   if (obj['run'] != null) {
-    throw FormatException('state $id uses `run` actions, which are not supported');
+    throw FormatException(
+        'state $id uses `run` actions, which are not supported');
   }
 
   final _Kind kind;
@@ -313,10 +318,12 @@ _Transition _parseTransition(Object? raw) {
   throw const FormatException('transition must be a string or object');
 }
 
-void _computeDepth(Map<String, _StateDef> states, String id, int current, Map<String, int> out) {
+void _computeDepth(Map<String, _StateDef> states, String id, int current,
+    Map<String, int> out) {
   out[id] = current;
   for (final entry in states.entries) {
-    if (entry.value.parent == id) _computeDepth(states, entry.key, current + 1, out);
+    if (entry.value.parent == id)
+      _computeDepth(states, entry.key, current + 1, out);
   }
 }
 
@@ -433,15 +440,18 @@ class StateChart {
     candidates.sort((a, b) {
       final byDepth = def.depth(b.source).compareTo(def.depth(a.source));
       if (byDepth != 0) return byDepth;
-      return (def.order[a.source] ?? 1 << 30).compareTo(def.order[b.source] ?? 1 << 30);
+      return (def.order[a.source] ?? 1 << 30)
+          .compareTo(def.order[b.source] ?? 1 << 30);
     });
 
     final exitUnion = <String>{};
     final enterUnion = <String>{};
     final takenTransitions = <_Transition>[];
     for (final cand in candidates) {
-      final pair = _computeExitEnter(cand.source, cand.transition, cand.leaf, config);
-      if (pair.exit.any(exitUnion.contains)) continue; // conflicts with a taken transition
+      final pair =
+          _computeExitEnter(cand.source, cand.transition, cand.leaf, config);
+      if (pair.exit.any(exitUnion.contains))
+        continue; // conflicts with a taken transition
       exitUnion.addAll(pair.exit);
       enterUnion.addAll(pair.enter);
       takenTransitions.add(cand.transition);
@@ -468,7 +478,8 @@ class StateChart {
     for (final t in takenTransitions) {
       actions.addAll(t.action);
     }
-    final enterSorted = enterUnion.toList()..sort((a, b) => def.depth(a).compareTo(def.depth(b)));
+    final enterSorted = enterUnion.toList()
+      ..sort((a, b) => def.depth(a).compareTo(def.depth(b)));
     for (final s in enterSorted) {
       actions.addAll(def.states[s]!.entry);
     }
@@ -531,7 +542,8 @@ class StateChart {
         enter.addAll(set);
       case null:
         // First entry: descend via `default`, else the region's `initial`.
-        final start = def.states[hist]?.defaultChild ?? def.states[region]?.initial;
+        final start =
+            def.states[hist]?.defaultChild ?? def.states[region]?.initial;
         if (start != null) {
           enter.addAll(_pathBelow(region, start));
           final tmp = <String>[];
@@ -565,7 +577,10 @@ class StateChart {
     final chain = def.ancestorsInclusive(target); // [target, ..., root]
     var idx = chain.indexOf(lca);
     if (idx < 0) idx = chain.length;
-    return chain.sublist(0, idx).reversed.toList(growable: false); // [child-of-lca, ..., target]
+    return chain
+        .sublist(0, idx)
+        .reversed
+        .toList(growable: false); // [child-of-lca, ..., target]
   }
 
   String? _historyChildOf(String region) {

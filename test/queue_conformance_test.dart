@@ -37,8 +37,9 @@ String _fixturePath(String name) {
   throw StateError('queue fixture not found: $name');
 }
 
-Map<String, dynamic> _loadFixture(String name) =>
-    attributeFixture(jsonDecode(File(_fixturePath(name)).specReadAsStringSync())) as Map<String, dynamic>;
+Map<String, dynamic> _loadFixture(String name) => attributeFixture(
+        jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))
+    as Map<String, dynamic>;
 
 /// Build a QueueCell from the fixture's `initial` block.
 QueueCell<String> _buildInitial(
@@ -115,8 +116,8 @@ void _assertState(
   });
   assertKeyIfPresent(expected, 'head',
       (v) => expect(q.head(), equals(v), reason: 'head mismatch'));
-  assertKeyIfPresent(expected, 'len',
-      (v) => expect(q.len(), v, reason: 'len mismatch'));
+  assertKeyIfPresent(
+      expected, 'len', (v) => expect(q.len(), v, reason: 'len mismatch'));
   assertKeyIfPresent(expected, 'is_empty',
       (v) => expect(q.isEmpty(), v, reason: 'is_empty mismatch'));
   assertKeyIfPresent(expected, 'is_full',

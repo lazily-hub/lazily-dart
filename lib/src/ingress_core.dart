@@ -72,7 +72,8 @@ final class IngressSchedule {
 
   /// Derive the schedule for [kind]. A poll interval is offered only where
   /// event delivery is unavailable, and never zero.
-  factory IngressSchedule.forKind(IngressTransportKind kind, int pollInterval) =>
+  factory IngressSchedule.forKind(
+          IngressTransportKind kind, int pollInterval) =>
       IngressSchedule(
         kind,
         kind == IngressTransportKind.boundedPolling
@@ -605,8 +606,7 @@ final class IngressRetry {
   int get hashCode => Object.hash(attempt, backoff, resumeFrom);
 
   @override
-  String toString() =>
-      'IngressRetry(attempt: $attempt, backoff: $backoff, '
+  String toString() => 'IngressRetry(attempt: $attempt, backoff: $backoff, '
       'resumeFrom: $resumeFrom)';
 }
 
@@ -888,10 +888,7 @@ final class IngressChange<K> {
 
   /// Whether this transition dirtied nothing at all.
   bool get isEmpty =>
-      scopes.isEmpty &&
-      !acceptedReceipts &&
-      !droppedReceipts &&
-      !errorReceipts;
+      scopes.isEmpty && !acceptedReceipts && !droppedReceipts && !errorReceipts;
 
   void _mark(K key, IngressScopeChange change) {
     if (!change.isEmpty) scopes.add((key, change));
@@ -956,8 +953,9 @@ final class _Scope<T> {
   (IngressLifecycle, int, int?, bool) get stamp =>
       (lifecycle, generation, deliveredThrough, hasWindow);
 
-  IngressLifecycle get liveOrOpening =>
-      deliveredThrough == null ? IngressLifecycle.opening : IngressLifecycle.live;
+  IngressLifecycle get liveOrOpening => deliveredThrough == null
+      ? IngressLifecycle.opening
+      : IngressLifecycle.live;
 
   void clearWindow() {
     window = null;
@@ -1222,7 +1220,8 @@ final class IngressCore<K, T> {
     final key = envelope.key;
     final created = !_scopes.containsKey(key);
     final before = _scopes[key]?.stamp;
-    final scope = _scopes.putIfAbsent(key, () => _Scope<T>(envelope.generation));
+    final scope =
+        _scopes.putIfAbsent(key, () => _Scope<T>(envelope.generation));
     final decision = _decide(scope, envelope);
 
     // A refused envelope must not leave a scope behind: an expired or blocked
@@ -1272,7 +1271,11 @@ final class IngressCore<K, T> {
         }
         change._mark(key, scopeChange);
         return (change, IngressBuffered(gapFrom));
-      case _Delivered(:final deliveredThrough, :final conflated, :final handoff):
+      case _Delivered(
+          :final deliveredThrough,
+          :final conflated,
+          :final handoff
+        ):
         change._mark(key, const IngressScopeChange.all());
         change._markChannel(_pushReceipt(
           key: key,

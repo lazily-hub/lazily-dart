@@ -15,7 +15,8 @@ RelayCell<int> _relay(
 }) =>
     RelayCell<int>(
       ctx,
-      BackpressurePolicy(ctx, BoundDim.count, highWater, highWater ~/ 2, overflow),
+      BackpressurePolicy(
+          ctx, BoundDim.count, highWater, highWater ~/ 2, overflow),
       policy,
     );
 
@@ -84,14 +85,16 @@ void main() {
 
     test('DropNewest and DropOldest', () {
       final ctxN = Context();
-      final rn = _relay(ctxN, sum(), highWater: 2, overflow: Overflow.dropNewest);
+      final rn =
+          _relay(ctxN, sum(), highWater: 2, overflow: Overflow.dropNewest);
       rn.ingress(1);
       rn.ingress(1);
       expect(rn.ingress(9), IngressOutcome.dropped);
       expect(rn.drain(), 2);
 
       final ctxO = Context();
-      final ro = _relay(ctxO, sum(), highWater: 2, overflow: Overflow.dropOldest);
+      final ro =
+          _relay(ctxO, sum(), highWater: 2, overflow: Overflow.dropOldest);
       ro.ingress(1);
       ro.ingress(1);
       expect(ro.ingress(9), IngressOutcome.dropped);

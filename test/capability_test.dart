@@ -29,7 +29,8 @@ void main() {
           .withFragmentation(true)
           .withFeatures(['shared-blob', 'signaling-relay']);
       final wire = h.toWire();
-      final decoded = CapabilityHandshake.fromWire(jsonDecode(jsonEncode(wire)));
+      final decoded =
+          CapabilityHandshake.fromWire(jsonDecode(jsonEncode(wire)));
       expect(decoded.protocolId, h.protocolId);
       expect(decoded.protocolMajorVersion, h.protocolMajorVersion);
       expect(decoded.codec, 'msgpack');
@@ -59,8 +60,8 @@ void main() {
       final h1 = CapabilityHandshake.decodeJson(
           jsonEncode(CapabilityHandshake.defaults(1, 's').toWire()));
       expect(h1.peerId, 1);
-      final h2 = CapabilityHandshake.decodeJson(
-          utf8.encode(jsonEncode(CapabilityHandshake.defaults(2, 's').toWire())));
+      final h2 = CapabilityHandshake.decodeJson(utf8
+          .encode(jsonEncode(CapabilityHandshake.defaults(2, 's').toWire())));
       expect(h2.peerId, 2);
     });
 

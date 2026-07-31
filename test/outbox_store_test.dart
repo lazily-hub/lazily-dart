@@ -11,10 +11,14 @@ import 'conformance_manifest.dart';
 /// so the canonical fixture was never consulted even when checked out.
 Map<String, dynamic> _fixture() {
   const name = 'reliable-sync/outbox_store_protocol.json';
-  for (final path in ['../lazily-spec/conformance/$name', 'test/conformance/$name']) {
+  for (final path in [
+    '../lazily-spec/conformance/$name',
+    'test/conformance/$name'
+  ]) {
     final file = File(path);
     if (file.existsSync()) {
-      return attributeFixture(jsonDecode(file.specReadAsStringSync())) as Map<String, dynamic>;
+      return attributeFixture(jsonDecode(file.specReadAsStringSync()))
+          as Map<String, dynamic>;
     }
   }
   throw StateError('fixture not found: $name');
@@ -54,8 +58,8 @@ void main() {
     final expectMap = assertionsOf(monotone['expect']);
     assertKey(expectMap, 'cursor', outbox.ackedThrough);
     assertKey(expectMap, 'retained', outbox.retainedEpochs());
-    assertKey(expectMap, 'replay_from_zero',
-        _replayEpochs(outbox.replayFrom(0)));
+    assertKey(
+        expectMap, 'replay_from_zero', _replayEpochs(outbox.replayFrom(0)));
   });
 
   test('file outbox reloads durable cursor and suffix', () {

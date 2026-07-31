@@ -21,7 +21,8 @@ final _specDir = Directory('../lazily-spec/conformance/windowing');
 
 Map<String, dynamic> _loadFixture(String name) {
   final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name').specReadAsStringSync()
+      ? File(_specDir.resolveSymbolicLinksSync() + '/$name')
+          .specReadAsStringSync()
       : File('test/conformance/windowing/$name').specReadAsStringSync();
   return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
@@ -44,7 +45,8 @@ bool _invalidated(Context ctx, Slot slot) {
 }
 
 /// Assert the projected output and invalidation flag for one step.
-void _check(Context ctx, Slot observed, Map<String, dynamic> step, Object? out) {
+void _check(
+    Context ctx, Slot observed, Map<String, dynamic> step, Object? out) {
   final expected = assertionsOf(step['expected']);
   assertKey(expected, 'output', out);
   assertKeyWith(expected, 'invalidates', (v) {

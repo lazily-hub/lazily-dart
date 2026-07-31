@@ -208,8 +208,8 @@ void main() {
     });
 
     test('drop-oldest restarts the window at the incoming op', () {
-      final core =
-          _core(const IngressPolicy(highWater: 2, overflow: Overflow.dropOldest));
+      final core = _core(
+          const IngressPolicy(highWater: 2, overflow: Overflow.dropOldest));
       core.admit(_env('a', 1, 0, 0, 1));
       core.admit(_env('a', 1, 1, 0, 2));
       expect(core.admit(_env('a', 1, 2, 0, 30)).$2, const IngressAccepted(2));
@@ -217,8 +217,8 @@ void main() {
     });
 
     test('drop-newest keeps the window and receipts the drop', () {
-      final core =
-          _core(const IngressPolicy(highWater: 1, overflow: Overflow.dropNewest));
+      final core = _core(
+          const IngressPolicy(highWater: 1, overflow: Overflow.dropNewest));
       core.admit(_env('a', 1, 0, 0, 5));
       final (change, admission) = core.admit(_env('a', 1, 1, 0, 9));
       expect(admission, const IngressDropped(IngressDropReason.backpressure));
@@ -288,14 +288,13 @@ void main() {
       core.suspend('a');
       final (change, request) = core.reconnect('a', 3);
       expect(request, const ReplayRequest(3, 0));
-      expect(change.scopes.any((row) => row.$2.value && row.$2.authority),
-          isTrue);
+      expect(
+          change.scopes.any((row) => row.$2.value && row.$2.authority), isTrue);
       expect(core.peek('a'), isNull);
     });
 
     test('errors deepen backoff and a delivery clears it', () {
-      final core =
-          _core(const IngressPolicy(retryBase: 10, retryCeiling: 25));
+      final core = _core(const IngressPolicy(retryBase: 10, retryCeiling: 25));
       core.open('a', 1);
       expect(core.retry('a'), isNull);
 

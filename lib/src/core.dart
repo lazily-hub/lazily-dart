@@ -1116,7 +1116,8 @@ typedef Cell<T> = Source<T>;
 /// The Cell-kernel constructor for a written-from-outside value; the spelling of
 /// the reference's `ctx.source(v)`. For a non-`KeepLatest` fold, use
 /// `mergeCell(ctx, v, policy)` from `package:lazily/src/merge.dart`.
-Source<T> source<T>(Context ctx, T initialValue) => Source<T>(ctx, initialValue);
+Source<T> source<T>(Context ctx, T initialValue) =>
+    Source<T>(ctx, initialValue);
 
 /// The `eager_by` side table (`reactive-graph.md` §9.3.3): the `_eager` bit on
 /// a [Computed] answers "am I eager?" for free (making [Computed.eager]
@@ -1267,7 +1268,9 @@ class Computed<T> extends _ReactiveNode implements ComputeReadable<T> {
     if (!_hasValue) {
       _hasValue = true;
       _value = newValue;
-    } else if (_changed != null ? _changed(_value, newValue) : newValue != _value) {
+    } else if (_changed != null
+        ? _changed(_value, newValue)
+        : newValue != _value) {
       _value = newValue;
       // Cascade to *this computed's* dependents. Scheduled effects (consumers)
       // are enqueued after this puller, so they observe the fresh value.
@@ -1324,8 +1327,7 @@ class Computed<T> extends _ReactiveNode implements ComputeReadable<T> {
   }
 
   @override
-  String toString() =>
-      _eager ? 'Computed(eager, $_value)' : 'Computed(lazy)';
+  String toString() => _eager ? 'Computed(eager, $_value)' : 'Computed(lazy)';
 }
 
 /// Create a lazy, guarded [Computed] bound to [ctx].
@@ -1490,7 +1492,8 @@ class Effect extends _ReactiveNode {
 /// plain [Slot] behaviour so the scheduled puller is the single point of
 /// coalescing (`reactive-graph.md` clause 3); the guard then lives on the puller.
 class _GuardedSlot<T> extends Slot<T> {
-  _GuardedSlot(super.ctx, super.compute, {super.name, bool Function(T old, T neu)? changed})
+  _GuardedSlot(super.ctx, super.compute,
+      {super.name, bool Function(T old, T neu)? changed})
       : _changed = changed;
 
   /// Optional **custom propagate predicate** (`#lzcellkernel`). When non-null,

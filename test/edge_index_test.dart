@@ -134,7 +134,8 @@ void main() {
     // The upstream (`_dependencies`) index is the symmetric case.
     final ctx = Context();
     final sources = [
-      for (var i = 0; i < edgeIndexPromoteThreshold * 3; i++) Source<int>(ctx, 1),
+      for (var i = 0; i < edgeIndexPromoteThreshold * 3; i++)
+        Source<int>(ctx, 1),
     ];
     final total = Slot<int>(ctx, (cx) {
       var sum = 0;

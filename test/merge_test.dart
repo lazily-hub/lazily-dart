@@ -33,20 +33,24 @@ void main() {
       final kl = keepLatest<int>();
       expect(kl.merge(kl.merge(5, -3), 8), kl.merge(5, kl.merge(-3, 8)));
       for (final p in [sum(), max()]) {
-        expect(p.merge(p.merge(5, -3), 8), p.merge(5, p.merge(-3, 8)), reason: p.name);
+        expect(p.merge(p.merge(5, -3), 8), p.merge(5, p.merge(-3, 8)),
+            reason: p.name);
       }
       final rf = rawFifo<int>();
-      expect(rf.merge(rf.merge([1], [2]), [3]), rf.merge([1], rf.merge([2], [3])));
+      expect(
+          rf.merge(rf.merge([1], [2]), [3]), rf.merge([1], rf.merge([2], [3])));
     });
 
     test('commutativity matches the flag', () {
       for (final p in [sum(), max()]) {
         expect(p.commutative, isTrue);
-        expect(p.merge(p.merge(5, -3), 8), p.merge(p.merge(5, 8), -3), reason: p.name);
+        expect(p.merge(p.merge(5, -3), 8), p.merge(p.merge(5, 8), -3),
+            reason: p.name);
       }
       final kl = keepLatest<int>();
       expect(kl.commutative, isFalse);
-      expect(kl.merge(kl.merge(0, 1), 2) != kl.merge(kl.merge(0, 2), 1), isTrue);
+      expect(
+          kl.merge(kl.merge(0, 1), 2) != kl.merge(kl.merge(0, 2), 1), isTrue);
       expect(rawFifo<int>().commutative, isFalse);
     });
 
@@ -114,7 +118,11 @@ void main() {
     final fixture =
         attributeFixture(jsonDecode(_fixture('mergecell_algebra.json')))
             as Map<String, dynamic>;
-    final byName = {'KeepLatest': keepLatest<int>(), 'Sum': sum(), 'Max': max()};
+    final byName = {
+      'KeepLatest': keepLatest<int>(),
+      'Sum': sum(),
+      'Max': max()
+    };
     var seen = 0;
     // This is the one fixture in the corpus whose scenarios carry NO
     // identifier — the ledger records them positionally as `#0`..`#2` and the

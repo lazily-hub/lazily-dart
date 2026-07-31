@@ -203,8 +203,7 @@ class MembershipCore<P extends Comparable> {
   final MembershipConfig config;
   final Map<P, _PeerRecord> _peers = {};
 
-  PhiAccrual _newDetector() =>
-      PhiAccrual(config.maxSamples, config.minStd);
+  PhiAccrual _newDetector() => PhiAccrual(config.maxSamples, config.minStd);
 
   /// The current alive peer set, sorted ascending (the reactive `PeerSet`).
   List<P> aliveSet() {

@@ -114,8 +114,8 @@ void main() {
 
       expect(_bytesEq(router.readView(inprocDesc), 'inproc bytes'.codeUnits),
           isTrue);
-      expect(
-          _bytesEq(router.readView(arrowDesc), 'arrow bytes'.codeUnits), isTrue);
+      expect(_bytesEq(router.readView(arrowDesc), 'arrow bytes'.codeUnits),
+          isTrue);
     });
 
     test('Arrow IPC stream bytes resolve verbatim', () {
@@ -133,8 +133,7 @@ void main() {
     test('spill_resolve round trip (transport_roundtrip)', () {
       final backend = InProcessBackend();
       final big = List<int>.filled(500, 0x5A);
-      final msg = IpcMessageDelta(
-          Delta.next(1, [DeltaOp.slotValue(7, big)]));
+      final msg = IpcMessageDelta(Delta.next(1, [DeltaOp.slotValue(7, big)]));
 
       final result = spillMessage(msg, backend, 64);
       expect(result.spilledBytes, big.length);
@@ -167,8 +166,9 @@ void main() {
 
     test('sub-threshold payloads stay inline', () {
       final backend = InProcessBackend();
-      final msg =
-          IpcMessageDelta(Delta.next(1, [DeltaOp.slotValue(1, [1, 2, 3])]));
+      final msg = IpcMessageDelta(Delta.next(1, [
+        DeltaOp.slotValue(1, [1, 2, 3])
+      ]));
       final result = spillMessage(msg, backend, 64);
       expect(result.spilledBytes, 0);
       final delta = (result.message as IpcMessageDelta).value;
@@ -214,8 +214,9 @@ void main() {
         'test/conformance/delta_zero_copy_arrow.json',
       ].firstWhere((p) => File(p).existsSync(),
           orElse: () => throw StateError('fixture not found'));
-      final fixture = attributeFixture(jsonDecode(
-          File(path).specReadAsStringSync())) as Map<String, dynamic>;
+      final fixture =
+          attributeFixture(jsonDecode(File(path).specReadAsStringSync()))
+              as Map<String, dynamic>;
       final wire = fixture['wire'] as Map<String, dynamic>;
       final msg = IpcMessage.fromWire(wire);
 

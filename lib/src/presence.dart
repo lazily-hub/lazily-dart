@@ -119,7 +119,8 @@ class PresenceView<K, V> {
     final b = other.entries;
     if (a.length != b.length) return false;
     for (final entry in a.entries) {
-      if (!b.containsKey(entry.key) || b[entry.key] != entry.value) return false;
+      if (!b.containsKey(entry.key) || b[entry.key] != entry.value)
+        return false;
     }
     return true;
   }

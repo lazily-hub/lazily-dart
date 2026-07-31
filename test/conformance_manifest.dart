@@ -183,7 +183,9 @@ Map<String, dynamic> scenarioNamed(Map<String, dynamic> fixture, String id) {
   throw StateError(
     'no scenario "$id" in ${fixtureOwnerOf(fixture) ?? currentConformanceFixture}'
     ' — it carries '
-    '${[for (var i = 0; i < scenarios.length; i++) scenarioIdOf(scenarios[i], i)]}',
+    '${[
+      for (var i = 0; i < scenarios.length; i++) scenarioIdOf(scenarios[i], i)
+    ]}',
   );
 }
 

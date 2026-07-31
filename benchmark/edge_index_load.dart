@@ -46,8 +46,22 @@ import 'package:lazily/lazily.dart';
 /// Rung shape: dense cluster around the promote threshold so demotion thrash
 /// at threshold+1 is visible, then decades out to the ceiling.
 const List<int> _ladder = [
-  32, 64, 96, 97, 128, 129, 160, 256, 1024, 4096, 16384, 65536,
-  262144, 1000000, 4000000, 10000000,
+  32,
+  64,
+  96,
+  97,
+  128,
+  129,
+  160,
+  256,
+  1024,
+  4096,
+  16384,
+  65536,
+  262144,
+  1000000,
+  4000000,
+  10000000,
 ];
 
 class Rung {
@@ -276,7 +290,8 @@ Rung? runRungInChild(int width, int heapMb) {
     isCompiled
         ? ['--rung', '$width']
         : ['--old_gen_heap_size=$heapMb', 'run', script, '--rung', '$width'],
-    environment: isCompiled ? {'DART_VM_OPTIONS': '--old_gen_heap_size=$heapMb'} : null,
+    environment:
+        isCompiled ? {'DART_VM_OPTIONS': '--old_gen_heap_size=$heapMb'} : null,
   );
   if (result.exitCode != 0) {
     stdout.writeln('  rung $width FAILED (exit ${result.exitCode})');
@@ -380,7 +395,8 @@ void main(List<String> args) {
   stdout
     ..writeln('')
     ..writeln('ceiling reached: width $ceiling');
-  if (limitingFactor != null) stdout.writeln('limiting factor: $limitingFactor');
+  if (limitingFactor != null)
+    stdout.writeln('limiting factor: $limitingFactor');
 
   // --- assertions ---------------------------------------------------------
   final failures = <String>[];
@@ -417,9 +433,8 @@ void main(List<String> args) {
   //    out negative. Only rungs whose live set clears `_rssSignalFloor` are
   //    compared; below it the number is printed but not asserted on.
   const rssSignalFloor = 64 * 1024 * 1024;
-  final wide = results
-      .where((r) => r.bytesPerSub * r.width >= rssSignalFloor)
-      .toList();
+  final wide =
+      results.where((r) => r.bytesPerSub * r.width >= rssSignalFloor).toList();
   if (wide.length >= 2) {
     final vals = wide.map((r) => r.bytesPerSub).toList()..sort();
     stdout.writeln('bytes/sub spread over rungs >=64MB live '

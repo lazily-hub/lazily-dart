@@ -32,7 +32,8 @@ class MvRegister<V> {
       // Keep only values whose stamps are NOT observed (concurrent).
       final concurrent = <int>[];
       for (var i = 0; i < _stamps.length; i++) {
-        if (observedStamps == null || !observedStamps.contains(_stamps.elementAt(i))) {
+        if (observedStamps == null ||
+            !observedStamps.contains(_stamps.elementAt(i))) {
           concurrent.add(i);
         }
       }
@@ -133,8 +134,7 @@ class PnCounter {
 /// the result of merging all observed writes. The merge function is pluggable
 /// (LWW, MV, or custom).
 class CellCrdt<T> {
-  CellCrdt(this.ctx, T initial, this._merge)
-      : _cell = Source<T>(ctx, initial);
+  CellCrdt(this.ctx, T initial, this._merge) : _cell = Source<T>(ctx, initial);
 
   final Context ctx;
   final Source<T> _cell;
