@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ### Added
 
+- **The `msgpack` frame codec — the cross-language binary default**
+  (`#lzmsgpackseven`, `lib/src/msgpack_codec.dart`). protocol.md § Frame codecs
+  makes `msgpack` MUST-level for every binding; lazily-dart had declared it a
+  carve-out. `encodeMsgpack` / `decodeMsgpack` / `msgpackToJson` are exported
+  from `package:lazily/ipc.dart` and add **no dependency** — the packer and
+  unpacker are pure Dart.
+  - The codec token names ONE wire, and shipping *a* MessagePack codec is not
+    implementing it: externally tagged envelope (`{"Snapshot": …}`, the variant
+    NAME, never an integer discriminator and never an internally tagged
+    `{"type": …, "value": …}`), every struct a **map keyed by the JSON field
+    name** rather than a positional array, `NodeState`'s unit variant the bare
+    string `"Opaque"`, byte payloads as **arrays of integers** rather than
+    MessagePack `bin` (which the decoder rejects in a byte-payload position, as
+    the reference `rmp_serde` decoder does), an absent `NodeSnapshot`/`NodeAdd`
+    `key` **omitted**, and `CrdtOp.key` **always written** (`null` when unset)
+    and read back as absent.
+  - Built ON the `json` codec's value tree rather than beside it, so the tags,
+    the field names, and both `NodeKey` rules are identical by construction. A
+    second transcription of the same shape is the drift that produces a private
+    framing wearing the `msgpack` token.
+  - `codec/frame_roundtrip_msgpack.json` is replayed by `test/codec_test.dart`
+    and left `KNOWN_UNCOVERED` in `scripts/check-conformance-coverage.sh`. The
+    runner decodes `wire`, RE-encodes to msgpack, decodes again, asserts every
+    `expect` key against that second decode, and additionally introspects the
+    ENCODED BYTES schema-lessly for `encoded_envelope_key`, the sorted
+    `encoded_body_field_names`, and the per-node / per-op field-name lists —
+    the only assertions a positional encoder fails, since it round-trips every
+    value correctly.
+  - `bin/interop_peer.dart` now advertises `codecs: ["json", "msgpack"]` and
+    drops `msgpack` from `carve_outs`; `--self-check` proves the advertised
+    token is the externally tagged spec wire before `hello` can claim it.
 - **The transport-agnostic reactive ingress family, all three execution flavors**
   (`#designimplementtransport`). `IngressCore` is the graph-agnostic admission
   algebra — keyed lifecycle scopes (opening/live/suspended/closed), the normative

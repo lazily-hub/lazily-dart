@@ -74,11 +74,16 @@ class _InteropPeer {
         'stdlib_timeout_v1',
         'stdlib_revision_barrier_v1',
       ],
-      'codecs': ['json'],
+      // Both MUST-level frame codecs are implemented and replayed through the
+      // canonical fixtures (`#lzmsgpackseven`): `json` is the reference codec,
+      // `msgpack` the cross-language binary default. `_selfCheck` proves the
+      // advertised msgpack token is the externally tagged SPEC wire before this
+      // list can be believed.
+      'codecs': ['json', 'msgpack'],
       'channels': <Object?>[],
       'channel_variants': <String, Object?>{},
       'platform_profile': 'portable',
-      'carve_outs': ['msgpack', 'transport_links'],
+      'carve_outs': ['transport_links'],
     };
   }
 
@@ -423,6 +428,21 @@ void _selfCheck() {
   final ops = sync['ops']! as List<dynamic>;
   if ((ops.single as Map<String, dynamic>)['key'] != null) {
     throw StateError('null key self-check failed');
+  }
+  // The advertised `msgpack` token names ONE wire, so prove the bytes are the
+  // externally tagged frame before `hello` claims it (`#lzmsgpackseven`). A
+  // list of codec tokens is a claim; this is the evidence.
+  final crdtFrame = IpcMessage.fromWire(frame);
+  final crdtBytes = encodeMsgpack(crdtFrame);
+  if (decodeMsgpack(crdtBytes) != crdtFrame) {
+    throw StateError('advertised msgpack codec does not round-trip');
+  }
+  final crdtView = msgpackToJson(crdtBytes);
+  if (crdtView is! Map<String, Object?> ||
+      crdtView.length != 1 ||
+      crdtView.keys.single != 'CrdtSync') {
+    throw StateError('advertised msgpack codec is not the externally tagged '
+        'spec wire');
   }
   if (peer.handle({
         'cmd': 'deliver',

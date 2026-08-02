@@ -33,8 +33,16 @@ fi
 # guard rots, so keep a reason with any new entry.
 #
 # Every entry here survived the static-to-runtime upgrade unchanged: the suite
-# opens exactly the 111 fixtures the grep said it named, so lazily-dart had no
+# opened exactly the 111 fixtures the grep said it named, so lazily-dart had no
 # named-but-never-opened fixture to find.
+#
+# This list is the FLOOR, and it only ever shrinks. Deleting an entry raises the
+# bar for good: the loop below walks the whole corpus and fails on any fixture
+# that is neither opened nor excused, so a replay that is later removed or
+# short-circuited fails here immediately. `codec/frame_roundtrip_msgpack.json`
+# left the list when lazily-dart implemented the `msgpack` wire
+# (`#lzmsgpackseven`); putting it back to make a gate green would be lowering a
+# floor.
 #
 # It did have the opposite rot (#lzcovallowlistrot). Seven entries named fixtures
 # the suite replays — the four `collections/topiccell_*` and two
@@ -48,14 +56,6 @@ KNOWN_UNCOVERED=(
   "agent-doc/delta_agent_doc_state.json"
   "agent-doc/snapshot_agent_doc_state.json"
   "arena_blob.json"
-  # msgpack is a protocol.md MUST that lazily-dart does not implement
-  # (#lzmsgpackparity). The gap was already declared, but only in
-  # bin/interop_peer.dart's `carve_outs` — a place no parity surface reads.
-  # It belongs here, beside every other declared gap: the `json` half of the
-  # codec obligation IS replayed (test/codec_test.dart), so this entry names
-  # exactly what is missing rather than the whole obligation. Closing it
-  # means encoding/decoding IpcMessage as a named-field MessagePack map.
-  "codec/frame_roundtrip_msgpack.json"
   "distributed/crdt_sync_frames.json"
   "reliable-sync/coalesce_bounds_outbox.json"
   "reliable-sync/liveness_lease_eviction.json"
