@@ -73,6 +73,14 @@ KNOWN_UNCOVERED=(
   "agent-doc/delta_agent_doc_state.json"
   "agent-doc/snapshot_agent_doc_state.json"
   "arena_blob.json"
+  # Not a bookkeeping gap, and not the sentence above it: its
+  # `crdt_sync_frontier_suppressed` frame OMITS `frontier`, which
+  # schemas/distributed.json makes optional (an omitted frontier means
+  # "unchanged since the last accepted frame"), and this binding's
+  # `CrdtSync.fromWire` throws `frontier must be an array, got null` on it. The
+  # other three frames decode and round-trip today; replaying the file means
+  # implementing frontier suppression first, so this entry names a real library
+  # gap rather than a missing runner.
   "distributed/crdt_sync_frames.json"
   "reliable-sync/coalesce_bounds_outbox.json"
   "reliable-sync/liveness_lease_eviction.json"
@@ -330,13 +338,17 @@ fi
 # printing OK.
 #
 # The constants are calibrated from a real green run of `make check` on this
-# binding (132 of 138 canonical fixtures opened, 118 scenarios replayed) and sit
+# binding (133 of 139 canonical fixtures opened, 126 scenarios replayed) and sit
 # slightly under it, so ordinary corpus churn does not trip them while a
 # collapse does. Do NOT lower them to make a red run green: a drop here means
 # the corpus shrank or the recorder detached mid-run, and that is the finding,
 # not the obstacle.
-MIN_FIXTURES="${MIN_FIXTURES:-128}"
-MIN_SCENARIOS="${MIN_SCENARIOS:-112}"
+#
+# They RISE with coverage: the blob-backend discriminator fixture added one
+# fixture and eight scenarios, so leaving the old floors in place would have
+# left room to silently drop the new replay again.
+MIN_FIXTURES="${MIN_FIXTURES:-129}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-120}"
 
 if [ "$total" -eq 0 ]; then
   echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2
