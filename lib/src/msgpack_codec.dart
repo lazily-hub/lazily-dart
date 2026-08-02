@@ -46,7 +46,9 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'int_width.dart';
 import 'ipc.dart';
+import 'u64.dart';
 
 Never _fail(String what) => throw FormatException('msgpack codec: $what');
 
@@ -75,7 +77,15 @@ class _Packer {
         _scratch.setUint32(1, value);
         break;
       default:
-        _scratch.setUint64(1, value);
+        // `setUint64` throws `UnsupportedError` on a JavaScript target — for
+        // EVERY 8-byte write, including the 2^32..2^53 values that target
+        // represents perfectly well. The decoder already read wide tags as two
+        // 32-bit halves (#lzdartintwidth); the encoder did not, so a browser
+        // peer could decode a wide frame and then crash encoding its own reply.
+        // Two `setUint32`s are the same big-endian bytes on both targets
+        // (#lzdartwebcompile).
+        _scratch.setUint32(1, highHalfOf(value));
+        _scratch.setUint32(5, lowHalfOf(value));
         break;
     }
     _out.add(Uint8List.sublistView(_scratch, 0, 1 + width));
@@ -106,7 +116,11 @@ class _Packer {
       return _out.add(Uint8List.sublistView(_scratch, 0, 5));
     }
     _scratch.setUint8(0, 0xd3);
-    _scratch.setInt64(1, value);
+    // `setInt64`, like `setUint64`, is unimplemented on a JavaScript target.
+    // The two's-complement halves are the same nine bytes and are exact on both
+    // (#lzdartwebcompile).
+    _scratch.setUint32(1, highHalfOf(value));
+    _scratch.setUint32(5, lowHalfOf(value));
     _out.add(Uint8List.sublistView(_scratch, 0, 9));
   }
 

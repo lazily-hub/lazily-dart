@@ -165,6 +165,20 @@ jobs:
           dart compile js -O1 -o build/stdlib_browser_check.js tool/stdlib_browser_check.dart
           node build/stdlib_browser_check.js
 
+      # The step above covers `package:lazily/stdlib.dart` and nothing else, and
+      # it passed the entire time the IPC wire did not compile to JavaScript at
+      # all — dart2js refuses integer literals above 2^53 - 1, and the FNV-1a and
+      # SplitMix64 constants were written as literals. This is the same gate over
+      # the surface that carries the protocol, and it is the only place the
+      # refuse-on-web half of #lzdartintwidth actually executes: on the VM that
+      # branch is compiled out, so `dart test` can reach the policy and never the
+      # platform binding.
+      - name: IPC wire browser compile + behaviour check (#lzdartwebcompile)
+        run: |
+          mkdir -p build
+          dart compile js -O1 -o build/ipc_browser_check.js tool/ipc_browser_check.dart
+          node build/ipc_browser_check.js
+
       # Rungs 1 and 4: canonical-fixture coverage and per-scenario replay. Runs
       # AFTER the suite, never before — the script reads the evidence the run
       # just wrote, so ordering it first would only ever see the previous run's

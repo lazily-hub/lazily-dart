@@ -12,6 +12,7 @@
 library;
 
 import 'core.dart';
+import 'u64.dart';
 
 /// Shared shape of a rate-shaping cell: a projected output [Cell] plus its
 /// current value. Lets a single replay harness drive every operator.
@@ -253,20 +254,41 @@ abstract class Rng {
   double nextDouble();
 }
 
-/// A small deterministic SplitMix64 RNG — [nextDouble] yields a draw in `[0, 1)`.
-class Lcg implements Rng {
-  Lcg(int seed) : _state = seed;
+// SplitMix64's three 64-bit constants, as 32-bit halves. Spelled out rather
+// than written as literals because dart2js REFUSES an integer literal above
+// 2^53 - 1, and these three were the last thing keeping
+// `package:lazily/lazily.dart` from compiling for the web at all
+// (`#lzdartwebcompile`).
+const int _goldenGammaHigh = 0x9e3779b9;
+const int _goldenGammaLow = 0x7f4a7c15;
+const int _mix1High = 0xbf58476d;
+const int _mix1Low = 0x1ce4e5b9;
+const int _mix2High = 0x94d049bb;
+const int _mix2Low = 0x133111eb;
 
-  int _state;
+/// A small deterministic SplitMix64 RNG — [nextDouble] yields a draw in `[0, 1)`.
+///
+/// The state and every mixing step are carried as 32-bit halves through [U64],
+/// so the sequence is bit-identical on the VM and on a JavaScript target. That
+/// matters beyond portability: a sampler whose draws differ by runtime turns a
+/// deterministic conformance fixture into a platform-dependent one.
+class Lcg implements Rng {
+  Lcg(int seed) : _state = U64(highHalfOf(seed), lowHalfOf(seed));
+
+  final U64 _state;
 
   @override
   double nextDouble() {
-    _state = _state + 0x9e3779b97f4a7c15;
-    var z = _state;
-    z = (z ^ (z >>> 30)) * 0xbf58476d1ce4e5b9;
-    z = (z ^ (z >>> 27)) * 0x94d049bb133111eb;
-    z = z ^ (z >>> 31);
-    return (z >>> 11) / (1 << 53);
+    _state.add(_goldenGammaHigh, _goldenGammaLow);
+    final z = U64.from(_state);
+    z.xorShiftRight(30);
+    z.multiply(_mix1High, _mix1Low);
+    z.xorShiftRight(27);
+    z.multiply(_mix2High, _mix2Low);
+    z.xorShiftRight(31);
+    // The top 53 bits over 2^53. Shifting first is what keeps the numerator
+    // inside the range a double represents exactly on every target.
+    return z.shiftedRight(11).toDouble() / 9007199254740992.0;
   }
 }
 

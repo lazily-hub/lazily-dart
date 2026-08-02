@@ -1,4 +1,4 @@
-.PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check conformance-coverage formal-check ci-reach
+.PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage formal-check ci-reach
 
 # lazily-dart had no Makefile; verification was ad-hoc `dart analyze` + `dart test`.
 # The conformance-coverage guard needs somewhere to hang, and a named `check` makes
@@ -7,7 +7,7 @@
 # `conformance-coverage` runs AFTER `test`, not before: the guard now reads the
 # runtime manifest the suite writes, so ordering it first would only ever see the
 # previous run's evidence, or none at all.
-check: fmt analyze test test-interop-peer stdlib-browser-check conformance-coverage formal-check ci-reach
+check: fmt analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage formal-check ci-reach
 	@echo "lazily-dart: check OK"
 
 # CI-reachability guard (#lzcheckcireachguard). Fails when a target above runs a
@@ -63,6 +63,22 @@ stdlib-browser-check:
 	@mkdir -p build
 	dart compile js -O1 -o build/stdlib_browser_check.js tool/stdlib_browser_check.dart
 	node build/stdlib_browser_check.js
+
+# The IPC WIRE's browser gate (#lzdartwebcompile). `stdlib-browser-check` above
+# imports `package:lazily/stdlib.dart` and nothing else, so it passed for months
+# while the wire surface did not compile to JavaScript AT ALL — dart2js refuses
+# an integer literal above 2^53 - 1, and the FNV-1a and SplitMix64 constants were
+# spelled as literals. A browser gate over the portable half is not a browser
+# gate over the half that carries the protocol.
+#
+# This target is also where the platform half of the #lzdartintwidth guard is
+# proven: that guard's refuse-on-web branch is compiled out on the VM, so the
+# test suite can execute the POLICY and never the binding. Here it runs on the
+# platform.
+ipc-browser-check:
+	@mkdir -p build
+	dart compile js -O1 -o build/ipc_browser_check.js tool/ipc_browser_check.dart
+	node build/ipc_browser_check.js
 
 # Conformance-coverage guard (#lazilyupgradeconformance). Runtime: fails when a
 # canonical fixture was never OPENED by the suite. Naming is not replaying — see

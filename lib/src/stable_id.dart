@@ -14,6 +14,10 @@ library;
 
 import 'dart:typed_data' show BytesBuilder, Uint8List;
 
+import 'fnv1a64.dart';
+import 'int_width.dart';
+import 'u64.dart';
+
 /// The edit-similarity threshold below which a match is treated as an insert.
 const double kEditThreshold = 0.5;
 
@@ -44,14 +48,24 @@ class BlockKey {
   const BlockKey.anchored(this.value)
       : kind = 'anchored',
         _isContent = false;
+
+  /// A content key from the 16-char zero-padded hex of the FNV-1a-64 digest.
+  ///
+  /// Hex rather than the packed `int` this used to take: the full 64-bit digest
+  /// is not representable on a JavaScript target at all, so an `int`-valued
+  /// content key could not cross a browser boundary without rounding into a
+  /// different identity (`#lzdartwebcompile`). The hex string is the wire form
+  /// already, and it compares and prints identically everywhere.
   const BlockKey.content(this.value)
       : kind = 'content',
         _isContent = true;
 
   final String kind;
-  // String for anchored, signed 64-bit int (full unsigned FNV-1a-64 bit
-  // pattern) for content.
-  final Object value;
+
+  /// The anchor for an anchored key; the 16-char FNV-1a-64 hex for a content
+  /// key. Both spellings are `String`, so equality is value equality on every
+  /// target.
+  final String value;
 
   final bool _isContent;
 
@@ -63,7 +77,7 @@ class BlockKey {
   /// Wire form: `a:<anchor>` or `c:` + 16-char zero-padded hex.
   String asString() {
     if (isAnchored) return '$kAnchorPrefix$value';
-    return '$kContentPrefix${_u64Hex(value as int)}';
+    return '$kContentPrefix$value';
   }
 
   @override
@@ -76,40 +90,39 @@ String normalize(String text) {
   return parts.join(' ');
 }
 
-/// FNV-1a 64-bit content hash of the UTF-8 of `normalize(text)`.
+/// The FNV-1a-64 digest of the UTF-8 of `normalize(text)`, as two 32-bit
+/// halves.
 ///
-/// Cross-language stable on native Dart (NOT Dart's `hashCode`, and NOT
-/// web-stable — web `int` is a JS double and loses 64-bit precision; the arena
-/// checksum `_fnv1a` in `shm_blob_arena.dart` has the same constraint). Returns
-/// a signed 64-bit [int] whose bit pattern is the full unsigned 64-bit FNV-1a
-/// result; serialize via [_u64Hex] for the wire `c:` form.
+/// This is the portable spelling and the one every other API here is built on:
+/// the halves are exact on the VM and on a JavaScript target alike, so the
+/// digest is one value with one definition rather than a number that means
+/// something different once compiled (`#lzdartwebcompile`).
+Fnv1a64 contentDigest(String text) =>
+    Fnv1a64()..addBytes(_utf8Bytes(normalize(text)));
+
+/// FNV-1a 64-bit content hash of the UTF-8 of `normalize(text)`, as 16-char
+/// zero-padded lowercase hex — the `c:` wire form without its prefix.
 ///
-/// Uses fixed-width `int` math instead of [BigInt] (the former `BigInt`-per-byte
-/// loop was ~10–50× slower; `#lzdarthashint`). Mirrors the int-math core of
-/// `_fnv1a` in `shm_blob_arena.dart`. The two now share the same FNV-1a-64
-/// core; unlike the arena checksum (which folds to the 63-bit non-negative
-/// range for the unsigned `ShmBlobRef` fields), this preserves the full 64-bit
-/// wire-stable range — reconciling the former latent output-range divergence
-/// by making the shared core and the distinct output fold explicit.
-int contentHash(String text) {
-  var hash = 0xcbf29ce484222325;
-  const prime = 0x100000001b3;
-  final bytes = _utf8Bytes(normalize(text));
-  for (var i = 0; i < bytes.length; i++) {
-    hash = (hash ^ bytes[i]) & 0xFFFFFFFFFFFFFFFF;
-    hash = (hash * prime) & 0xFFFFFFFFFFFFFFFF;
-  }
-  return hash;
+/// Cross-language stable (NOT Dart's `hashCode`) and, unlike [contentHash],
+/// available on every target: hex has no representation limit where a packed
+/// 64-bit `int` has one.
+String contentHashHex(String text) {
+  final digest = contentDigest(text);
+  return u64Hex(digest.hi, digest.lo);
 }
 
-/// Format a signed 64-bit [int] (full unsigned FNV-1a-64 bit pattern) as
-/// 16-char zero-padded lowercase hex. Splitting into two 32-bit halves keeps
-/// each half a non-negative int so [int.toRadixString] never emits a sign.
-String _u64Hex(int hash) {
-  final hi = (hash >>> 32) & 0xFFFFFFFF;
-  final lo = hash & 0xFFFFFFFF;
-  return '${hi.toRadixString(16).padLeft(8, '0')}'
-      '${lo.toRadixString(16).padLeft(8, '0')}';
+/// FNV-1a 64-bit content hash of the UTF-8 of `normalize(text)`, packed into a
+/// signed 64-bit [int] whose bit pattern is the full unsigned digest.
+///
+/// **Native only.** On a JavaScript target `int` is a double, and a digest above
+/// 2^53 - 1 — which is nearly all of them — cannot be packed without silently
+/// becoming a different identity, so this THROWS [UnsupportedError] there rather
+/// than rounding (`#lzdartintwidth` states the same refuse-never-round rule for
+/// wire integers). Use [contentHashHex], which is what the wire form and
+/// [BlockKey.content] both take, for code that has to run in a browser.
+int contentHash(String text) {
+  final digest = contentDigest(text);
+  return u64ToInt(digest.hi, digest.lo);
 }
 
 /// Encode [s] as UTF-8 bytes without dart:convert (keep deps minimal).
@@ -145,7 +158,7 @@ BlockKey blockKey(Block block) {
   if (block.anchor != null) {
     return BlockKey.anchored(block.anchor!);
   }
-  return BlockKey.content(contentHash(block.text));
+  return BlockKey.content(contentHashHex(block.text));
 }
 
 /// Word-LCS length via rolling two-row DP.
@@ -239,13 +252,19 @@ Alignment align(List<Block> oldBlocks, List<Block> newBlocks) {
     if (matches[ni] != null) continue;
     var bestOi = -1;
     var bestSim = 0.0;
-    var bestDist = 0x7FFFFFFFFFFFFFFF;
+    // Nullable rather than a saturating sentinel: `0x7FFFFFFFFFFFFFFF` is an
+    // integer literal dart2js refuses outright, so spelling "no candidate yet"
+    // as a magnitude cost the whole library its browser build
+    // (`#lzdartwebcompile`). `null` says the same thing and has no width.
+    int? bestDist;
     for (var oi = 0; oi < oldBlocks.length; oi++) {
       if (oldUsed[oi]) continue;
       final sim = similarity(newBlocks[ni].text, oldBlocks[oi].text);
       final dist = (oi - ni).abs();
       if (sim > bestSim ||
-          (sim == bestSim && sim >= kEditThreshold && dist < bestDist)) {
+          (sim == bestSim &&
+              sim >= kEditThreshold &&
+              (bestDist == null || dist < bestDist))) {
         bestSim = sim;
         bestOi = oi;
         bestDist = dist;

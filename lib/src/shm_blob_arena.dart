@@ -24,6 +24,8 @@ library;
 import 'dart:isolate';
 import 'dart:typed_data';
 
+import 'fnv1a64.dart';
+import 'int_width.dart';
 import 'ipc.dart';
 
 /// A blob arena entry: header + payload.
@@ -154,18 +156,19 @@ bool validateBlobRef(ShmBlobRef ref, {int? maxLen}) {
 
 @pragma('vm:prefer-inline')
 int _fnv1a(Uint8List bytes) {
-  var hash = 0xcbf29ce484222325;
-  const prime = 0x100000001b3;
-  for (final b in bytes) {
-    hash = (hash ^ b) & 0xFFFFFFFFFFFFFFFF;
-    hash = (hash * prime) & 0xFFFFFFFFFFFFFFFF;
-  }
-  // Dart's native `int` is signed 64-bit, so a full-width FNV-1a-64 with the
-  // top bit set would be negative — which `ShmBlobRef` (and the wire schema)
-  // reject, since a descriptor's fields are unsigned. Fold into the
-  // non-negative 63-bit range. This is a Dart-internal arena checksum (the
-  // isolate model has no cross-process shared memory — the `shared_memory:
-  // partial` carve-out per lazily-spec), so it need not be byte-compatible with
-  // the rs/py/zig FNV-1a-64; only self-consistent between write and read.
-  return hash & 0x7FFFFFFFFFFFFFFF;
+  final digest = Fnv1a64()..addBytes(bytes);
+  // A full-width FNV-1a-64 with the top bit set is negative as a signed 64-bit
+  // `int` — which `ShmBlobRef` (and the wire schema) reject, since a
+  // descriptor's fields are unsigned — and is not representable at all once
+  // compiled to JavaScript. Fold into the low 53 bits, the non-negative range
+  // EVERY Dart target represents exactly, so the checksum has one definition
+  // rather than one per runtime (`#lzdartwebcompile`; this used to fold to 63
+  // bits, which the VM could hold and a browser could not).
+  //
+  // Narrowing the fold is free here in a way it would not be for a content
+  // hash: this is a Dart-internal arena checksum (the isolate model has no
+  // cross-process shared memory — the `shared_memory: partial` carve-out per
+  // lazily-spec), so it need not be byte-compatible with the rs/py/zig
+  // FNV-1a-64; only self-consistent between write and read.
+  return u64FoldToExactRange(digest.hi, digest.lo);
 }

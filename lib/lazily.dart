@@ -32,7 +32,9 @@ export 'src/coordination.dart';
 export 'src/core.dart';
 export 'src/crdt_tree.dart';
 export 'src/ingress.dart';
+export 'src/fnv1a64.dart';
 export 'src/ingress_core.dart';
+export 'src/int_width.dart';
 export 'src/lossless_tree_crdt.dart';
 export 'src/membership.dart';
 export 'src/merge.dart';
@@ -53,6 +55,7 @@ export 'src/state_machine.dart';
 // avoids colliding with package:test's ubiquitous test configuration type.
 export 'src/stdlib.dart' hide Timeout;
 export 'src/temporal.dart';
+export 'src/u64.dart';
 export 'src/text_crdt.dart';
 export 'src/windowing.dart';
 export 'src/thread_safe.dart';

@@ -8,6 +8,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
 
 ## Unreleased
 
+### Fixed
+
+- **The IPC wire compiles to JavaScript, and the encoder no longer throws there**
+  (`#lzdartwebcompile`). `dart compile js` against `package:lazily/ipc.dart`
+  failed outright on eight 64-bit integer literals dart2js refuses — the FNV-1a
+  offset basis and masks in `stable_id.dart` and `shm_blob_arena.dart`, plus a
+  `0x7FFFFFFFFFFFFFFF` sentinel in `align` — and three more in `rateshape.dart`
+  kept `package:lazily/lazily.dart` from building for the web at all. The binding
+  advertised a browser story it could not deliver for the protocol:
+  `tool/stdlib_browser_check.dart` passed the whole time because it imports only
+  `package:lazily/stdlib.dart`.
+
+  Standing that gate up immediately found a live defect the VM suite could not
+  see. `#lzdartintwidth` taught the msgpack DECODER to read a wide `uint64` tag
+  as two 32-bit halves and left the encoder on `ByteData.setUint64`, which
+  dart2js leaves unimplemented for every 8-byte write — including the
+  2^32..2^53 values a browser represents perfectly well. A web peer could decode
+  a wide frame and then throw producing its own reply. `setInt64` had the same
+  hole. Both now write halves, byte-identical to the accessors they replace.
+
+  All 64-bit arithmetic moved to `lib/src/u64.dart`: 32-bit halves, 16-bit-limb
+  products, carries via `~/` and `%` so no intermediate reaches 2^53. Hashes and
+  the SplitMix64 sampler are now bit-identical on the VM and on a JS target
+  rather than one answer per runtime — `test/u64_test.dart` proves it against the
+  VM's native 64-bit operators as an independent oracle, over a corpus that
+  reaches every carry boundary, and the `Lcg` sequence is unchanged from before
+  the rewrite.
+
+### Added
+
+- **`tool/ipc_browser_check.dart` and the `ipc-browser-check` gate**
+  (`#lzdartwebcompile`). Compiles the IPC surface with `dart compile js` and runs
+  eight behavioural checks under Node, in `make check` and in CI. It is the only
+  place the refuse-on-web half of `#lzdartintwidth` executes: on the VM that
+  branch is compiled out, so `dart test` can reach the policy and never the
+  platform binding. It reports `OK — 8/8`, and fails if the registered count
+  changes without the floor being updated — a browser entry point whose only
+  evidence is exit 0 says the same thing whether it asserted eight properties or
+  none (`#lzvacuousrun`).
+
+- **`contentHashHex`** and **`contentDigest`** (`lib/src/stable_id.dart`) — the
+  portable spellings of a content key. Hex has no representation limit where a
+  packed 64-bit `int` has one.
+
+### Changed
+
+- **BREAKING: `BlockKey.content` takes the 16-char FNV-1a-64 hex string**, not
+  the packed `int`, and `BlockKey.value` is now `String` for both kinds. The full
+  digest is not representable on a JavaScript target, so an `int`-valued content
+  key could not cross a browser boundary without rounding into a different
+  identity. The hex is the `c:` wire form already; `asString()` and key equality
+  are unchanged. `blockKey()` callers need no change.
+
+- **`contentHash` throws `UnsupportedError` on a JavaScript target** rather than
+  returning a rounded digest — the same refuse-never-round rule
+  `#lzdartintwidth` states for wire integers, applied to the one API that still
+  hands out a full-width `int`. Its VM behaviour and values are unchanged.
+
+- **The shared-memory arena checksum folds to 53 bits, not 63.** It is a
+  Dart-internal, self-consistent-only checksum (no fixture pins it), so
+  narrowing the fold is free — and it means the checksum has one definition
+  instead of one the VM can hold and a browser cannot.
+
+- `intsAreDoubles`, `maxExactInt` and `exceedsExactIntRange` moved from
+  `lib/src/ipc.dart` to `lib/src/int_width.dart`, re-exported from both
+  `package:lazily/ipc.dart` and `package:lazily/lazily.dart`. `stable_id.dart`
+  needs the same predicate and belongs to the reactive core; importing the whole
+  wire surface to reach one boolean would drag the IPC types into every consumer.
+
 ### Added
 
 - **The `msgpack` frame codec — the cross-language binary default**

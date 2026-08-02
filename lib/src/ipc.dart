@@ -20,6 +20,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'int_width.dart';
+
 /// Wire-stable node and peer identifiers (protocol.md § Shared Types).
 ///
 /// Serialized as bare JSON numbers. JS/TS peers must keep these at or below
@@ -1744,25 +1746,6 @@ MapEntry<String, Object?> _tagged(Object? value, String name) {
   final e = obj.entries.single;
   return MapEntry(e.key, e.value);
 }
-
-/// True when this runtime represents `int` as an IEEE-754 double — every
-/// JavaScript target, and nothing else. On the VM `1` and `1.0` are distinct
-/// objects; compiled to JS they are the same double (#lzdartintwidth).
-const bool intsAreDoubles = identical(1, 1.0);
-
-/// Largest integer a double represents exactly: 2^53 - 1.
-const int maxExactInt = 9007199254740991;
-
-/// Whether [value] is outside the range this runtime represents exactly.
-///
-/// [intsAreDoubles] is a parameter rather than a read of the top-level constant
-/// so the POLICY is executable. On the VM that constant is `false` and the
-/// guarded branch is compiled out, so a test running there cannot reach it —
-/// and a rule no test can reach is prose, which is the failure mode this
-/// codebase's conformance ladder exists to remove. Callers pass the constant;
-/// tests pass both values.
-bool exceedsExactIntRange(int value, {required bool intsAreDoubles}) =>
-    intsAreDoubles && value > maxExactInt;
 
 /// Read a wire integer, refusing one this runtime cannot represent.
 ///

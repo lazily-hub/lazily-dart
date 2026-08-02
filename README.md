@@ -222,6 +222,37 @@ graph's state can be mirrored to remote observers across processes and
 languages. It round-trips the canonical fixtures from
 [`lazily-spec`][spec]/`conformance/`.
 
+### The wire on a JavaScript target
+
+**The IPC surface is a supported web target**, and `make check` proves it:
+`tool/ipc_browser_check.dart` compiles `package:lazily/ipc.dart` with
+`dart compile js` and runs the result under Node on every build and in CI. That
+gate is newer than the surface it guards — until it landed, the wire did not
+compile to JavaScript at all, because dart2js rejects an integer literal above
+2^53 - 1 and the FNV-1a and SplitMix64 constants were spelled as literals. The
+older `tool/stdlib_browser_check.dart` passed the whole time; it imports
+`package:lazily/stdlib.dart` and covers none of the protocol.
+
+Support comes with one rule, and it is the same on both codecs: **a value this
+runtime cannot represent is refused, never rounded.** Dart's `int` is 64 bits on
+the VM and an IEEE-754 double everywhere else, and `jsonDecode` rounds
+`9007199254740993` to `...992` without an error — a corrupted node id that
+decodes cleanly is undetectable downstream. So:
+
+- On the VM, `NodeId`/`PeerId` values above 2^53 round-trip exactly, as
+  protocol.md § NodeId / PeerId allows. Nothing is refused.
+- On a JavaScript target, a frame carrying such a value is rejected with a
+  `FormatException`. Everything at or below 2^53 - 1 decodes normally, including
+  a small value a peer chose to carry in a wide `uint64` tag.
+- `contentHash` returns the packed 64-bit digest and therefore throws
+  `UnsupportedError` on a JavaScript target. Use `contentHashHex`, which is the
+  `c:` wire form and is exact everywhere; `BlockKey.content` takes that hex.
+
+Every 64-bit constant and operation in this package lives in
+`lib/src/u64.dart` as 32-bit halves, so hashes and the SplitMix64 sampler
+produce identical results on the VM and in a browser rather than one answer per
+runtime.
+
 ## Feature coverage
 
 The full `lazily` capability set across every binding. Legend: ✅ shipped ·

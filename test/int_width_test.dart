@@ -84,6 +84,29 @@ void main() {
           '{"ResyncRequest":{"from_epoch":7}}');
     });
 
+    test('a value above 2^32 ENCODES into a wide uint64 tag', () {
+      // The half `#lzdartintwidth` left open: it taught the DECODER to read a
+      // wide tag as halves and left the encoder on `setUint64`, which dart2js
+      // does not implement — so a browser peer could read a wide frame and then
+      // throw producing its own reply. The tag and the payload bytes are pinned
+      // here, on the VM, against the accessor the encoder no longer calls
+      // (`#lzdartwebcompile`).
+      const wide = 1099511627776; // 2^40.
+      final packed = encodeMsgpack(
+        IpcMessage.decodeJson('{"ResyncRequest":{"from_epoch":$wide}}'),
+      );
+      final tail = packed.sublist(packed.length - 9);
+      expect(tail[0], 0xcf, reason: 'a value above 2^32 needs the uint64 tag');
+
+      final native = ByteData(8)..setUint64(0, wide);
+      expect(tail.sublist(1), native.buffer.asUint8List());
+
+      expect(
+        utf8.decode(decodeMsgpack(packed).encodeJson()),
+        '{"ResyncRequest":{"from_epoch":$wide}}',
+      );
+    });
+
     test('a value above 2^53 in a wide uint64 tag decodes on the VM', () {
       // 0x0020000000000001 == 2^53 + 1.
       final message = decodeMsgpack(
