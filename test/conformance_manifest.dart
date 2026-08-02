@@ -39,6 +39,7 @@
 /// fixture carries on disk.
 library;
 
+import 'dart:collection';
 import 'dart:io';
 
 import 'conformance_assertions.dart';
@@ -165,17 +166,86 @@ void recordScenario(
 /// scenario contributes no unconsumed key. Recording here makes the skip
 /// visible without any runner having to declare anything.
 ///
-/// The recording is lazy, like the iterable: a caller that stops early records
-/// only what it consumed, which is the honest answer. The corollary is that a
-/// loop body which `continue`s past a scenario has ALREADY recorded it — if a
-/// runner needs to filter, filter before the loop and hand-record the ones it
-/// runs with [recordScenario].
+/// Yielding is NOT replaying (`#lzscenariobodyskip`). This used to book each
+/// scenario as it handed it over, which cannot tell a loop body that ran from
+/// one that `continue`d — the iterator sees the same thing either way — so a
+/// skipped scenario booked itself and this rung stayed silent about the very
+/// defect it exists for. lazily-py proved that against the contract's own probe.
+///
+/// The booking now rides on the scenario MAP: reading a payload key (`steps`,
+/// `ops`, `frames`, `expect`, …) books it, while the keys in
+/// [scenarioLabelKeys] stay silent, so a dispatch chain that reads `id`, matches
+/// no arm and falls through books nothing. That makes booking intrinsic rather
+/// than something a runner must remember: a `break` leaves the rest unbooked, a
+/// `continue` past the payload leaves that one unbooked, and a body that returns
+/// before touching the payload books nothing at all.
 Iterable<Map<String, dynamic>> scenariosOf(Map<String, dynamic> fixture) sync* {
   final scenarios = (fixture['scenarios'] as List).cast<Map<String, dynamic>>();
   for (var i = 0; i < scenarios.length; i++) {
-    recordScenario(fixture, scenarios[i], i);
-    yield scenarios[i];
+    yield _BookingScenario(fixture, scenarios[i], i);
   }
+}
+
+/// Keys that IDENTIFY or narrate a scenario rather than drive one.
+///
+/// Reading only these is *looking at the label*, not replaying: a dispatch chain
+/// that reads `name`, matches no arm and falls through has replayed nothing, and
+/// a by-id lookup walks past every scenario ahead of its match. Booking on those
+/// reads is what let a skipped body book itself. Shared verbatim with every
+/// other binding.
+const scenarioLabelKeys = <String>{
+  'comment',
+  'description',
+  'id',
+  'label',
+  'name',
+  'note',
+  'notes',
+  'reason',
+  'why',
+};
+
+/// One scenario, booked on the first read of its PAYLOAD.
+///
+/// A full `Map<String, dynamic>` (via [MapMixin]) so every runner keeps working
+/// unchanged — `scenario['steps']` books, `scenario['id']` does not, and
+/// `keys`/`containsKey`/`length` stay silent because inspecting a scenario's
+/// SHAPE is not replaying it either.
+class _BookingScenario with MapMixin<String, dynamic> {
+  _BookingScenario(this._fixture, this._scenario, this._index);
+
+  final Map<String, dynamic> _fixture;
+  final Map<String, dynamic> _scenario;
+  final int _index;
+  bool _booked = false;
+
+  @override
+  dynamic operator [](Object? key) {
+    if (!scenarioLabelKeys.contains(key)) _book();
+    return _scenario[key];
+  }
+
+  /// Read a payload key WITHOUT booking. For a runner that must inspect a
+  /// scenario it is not replaying.
+  dynamic peek(String key) => _scenario[key];
+
+  void _book() {
+    if (_booked) return;
+    _booked = true;
+    recordScenario(_fixture, _scenario, _index);
+  }
+
+  @override
+  Iterable<String> get keys => _scenario.keys;
+
+  @override
+  void operator []=(String key, dynamic value) => _scenario[key] = value;
+
+  @override
+  dynamic remove(Object? key) => _scenario.remove(key);
+
+  @override
+  void clear() => _scenario.clear();
 }
 
 /// The one scenario of [fixture] whose resolved id is [id], recording it.
@@ -188,8 +258,10 @@ Map<String, dynamic> scenarioNamed(Map<String, dynamic> fixture, String id) {
   final scenarios = (fixture['scenarios'] as List).cast<Map<String, dynamic>>();
   for (var i = 0; i < scenarios.length; i++) {
     if (scenarioIdOf(scenarios[i], i) == id) {
-      recordScenario(fixture, scenarios[i], i);
-      return scenarios[i];
+      // The LOOKUP does not book (`#lzscenariobodyskip`): matching on the id
+      // walks past every scenario ahead of it, and a caller could select one
+      // and then return. The returned map books when its payload is read.
+      return _BookingScenario(fixture, scenarios[i], i);
     }
   }
   throw StateError(
