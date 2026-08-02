@@ -1745,11 +1745,53 @@ MapEntry<String, Object?> _tagged(Object? value, String name) {
   return MapEntry(e.key, e.value);
 }
 
+/// True when this runtime represents `int` as an IEEE-754 double — every
+/// JavaScript target, and nothing else. On the VM `1` and `1.0` are distinct
+/// objects; compiled to JS they are the same double (#lzdartintwidth).
+const bool intsAreDoubles = identical(1, 1.0);
+
+/// Largest integer a double represents exactly: 2^53 - 1.
+const int maxExactInt = 9007199254740991;
+
+/// Whether [value] is outside the range this runtime represents exactly.
+///
+/// [intsAreDoubles] is a parameter rather than a read of the top-level constant
+/// so the POLICY is executable. On the VM that constant is `false` and the
+/// guarded branch is compiled out, so a test running there cannot reach it —
+/// and a rule no test can reach is prose, which is the failure mode this
+/// codebase's conformance ladder exists to remove. Callers pass the constant;
+/// tests pass both values.
+bool exceedsExactIntRange(int value, {required bool intsAreDoubles}) =>
+    intsAreDoubles && value > maxExactInt;
+
+/// Read a wire integer, refusing one this runtime cannot represent.
+///
+/// protocol.md § NodeId / PeerId makes `NodeId`/`PeerId` `u64` "serialized as
+/// bare JSON numbers", so a conforming peer may legitimately send a value above
+/// 2^53. On the Dart VM that is fine: `int` is 64-bit, the value survives both
+/// codecs exactly, and refusing it would remove a capability that works.
+/// Compiled to JavaScript it is NOT fine — `int` is a double, `jsonDecode`
+/// rounds 9007199254740993 to 9007199254740992 without error, and a corrupted
+/// node id that decodes cleanly is undetectable downstream.
+///
+/// So the guard is platform-based rather than magnitude-based. A magnitude
+/// guard would either corrupt on web (too loose) or reject frames the VM
+/// handles correctly (too strict); only this split does neither.
+///
+/// The rounding is its own evidence: any literal above 2^53 - 1 lands on a
+/// double >= 2^53, so comparing the decoded value against [maxExactInt] sees
+/// every loss without needing the source text.
 int _reqInt(Map<String, Object?> obj, String field) {
   final v = obj[field];
   if (v is! int || v < 0) {
     throw FormatException(
         '$field must be a non-negative integer, got ${v?.runtimeType}');
+  }
+  if (exceedsExactIntRange(v, intsAreDoubles: intsAreDoubles)) {
+    throw FormatException(
+        '$field is outside the exactly-representable integer range on this '
+        'runtime (max $maxExactInt); a JavaScript target cannot carry it '
+        'without silently rounding');
   }
   return v;
 }
@@ -1771,6 +1813,11 @@ List<int> _intList(Map<String, Object?> obj, String field) {
     if (e is! int || e < 0) {
       throw FormatException(
           '$field entry must be a non-negative integer, got ${e.runtimeType}');
+    }
+    if (exceedsExactIntRange(e, intsAreDoubles: intsAreDoubles)) {
+      throw FormatException(
+          '$field entry is outside the exactly-representable integer range on '
+          'this runtime (max $maxExactInt)');
     }
     return e;
   }).toList();

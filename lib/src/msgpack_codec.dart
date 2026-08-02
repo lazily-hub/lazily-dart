@@ -203,6 +203,25 @@ class _Unpacker {
       case 4:
         return _view.getUint32(at);
       default:
+        // `getUint64` throws UnsupportedError on a JavaScript target, and would
+        // do so even for a small value a peer chose to carry in a wide tag
+        // (msgpack permits non-minimal encodings). Read the halves instead, so
+        // the only frames refused on web are the ones genuinely outside the
+        // exactly-representable range — and refused with the same reason the
+        // `json` decoder gives, rather than two different failures for one
+        // cause (#lzdartintwidth).
+        if (intsAreDoubles) {
+          final hi = _view.getUint32(at);
+          final lo = _view.getUint32(at + 4);
+          // 2^53 - 1 is 0x001FFFFF_FFFFFFFF, so any greater high word is out of
+          // range regardless of the low word.
+          if (hi > 0x1FFFFF) {
+            _fail('integer is outside the exactly-representable integer range '
+                'on this runtime (max $maxExactInt); a JavaScript target '
+                'cannot carry it without silently rounding');
+          }
+          return hi * 0x100000000 + lo;
+        }
         return _view.getUint64(at);
     }
   }
@@ -219,6 +238,16 @@ class _Unpacker {
       case 4:
         return _view.getInt32(at);
       default:
+        if (intsAreDoubles) {
+          final hi = _view.getInt32(at);
+          final lo = _view.getUint32(at + 4);
+          if (hi > 0x1FFFFF || hi < -0x200000) {
+            _fail('integer is outside the exactly-representable integer range '
+                'on this runtime (max $maxExactInt); a JavaScript target '
+                'cannot carry it without silently rounding');
+          }
+          return hi * 0x100000000 + lo;
+        }
         return _view.getInt64(at);
     }
   }
