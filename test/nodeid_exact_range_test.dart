@@ -38,7 +38,6 @@ import 'dart:io';
 import 'package:lazily/ipc.dart';
 import 'package:test/test.dart';
 
-import 'conformance_assertions.dart';
 import 'conformance_manifest.dart';
 
 const _fixtureName = 'codec/nodeid_exact_range.json';
@@ -83,7 +82,8 @@ IpcMessage? _decode(Map<String, dynamic> scenario) {
         // defect outside the code under test.
         return IpcMessage.decodeJson(scenario['wire_json'] as String);
       case 'msgpack':
-        return decodeMsgpack(_hexToBytes(scenario['wire_msgpack_hex'] as String));
+        return decodeMsgpack(
+            _hexToBytes(scenario['wire_msgpack_hex'] as String));
       default:
         throw StateError('unknown codec: ${scenario['codec']}');
     }
@@ -96,7 +96,8 @@ IpcMessage? _decode(Map<String, dynamic> scenario) {
 }
 
 void main() {
-  test('NodeId exact-representation bound is enforced by refusal, never rounding',
+  test(
+      'NodeId exact-representation bound is enforced by refusal, never rounding',
       () {
     final fixture = _loadFixture();
 
@@ -123,7 +124,9 @@ void main() {
     // The platform split, read from the library's own predicate rather than
     // restated here. On the VM the exact range is [0, 2^63); compiled to JS it
     // stops at 2^53 - 1. Everything below follows from this one value.
-    final exactCeiling = intsAreDoubles ? BigInt.from(maxExactInt) : BigInt.two.pow(63) - BigInt.one;
+    final exactCeiling = intsAreDoubles
+        ? BigInt.from(maxExactInt)
+        : BigInt.two.pow(63) - BigInt.one;
 
     // Anti-vacuity. `exact_or_reject` is satisfied by a runner that decodes
     // nothing and calls everything refused — and lazily-dart really does refuse
@@ -134,7 +137,8 @@ void main() {
 
     for (final scenario in scenariosOf(fixture)) {
       final id = scenario['id'] as String;
-      final expected = BigInt.parse(scenario['expect']['node_id_decimal'] as String);
+      final expected =
+          BigInt.parse(scenario['expect']['node_id_decimal'] as String);
       final representable = expected <= exactCeiling;
       final expectBlock = scenario['expect'] as Map<String, dynamic>;
 
@@ -181,9 +185,11 @@ void main() {
       final state = node.state;
       expect(state, isA<NodeStatePayload>(),
           reason: '$id: the fixture carries a Payload node state');
-      assertKey(expectBlock, 'payload', (state as NodeStatePayload).bytes.toList());
+      assertKey(
+          expectBlock, 'payload', (state as NodeStatePayload).bytes.toList());
       expect(snapshot.roots.length, 1, reason: '$id: one root');
-      assertKey(expectBlock, 'root_id_decimal', snapshot.roots.first.toString());
+      assertKey(
+          expectBlock, 'root_id_decimal', snapshot.roots.first.toString());
     }
 
     // Two scenarios sit at 2^53 - 1 and two at 2^53 + 1; two are at u64::MAX,
