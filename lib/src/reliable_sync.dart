@@ -333,11 +333,26 @@ class FileOutboxStore implements OutboxStore {
 
   List<Map<String, dynamic>> _records() {
     final records = <Map<String, dynamic>>[];
-    for (final line in file.readAsLinesSync()) {
+    final lines = file.readAsLinesSync();
+    for (var i = 0; i < lines.length; i++) {
       try {
-        records.add(jsonDecode(line) as Map<String, dynamic>);
-      } on FormatException {
-        // A crash may leave only the final record incomplete.
+        records.add(jsonDecode(lines[i]) as Map<String, dynamic>);
+      } on FormatException catch (e) {
+        // A crash between `writeStringSync` and `flushSync` can tear the LAST
+        // record, and only the last: `_append` writes one whole line per call
+        // and flushes before returning, so an interior line is either complete
+        // or the file was corrupted by something other than a crash
+        // (#failclosedsweep). This used to swallow a FormatException on ANY
+        // line, which turned a corrupted interior record into a frame that
+        // silently vanished from a DURABLE outbox — the replay then reported
+        // success while having dropped a delta the peer is still waiting for.
+        // Only the torn tail is forgiven; anything else is a load failure.
+        if (i != lines.length - 1) {
+          throw FormatException(
+              'outbox ${file.path}: record ${i + 1} of ${lines.length} is not '
+              'valid JSON (${e.message}); only a torn FINAL record is '
+              'recoverable');
+        }
       }
     }
     return records;
@@ -362,6 +377,21 @@ class FileOutboxStore implements OutboxStore {
           );
         case 'delete':
           if (epoch > deletedThrough) deletedThrough = epoch;
+        case 'cursor':
+          // Cursor marks are read by `loadCursor`, not by the frame scan.
+          break;
+        default:
+          // A Dart `switch` over `Object?` with no `default` falls through in
+          // SILENCE, so an unrecognised op used to be skipped exactly the way
+          // a cursor mark is skipped — indistinguishable from a deliberate
+          // no-op (#failclosedsweep). `_append` is the only writer and it
+          // writes three ops; a fourth means the log was written by another
+          // version or another process, and guessing which frames to replay
+          // from a log you cannot fully read is how an outbox silently
+          // under-delivers.
+          throw FormatException(
+              'outbox ${file.path}: unknown op ${jsonEncode(record['op'])} '
+              '(expected put, delete, or cursor)');
       }
     }
     final effective = cursor > deletedThrough ? cursor : deletedThrough;

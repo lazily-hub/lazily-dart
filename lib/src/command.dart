@@ -570,6 +570,23 @@ CommandStatus _terminalStatusOf(ReceiptOutcome outcome, String? reason) {
         case 'timed_out':
           return CommandStatus.timedOut;
         default:
+          // INTENTIONAL leniency, and the one place in this fold that has it
+          // (#failclosedsweep). The wire contract: `CausalReceipt.outcome` is
+          // a CLOSED enum and is the terminal authority ("terminal authority
+          // is the causal receipt"); `reason` is schema-typed
+          // `OptionalString` — free-form by construction, and used only to
+          // REFINE a rejection into a more specific terminal status. A peer
+          // may mint a new rejection reason at any time, and a receipt with a
+          // reason this build has never seen is still, unambiguously, a
+          // rejection. Consequence of the default: the command lands terminal
+          // as plain `rejected` and the unrecognised reason survives verbatim
+          // on the entry for display — the projection converges, it just
+          // cannot name the cause. Failing closed here would instead reject a
+          // WELL-FORMED terminal receipt and strand the command non-terminal
+          // forever, which is strictly worse than a coarser label. `outcome`
+          // itself stays fail-closed: `ReceiptOutcome.fromWire` throws.
+          // Pinned by `command_conformance_test.dart` >
+          // "unknown rejection reason folds to rejected".
           return CommandStatus.rejected;
       }
     // Non-terminal outcomes never reach here (guarded by isTerminal).

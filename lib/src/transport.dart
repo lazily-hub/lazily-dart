@@ -227,20 +227,33 @@ SpillResult spillMessage(
     final delta = message.value;
     final ops = <DeltaOp>[];
     for (final op in delta.ops) {
-      if (op is DeltaOpCellSet) {
-        final (payload, spilled) = spillValue(op.payload, backend, threshold);
-        total += spilled;
-        ops.add(DeltaOpCellSet(op.node, payload));
-      } else if (op is DeltaOpSlotValue) {
-        final (payload, spilled) = spillValue(op.payload, backend, threshold);
-        total += spilled;
-        ops.add(DeltaOpSlotValue(op.node, payload));
-      } else if (op is DeltaOpNodeAdd) {
-        final (state, spilled) = _spillState(op.state, backend, threshold);
-        total += spilled;
-        ops.add(DeltaOpNodeAdd(op.node, op.typeTag, state, key: op.key));
-      } else {
-        ops.add(op);
+      // Exhaustive over the sealed `DeltaOp` hierarchy on purpose
+      // (#failclosedsweep). This was an if/else-if chain whose terminal `else`
+      // passed the op through untouched, which is the right answer for the
+      // four ops that carry no payload — and the WRONG answer, silently, for
+      // any payload-bearing op added later: the frame would ship inline, over
+      // the threshold, and the spill contract would be broken with nothing to
+      // notice it. A `switch` over a sealed type with no `default` makes a new
+      // variant a COMPILE error here instead.
+      switch (op) {
+        case DeltaOpCellSet():
+          final (payload, spilled) = spillValue(op.payload, backend, threshold);
+          total += spilled;
+          ops.add(DeltaOpCellSet(op.node, payload));
+        case DeltaOpSlotValue():
+          final (payload, spilled) = spillValue(op.payload, backend, threshold);
+          total += spilled;
+          ops.add(DeltaOpSlotValue(op.node, payload));
+        case DeltaOpNodeAdd():
+          final (state, spilled) = _spillState(op.state, backend, threshold);
+          total += spilled;
+          ops.add(DeltaOpNodeAdd(op.node, op.typeTag, state, key: op.key));
+        // No inline payload to spill; forwarded unchanged.
+        case DeltaOpInvalidate():
+        case DeltaOpNodeRemove():
+        case DeltaOpEdgeAdd():
+        case DeltaOpEdgeRemove():
+          ops.add(op);
       }
     }
     return SpillResult(

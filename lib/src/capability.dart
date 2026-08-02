@@ -253,6 +253,35 @@ class CapabilityHandshake {
   /// Decode a plain-JSON wire object. Defaults `fragmentation_supported =
   /// false`, `ordered_reliable = true`, `features = []` when absent (mirrors
   /// the `lazily-rs` serde defaults).
+  ///
+  /// INTENTIONAL leniency, audited (#failclosedsweep). Every `??` below is an
+  /// ABSENT-FIELD default, never an unknown-VALUE default: a present field of
+  /// the wrong type still fails the cast or [field] and throws.
+  ///
+  /// The wire reason: the handshake is the FIRST frame a peer sends, before
+  /// either side knows what the other supports, so it is the one frame that
+  /// must survive version skew in both directions. `lazily-rs` spells these
+  /// same fields `#[serde(default)]`, and a Dart peer that refused a frame a
+  /// Rust peer is entitled to emit would make the handshake un-negotiable
+  /// rather than fail-safe. The defaults are chosen so the omitted answer is
+  /// the CONSERVATIVE one: `fragmentation_supported: false` (assume the peer
+  /// cannot reassemble, so never fragment), `features: []` (assume no optional
+  /// feature is available), `max_frame_size: kDefaultMaxFrameSize` (the floor
+  /// every binding guarantees).
+  ///
+  /// Two defaults are deliberately NOT conservative and are the cost of the
+  /// contract: an omitted `protocol_id` / `protocol_major_version` reads as
+  /// AGREEMENT with this build, so a frame that names neither passes the
+  /// compatibility gate rather than being refused as unversioned; and an
+  /// omitted `ordered_reliable` reads as `true`. Both match `lazily-rs`, and
+  /// the negotiation itself stays fail-closed: [checkCompatible] rejects a
+  /// `protocol_id` or major version that IS present and differs, and
+  /// `ordered_reliable: false` is refused outright. A non-map `value` is not
+  /// lenient either — it decodes as an empty object, whose missing required
+  /// `peer_id` throws below.
+  ///
+  /// Pinned by `capability_test.dart` > "absent optional fields decode to the
+  /// documented serde-parity defaults".
   static CapabilityHandshake fromWire(Object? value) {
     final obj =
         value is Map ? value.cast<String, Object?>() : <String, Object?>{};

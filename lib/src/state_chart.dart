@@ -172,6 +172,36 @@ class ChartDef {
       throw StateError('chart has no root (parent-less state)');
     }
 
+    // Every state id a chart NAMES must be a state the chart DECLARES
+    // (#failclosedsweep). Without this, an id that resolves to nothing —
+    // a typo'd transition target, an `initial` naming a deleted child, a
+    // history `default` pointing outside its region — reached the runtime as
+    // a plain map miss, and `ChartDef.kind`, `_computeExitEnter`, and
+    // `_enterSubtree` each answered it with a silent default (`_Atomic`, the
+    // root, an empty child list). The chart then ENTERED a state that does not
+    // exist: the active configuration contained a phantom id, the fixture's
+    // expected configuration did not, and the mismatch surfaced as a diff
+    // somewhere else entirely. The chart JSON is externally supplied, so this
+    // is validated once at parse and never re-guessed at step time.
+    void requireDeclared(String owner, String what, String? id) {
+      if (id == null) return;
+      if (!stateDefs.containsKey(id)) {
+        throw FormatException(
+            'state $owner: $what names undeclared state "$id"');
+      }
+    }
+
+    for (final entry in stateDefs.entries) {
+      final id = entry.key;
+      final def = entry.value;
+      requireDeclared(id, 'parent', def.parent);
+      requireDeclared(id, 'initial', def.initial);
+      requireDeclared(id, 'default', def.defaultChild);
+      for (final t in def.transitions.entries) {
+        requireDeclared(id, 'transition "${t.key}" target', t.value.target);
+      }
+    }
+
     final depthMap = <String, int>{};
     _computeDepth(stateDefs, rootId, 0, depthMap);
 
@@ -184,7 +214,20 @@ class ChartDef {
     );
   }
 
-  _Kind kind(String id) => states[id]?.kind ?? const _Atomic();
+  /// The structural kind of state [id].
+  ///
+  /// Throws when [id] is not a declared state. This used to answer an unknown
+  /// id with `_Atomic()`, which made every caller below treat a nonexistent
+  /// state as an ordinary leaf and enter it (#failclosedsweep). Chart-supplied
+  /// ids are now proven declared by [ChartDef.fromJson], so reaching this
+  /// throw means a CALLER invented the id.
+  _Kind kind(String id) {
+    final def = states[id];
+    if (def == null) {
+      throw ArgumentError.value(id, 'id', 'unknown state in this chart');
+    }
+    return def.kind;
+  }
 
   /// Ancestors of [id] inclusive, `[id, …, root]`.
   List<String> ancestorsInclusive(String id) {
@@ -234,6 +277,7 @@ _StateDef _parseState(String id, Map<String, dynamic> obj) {
 
   final _Kind kind;
   final histKind = obj['history'];
+  final declaredKind = obj['kind'];
   if (histKind is String) {
     switch (histKind) {
       case 'shallow':
@@ -243,10 +287,33 @@ _StateDef _parseState(String id, Map<String, dynamic> obj) {
       default:
         throw FormatException('state $id: unknown history kind $histKind');
     }
+  } else if (declaredKind != null) {
+    // `kind` is a CLOSED five-value enum in the schema, and the schema says it
+    // is INFERRED only when omitted (#failclosedsweep). This branch used to
+    // read `kind` for exactly one comparison — `== 'final'` — and let every
+    // other value, valid or not, fall through to inference. So
+    // `kind: "compound"` on a state without `initial` silently became atomic,
+    // `kind: "parallel"` without `parallel: true` silently became atomic, and
+    // a typo like `kind: "finall"` silently became atomic too: the chart
+    // parsed, ran, and produced a wrong active configuration with no error
+    // anywhere. A declared kind is now honoured, and an undeclared one is
+    // refused by name.
+    kind = switch (declaredKind) {
+      'atomic' => const _Atomic(),
+      'compound' => const _Compound(),
+      'parallel' => const _Parallel(),
+      'final' => const _Final(),
+      // `history` is spelled by the `history` field, which sets the shallow/
+      // deep flag the runtime needs; `kind: "history"` alone cannot say which.
+      'history' => throw FormatException(
+          'state $id: kind "history" requires a `history` field of '
+          '"shallow" or "deep"'),
+      _ => throw FormatException(
+          'state $id: unknown kind ${jsonEncode(declaredKind)} '
+          '(expected one of atomic, compound, parallel, history, final)'),
+    };
   } else if (obj['parallel'] == true) {
     kind = const _Parallel();
-  } else if (_asStr(obj['kind']) == 'final') {
-    kind = const _Final();
   } else if (obj['initial'] is String) {
     kind = const _Compound();
   } else {
