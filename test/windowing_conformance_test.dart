@@ -81,11 +81,18 @@ void main() {
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
       final int? e;
-      if (op['type'] == 'push') {
-        w.push(op['now'] as int, op['value'] as int);
-        e = null;
-      } else {
-        e = w.tick(op['now'] as int);
+      // `tick` is an EXPLICIT branch (`#lzscenariobodyskip`): the bare `else`
+      // assumed the last variant without checking it, so an op type this
+      // runner does not implement advanced the clock and the fixture's
+      // `returns` was compared against an operation it never named.
+      switch (op['type']) {
+        case 'push':
+          w.push(op['now'] as int, op['value'] as int);
+          e = null;
+        case 'tick':
+          e = w.tick(op['now'] as int);
+        default:
+          fail('TumblingTimeWindow: unknown op type `${op['type']}`');
       }
       expect(e, equals(step['returns']), reason: 'emit');
       _check(ctx, observed, step, w.output());
@@ -122,10 +129,15 @@ void main() {
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
       final int? e;
-      if (op['type'] == 'push') {
-        e = w.push(op['now'] as int, op['value'] as int);
-      } else {
-        e = w.flush(op['now'] as int);
+      // `flush` is an EXPLICIT branch (`#lzscenariobodyskip`) — the bare
+      // `else` flushed the window for any op type the fixture might name.
+      switch (op['type']) {
+        case 'push':
+          e = w.push(op['now'] as int, op['value'] as int);
+        case 'flush':
+          e = w.flush(op['now'] as int);
+        default:
+          fail('SessionWindow: unknown op type `${op['type']}`');
       }
       expect(e, equals(step['returns']), reason: 'emit');
       _check(ctx, observed, step, w.output());

@@ -250,6 +250,13 @@ void _runReconcileFixture(String name) {
         expect(got, isA<DiffOpUpdate<String, int>>(),
             reason: '$name op[$i] is Update');
         expect((got as DiffOpUpdate<String, int>).key, want['key']);
+      // Fail closed on an op type this runner does not implement
+      // (`#lzscenariobodyskip`). Without this arm a `want['type']` no case
+      // names matched nothing, so `got` was never compared to anything and the
+      // op position passed for free — while the ledger still booked the
+      // scenario as replayed.
+      default:
+        fail('$name op[$i]: unknown reconcile op type `${want['type']}`');
     }
   }
 

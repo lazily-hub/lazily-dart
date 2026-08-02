@@ -74,23 +74,36 @@ Map<String, dynamic> _reencodedNode(
     wire = msgpackToJson(encodeMsgpack(message));
   }
   final map = wire! as Map<String, dynamic>;
-  if (scenario['field'] == 'snapshot') {
-    final body = map['Snapshot']! as Map<String, dynamic>;
-    return (body['nodes']! as List<dynamic>)[0] as Map<String, dynamic>;
+  // `node_add` is an EXPLICIT arm (`#lzscenariobodyskip`): both helpers used to
+  // treat any `field` that was not `snapshot` as a delta `NodeAdd`, so a
+  // scenario naming a third field would have been read off the WRONG part of
+  // the frame and the null-leniency claim would have been proven about
+  // something the fixture never named.
+  switch (scenario['field']) {
+    case 'snapshot':
+      final body = map['Snapshot']! as Map<String, dynamic>;
+      return (body['nodes']! as List<dynamic>)[0] as Map<String, dynamic>;
+    case 'node_add':
+      final body = map['Delta']! as Map<String, dynamic>;
+      final op = (body['ops']! as List<dynamic>)[0] as Map<String, dynamic>;
+      return op['NodeAdd']! as Map<String, dynamic>;
+    default:
+      fail('unknown scenario field `${scenario['field']}`');
   }
-  final body = map['Delta']! as Map<String, dynamic>;
-  final op = (body['ops']! as List<dynamic>)[0] as Map<String, dynamic>;
-  return op['NodeAdd']! as Map<String, dynamic>;
 }
 
 Object? _decodedKey(Map<String, dynamic> scenario, IpcMessage message) {
-  if (scenario['field'] == 'snapshot') {
-    return message.snapshot!.nodes[0].key?.toWire();
+  switch (scenario['field']) {
+    case 'snapshot':
+      return message.snapshot!.nodes[0].key?.toWire();
+    case 'node_add':
+      final op = message.delta!.ops[0];
+      expect(op, isA<DeltaOpNodeAdd>(),
+          reason: 'the fixture declares a NodeAdd op');
+      return (op as DeltaOpNodeAdd).key?.toWire();
+    default:
+      fail('unknown scenario field `${scenario['field']}`');
   }
-  final op = message.delta!.ops[0];
-  expect(op, isA<DeltaOpNodeAdd>(),
-      reason: 'the fixture declares a NodeAdd op');
-  return (op as DeltaOpNodeAdd).key?.toWire();
 }
 
 void main() {

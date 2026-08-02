@@ -49,21 +49,32 @@ void main() {
   group('Signaling frame rejection', () {
     final frames = _loadFixture(['signaling', 'frames.json']);
     test('round trip positives and reject malformed frames', () {
+      // `server` is an EXPLICIT arm (`#lzscenariobodyskip`). Both dispatches
+      // below were ternaries on `direction`, so anything that was not the
+      // string `client` — a typo, a third direction the corpus later adds —
+      // silently ran the SERVER codec. A positive frame would then round-trip
+      // through the wrong message type, and a reject entry would "reject" for
+      // a reason the fixture never named.
       for (final entry
           in (frames['frames'] as List).cast<Map<String, dynamic>>()) {
         final wire =
             (entry['wire'] as Map<String, dynamic>).cast<String, dynamic>();
-        final Map<String, dynamic> actual = entry['direction'] == 'client'
-            ? ClientMessage.fromWire(wire).toWire()
-            : ServerMessage.fromWire(wire).toWire();
+        final actual = switch (entry['direction']) {
+          'client' => ClientMessage.fromWire(wire).toWire(),
+          'server' => ServerMessage.fromWire(wire).toWire(),
+          final other => fail('unknown signaling direction `$other`'),
+        };
         expect(actual, wire, reason: entry['label'] as String);
       }
       for (final entry
           in (frames['rejects'] as List).cast<Map<String, dynamic>>()) {
         final wire =
             (entry['wire'] as Map<String, dynamic>).cast<String, dynamic>();
+        final direction = entry['direction'];
+        expect(direction, anyOf('client', 'server'),
+            reason: 'unknown signaling direction `$direction`');
         expect(
-          () => entry['direction'] == 'client'
+          () => direction == 'client'
               ? ClientMessage.fromWire(wire)
               : ServerMessage.fromWire(wire),
           throwsA(anything),

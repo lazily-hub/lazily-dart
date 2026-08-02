@@ -111,6 +111,11 @@ void main() {
           d.evict(op['peer'] as int);
         case 'resolve':
           expect(d.resolve(op['service'] as String), equals(step['returns']));
+        // Fail closed on an unrecognised op (`#lzscenariobodyskip`): the
+        // defaultless switch silently replayed nothing, and `step['returns']`
+        // for a `resolve` the runner skipped was never compared.
+        default:
+          fail('DiscoveryCell: unknown op type `${op['type']}`');
       }
       assertKeyWith(expected, 'discovery', (v) {
         expect(d.discovery(), equals((v as Map).cast<String, String>()));
@@ -138,6 +143,9 @@ void main() {
           reg.deregister(op['service'] as String);
         case 'replay':
           reg.replay();
+        // Fail closed on an unrecognised op (`#lzscenariobodyskip`).
+        default:
+          fail('ServiceRegistry: unknown op type `${op['type']}`');
       }
       assertKeyWith(expected, 'projection', (v) {
         expect(reg.projection(), equals((v as Map).cast<String, String>()));

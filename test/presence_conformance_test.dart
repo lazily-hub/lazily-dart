@@ -65,6 +65,13 @@ void main() {
           cell.set(op['value'] as String, op['now'] as int, op['ttl'] as int);
         case 'tick':
           cell.tick(op['now'] as int);
+        // Fail closed on an unrecognised op (`#lzscenariobodyskip`): a
+        // defaultless `switch` over a String is a silent no-op in Dart, so an
+        // op this runner does not implement left the cell untouched while the
+        // step's `expected` block still compared green against the PREVIOUS
+        // state.
+        default:
+          fail('EphemeralCell: unknown op type `${op['type']}`');
       }
       assertKey(expected, 'value', cell.value());
       assertKeyWith(expected, 'invalidates', (v) {
@@ -92,6 +99,9 @@ void main() {
           cell.evict(op['peer'] as int, op['now'] as int);
         case 'tick':
           cell.tick(op['now'] as int);
+        // Fail closed on an unrecognised op (`#lzscenariobodyskip`).
+        default:
+          fail('PresenceCell: unknown op type `${op['type']}`');
       }
       assertKeyWith(expected, 'present', (v) {
         expect(cell.present(),
@@ -120,6 +130,9 @@ void main() {
           cell.set(op['peer'] as int, op['value'] as String, op['now'] as int);
         case 'tick':
           cell.tick(op['now'] as int);
+        // Fail closed on an unrecognised op (`#lzscenariobodyskip`).
+        default:
+          fail('AwarenessCell: unknown op type `${op['type']}`');
       }
       assertKeyWith(expected, 'present', (v) {
         expect(cell.present(),

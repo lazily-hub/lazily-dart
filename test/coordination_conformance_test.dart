@@ -65,6 +65,12 @@ void main() {
         case 'tick':
           expect(lease.tick(now), equals(step['returns']));
           break;
+        // Fail closed on an unrecognised op (`#lzscenariobodyskip`): with no
+        // `default` the switch was a silent no-op, so an op this runner does
+        // not implement left the lease untouched and `step['returns']` was
+        // never compared to anything.
+        default:
+          fail('LeaseCell: unknown op type `${op['type']}`');
       }
       assertKey(expected, 'holder', lease.holder(now));
       assertKey(expected, 'held', lease.isHeld(now));
@@ -95,8 +101,15 @@ void main() {
         case 'contend':
           role = leader.contend(op['peer'] as int, now, op['ttl'] as int);
           break;
-        default:
+        // `tick` is now an EXPLICIT arm (`#lzscenariobodyskip`). The old
+        // `default` assumed the last variant without checking it, so ANY
+        // unrecognised op type replayed `tick` — the fixture named one
+        // operation and the runner performed another, silently.
+        case 'tick':
           role = leader.tick(now);
+          break;
+        default:
+          fail('LeaderCell: unknown op type `${op['type']}`');
       }
       assertKeyWith(expected, 'role', (v) {
         final wantRole = {
@@ -136,6 +149,10 @@ void main() {
         case 'tick':
           expect(lock.tick(now), equals(step['returns']));
           break;
+        // Fail closed on an unrecognised op (`#lzscenariobodyskip`) — the
+        // defaultless switch above was a silent no-op.
+        default:
+          fail('LockCell: unknown op type `${op['type']}`');
       }
       assertKey(expected, 'is_locked', lock.isLocked(now));
       assertKey(expected, 'fence', lock.fence());
@@ -156,10 +173,16 @@ void main() {
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
       final expected = assertionsOf(step['expected']);
-      if (op['type'] == 'acquire') {
-        expect(sem.acquire(), equals(step['returns']));
-      } else {
-        sem.release();
+      // `release` is an EXPLICIT branch (`#lzscenariobodyskip`): the bare
+      // `else` assumed the last variant without checking it, so any op type
+      // other than `acquire` released a permit whatever the fixture named.
+      switch (op['type']) {
+        case 'acquire':
+          expect(sem.acquire(), equals(step['returns']));
+        case 'release':
+          sem.release();
+        default:
+          fail('SemaphoreCell: unknown op type `${op['type']}`');
       }
       assertKey(expected, 'permits_available', sem.permitsAvailable());
       assertKeyWith(expected, 'invalidates', (v) {

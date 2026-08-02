@@ -154,9 +154,18 @@ void _applyTextCrdtStep(
         if (expectCollected != null) {
           expect(collected, expectCollected, reason: 'gc collected count');
         }
+      // Fail closed on an unrecognised `op` (`#lzscenariobodyskip`): the chain
+      // used to fall out of the switch and `return`, so a fixture naming an
+      // operation this runner has not implemented mutated nothing and the
+      // scenario's later expectations were checked against an untouched CRDT.
+      default:
+        fail('TextCrdt step: unknown op `$op`');
     }
     return;
   }
+  // Same fail-open one level up: a step whose shape matches none of the
+  // branches above was a silent no-op (`#lzscenariobodyskip`).
+  fail('TextCrdt step: unrecognised step shape ${step.keys.toList()}');
 }
 
 void _checkTextCrdtExpect(
@@ -261,9 +270,14 @@ void _applyTextCrdtDeltaStep(
         crdt.insertStr(step['index'] as int, step['str'] as String);
       case 'delete':
         crdt.delete(step['index'] as int);
+      // Fail closed on an unrecognised `op` (`#lzscenariobodyskip`) — see
+      // `_applyTextCrdtStep`.
+      default:
+        fail('TextCrdt delta step: unknown op `$op`');
     }
     return;
   }
+  fail('TextCrdt delta step: unrecognised step shape ${step.keys.toList()}');
 }
 
 void _checkTextCrdtDeltaExpect(
@@ -360,9 +374,14 @@ void _applySeqCrdtStep(
         crdt.moveBefore(id, step['anchor'] as String, now);
       case 'remove':
         crdt.remove(id, now);
+      // Fail closed on an unrecognised `op` (`#lzscenariobodyskip`) — see
+      // `_applyTextCrdtStep`.
+      default:
+        fail('SeqCrdt step: unknown op `$op`');
     }
     return;
   }
+  fail('SeqCrdt step: unrecognised step shape ${step.keys.toList()}');
 }
 
 void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas,

@@ -588,10 +588,18 @@ void main() {
       OrSet replayOrSet(Iterable<Map<String, dynamic>> ops) {
         final s = OrSet();
         for (final op in ops) {
-          if (op['op'] == 'add') {
-            s.add(op['tag'] as String);
-          } else if (op['op'] == 'remove') {
-            s.removeObserved((op['observed_tags'] as List).cast<String>());
+          // Fail closed on an unrecognised `op` (`#lzscenariobodyskip`): the
+          // chain had no final `else`, so an op the corpus adds later would
+          // mutate nothing here and `present()` would still be asserted — a
+          // green replay of a transcript this runner never applied. `_apply`
+          // above already fails closed the same way.
+          switch (op['op']) {
+            case 'add':
+              s.add(op['tag'] as String);
+            case 'remove':
+              s.removeObserved((op['observed_tags'] as List).cast<String>());
+            default:
+              fail('replayOrSet: unknown orset op `${op['op']}`');
           }
         }
         return s;

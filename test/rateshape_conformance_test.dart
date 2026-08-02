@@ -72,11 +72,19 @@ void main() {
     final cell = DebounceCell<String>(ctx, initial['quiet'] as int);
     _replay(ctx, fx, cell, (step) {
       final op = step['op'] as Map<String, dynamic>;
-      if (op['type'] == 'input') {
-        cell.input(op['now'] as int, op['value'] as String);
-        return null;
+      // `tick` is an EXPLICIT branch (`#lzscenariobodyskip`): the bare fall-
+      // through assumed the last variant, so ANY op type other than `input`
+      // was replayed as a tick and the fixture's `returns` was compared
+      // against an operation it never named.
+      switch (op['type']) {
+        case 'input':
+          cell.input(op['now'] as int, op['value'] as String);
+          return null;
+        case 'tick':
+          return cell.tick(op['now'] as int);
+        default:
+          fail('DebounceCell: unknown op type `${op['type']}`');
       }
-      return cell.tick(op['now'] as int);
     });
   });
 
@@ -87,9 +95,13 @@ void main() {
     final cell = ThrottleCell<String>(ctx, edge, initial['window'] as int);
     _replay(ctx, fx, cell, (step) {
       final op = step['op'] as Map<String, dynamic>;
-      return op['type'] == 'input'
-          ? cell.input(op['now'] as int, op['value'] as String)
-          : cell.tick(op['now'] as int);
+      // `tick` is an EXPLICIT arm (`#lzscenariobodyskip`) — the ternary's else
+      // branch assumed it for every op type the fixture might name.
+      return switch (op['type']) {
+        'input' => cell.input(op['now'] as int, op['value'] as String),
+        'tick' => cell.tick(op['now'] as int),
+        final other => fail('ThrottleCell: unknown op type `$other`'),
+      };
     });
   }
 
@@ -117,11 +129,17 @@ void main() {
         SampleCell<String>(ctx, SampleMode.time(initial['period'] as int));
     _replay(ctx, fx, cell, (step) {
       final op = step['op'] as Map<String, dynamic>;
-      if (op['type'] == 'input') {
-        cell.input(op['value'] as String);
-        return null;
+      // `tick` is an EXPLICIT branch (`#lzscenariobodyskip`) — see
+      // `DebounceCell` above.
+      switch (op['type']) {
+        case 'input':
+          cell.input(op['value'] as String);
+          return null;
+        case 'tick':
+          return cell.tick(op['now'] as int);
+        default:
+          fail('SampleCell time: unknown op type `${op['type']}`');
       }
-      return cell.tick(op['now'] as int);
     });
   });
 

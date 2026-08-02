@@ -295,6 +295,19 @@ int _replayQueue(_Flavor flavor, String name) {
   return steps.length;
 }
 
+/// Decode the corpus's `durability` word.
+///
+/// `durable` is an EXPLICIT arm (`#lzscenariobodyskip`). Every one of the three
+/// call sites spelled this as `x == 'ephemeral' ? ephemeral : durable`, so any
+/// word the corpus might add — or a typo — silently became `durable`. On the
+/// EXPECTATION side that is worse than a skip: the assertion then compares the
+/// observed durability against a value the fixture never named, and passes.
+TopicDurability _durability(Object? raw) => switch (raw) {
+      'ephemeral' => TopicDurability.ephemeral,
+      'durable' => TopicDurability.durable,
+      final other => fail('unknown topic durability `$other`'),
+    };
+
 TopicSnapshot<String> _topicSnapshot(Map<String, dynamic> initial) {
   final subscriptions =
       (initial['subscriptions'] as Map<String, dynamic>? ?? const {})
@@ -304,9 +317,7 @@ TopicSnapshot<String> _topicSnapshot(Map<String, dynamic> initial) {
     return TopicSubscriptionSnapshot(
       subscriberId: entry.key,
       cursor: value['cursor'] as int,
-      durability: value['durability'] == 'ephemeral'
-          ? TopicDurability.ephemeral
-          : TopicDurability.durable,
+      durability: _durability(value['durability']),
       connected: value['connected'] as bool,
     );
   }).toList();
@@ -384,9 +395,7 @@ final class _TopicHarness {
   Object? apply(Map<String, dynamic> op) {
     switch (op['type'] as String) {
       case 'subscribe':
-        final durability = op['durability'] == 'ephemeral'
-            ? TopicDurability.ephemeral
-            : TopicDurability.durable;
+        final durability = _durability(op['durability']);
         return topic.subscribe(op['subscriber'] as String, durability);
       case 'reconnect':
         topic.reconnect(op['subscriber'] as String);
@@ -477,9 +486,7 @@ int _replayTopic(_Flavor flavor, String name) {
         expect(actual, isNotNull);
         expect(actual.cursor, want['cursor']);
         expect(actual.connected, want['connected']);
-        final expectedDurability = want['durability'] == 'ephemeral'
-            ? TopicDurability.ephemeral
-            : TopicDurability.durable;
+        final expectedDurability = _durability(want['durability']);
         expect(actual.durability, expectedDurability,
             reason: '${flavor.label} $name step $i durability $id');
       }

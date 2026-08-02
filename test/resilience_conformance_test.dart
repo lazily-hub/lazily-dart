@@ -71,11 +71,18 @@ void main() {
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
       final expected = assertionsOf(step['expected']);
-      if (op['type'] == 'record') {
-        cb.record(op['success'] as bool, op['now'] as int);
-      } else if (op['type'] == 'allow') {
-        expect(cb.allow(op['now'] as int), equals(step['returns']),
-            reason: 'allow');
+      // Fail closed on an unrecognised op (`#lzscenariobodyskip`): the chain
+      // had no final `else`, so an op type this runner does not implement fell
+      // through having recorded nothing, and the step's expectations were
+      // compared against the breaker's previous state.
+      switch (op['type']) {
+        case 'record':
+          cb.record(op['success'] as bool, op['now'] as int);
+        case 'allow':
+          expect(cb.allow(op['now'] as int), equals(step['returns']),
+              reason: 'allow');
+        default:
+          fail('CircuitBreakerCell: unknown op type `${op['type']}`');
       }
       assertKeyWith(expected, 'state', (v) {
         expect(cb.state(), equals(_breakerState(v as String)), reason: 'state');
@@ -115,10 +122,16 @@ void main() {
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
       final expected = assertionsOf(step['expected']);
-      if (op['type'] == 'acquire') {
-        expect(b.acquire(), equals(step['returns']));
-      } else {
-        b.release();
+      // `release` is an EXPLICIT branch (`#lzscenariobodyskip`): the bare
+      // `else` assumed the last variant without checking it, so any op type
+      // other than `acquire` released a permit whatever the fixture named.
+      switch (op['type']) {
+        case 'acquire':
+          expect(b.acquire(), equals(step['returns']));
+        case 'release':
+          b.release();
+        default:
+          fail('BulkheadCell: unknown op type `${op['type']}`');
       }
       assertKey(expected, 'in_use', b.permitsInUse());
       assertKeyWith(expected, 'invalidates', (v) {
@@ -137,12 +150,18 @@ void main() {
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
       final expected = assertionsOf(step['expected']);
-      bool edge;
-      if (op['type'] == 'arm') {
-        t.arm(op['now'] as int, op['timeout'] as int);
-        edge = false;
-      } else {
-        edge = t.tick(op['now'] as int);
+      final bool edge;
+      // `tick` is an EXPLICIT branch (`#lzscenariobodyskip`): the bare `else`
+      // assumed the last variant, so an unrecognised op type ticked the clock
+      // instead of failing.
+      switch (op['type']) {
+        case 'arm':
+          t.arm(op['now'] as int, op['timeout'] as int);
+          edge = false;
+        case 'tick':
+          edge = t.tick(op['now'] as int);
+        default:
+          fail('TimeoutCell: unknown op type `${op['type']}`');
       }
       expect(edge, equals(step['returns']), reason: 'edge');
       assertKey(expected, 'is_timed_out', t.isTimedOut());
