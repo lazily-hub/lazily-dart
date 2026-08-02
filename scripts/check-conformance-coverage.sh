@@ -214,34 +214,43 @@ REPLAYED="$(sort -u "$SCENARIOS")"
 
 # Every scenario id the corpus carries, for the fixtures the suite OPENED, in
 # the same `fixture<TAB>id` shape the ledger uses. Resolution order — `id`, else
-# `name`, else `#<index>` — matches `scenarioIdOf` in
-# test/conformance_manifest.dart exactly; if the two ever disagree the ledger
-# stops matching and this check fails closed.
+# `name` — matches `scenarioIdOf` in test/conformance_manifest.dart exactly; if
+# the two ever disagree the ledger stops matching and this check fails closed.
+#
+# There is no positional fallback (#lzspecscenarioids): an id derived from a
+# POSITION silently rebinds to a different scenario when the corpus array is
+# reordered, so an unidentified scenario is marked and reported rather than
+# given an invented id.
 EXPECTED="$(
   while IFS= read -r fixture; do
     [ -n "$fixture" ] || continue
     [ -f "$SPEC_DIR/$fixture" ] || continue
     jq -r --arg f "$fixture" '
+      def identifier: if type == "string" and (gsub("\\s"; "") != "") then . else null end;
       if (.scenarios | type) == "array"
       then .scenarios | to_entries[]
-           | "\($f)\t\(.value.id // .value.name // "#\(.key)")"
+           | "\($f)\t\((.value.id? | identifier) // (.value.name? | identifier) // "!UNIDENTIFIED!\(.key)")"
       else empty end' "$SPEC_DIR/$fixture"
   done <<< "$OPENED"
 )"
 
 SCENARIO_TOTAL=0
 SCENARIO_REPLAYED=0
-POSITIONAL_FIXTURES=""
 while IFS= read -r want; do
   [ -n "$want" ] || continue
   SCENARIO_TOTAL=$((SCENARIO_TOTAL + 1))
-  # The positional fallback is REPORTED, never silently accepted: it fires only
-  # where the corpus carries no identifier at all (today, just
-  # collections/mergecell_algebra.json), and its visibility is what keeps that
-  # gap fixable upstream. Adding the ids is a lazily-spec change, not a
-  # binding's.
+  # An unidentified scenario is a corpus defect, not an id to invent
+  # (#lzspecscenarioids). Booking it by POSITION would silently rebind that
+  # ledger entry to a different scenario on any corpus reorder.
   case "$want" in
-    *$'\t'"#"[0-9]*) POSITIONAL_FIXTURES+="${want%%$'\t'*}"$'\n' ;;
+    *$'\t'"!UNIDENTIFIED!"*)
+      echo "ERROR: '${want%%$'\t'*}' scenario at index ${want##*!UNIDENTIFIED!} carries" >&2
+      echo "       neither \`id\` nor \`name\`. The ledger would record it by POSITION," >&2
+      echo "       which silently rebinds on a corpus reorder. Give it a stable id" >&2
+      echo "       upstream in lazily-spec (#lzspecscenarioids)." >&2
+      missing=$((missing + 1))
+      continue
+      ;;
   esac
   if grep -qxF "$want" <<< "$REPLAYED"; then
     SCENARIO_REPLAYED=$((SCENARIO_REPLAYED + 1))
@@ -357,11 +366,4 @@ echo "conformance coverage OK: $covered/$total canonical fixtures OPENED by the 
      "(${#KNOWN_UNCOVERED[@]} listed as known-uncovered; runtime manifest — these bytes were really read)"
 echo "scenario replay OK: $SCENARIO_REPLAYED/$SCENARIO_TOTAL scenarios of the OPENED fixtures" \
      "were REPLAYED (${#KNOWN_UNREPLAYED_SCENARIOS[@]} excused; runtime ledger)"
-if [ -n "$POSITIONAL_FIXTURES" ]; then
-  echo "note: positional scenario ids in flight —" \
-       "$(printf '%s' "$POSITIONAL_FIXTURES" | sort -u | tr '\n' ' ')" >&2
-  echo "      those fixtures carry scenarios with neither an \`id\` nor a \`name\`, so the" >&2
-  echo "      ledger identifies them by index, which moves the moment the corpus is" >&2
-  echo "      reordered. The repair is to add identifiers upstream in lazily-spec — a" >&2
-  echo "      shared-corpus change, not a binding's." >&2
-fi
+

@@ -102,23 +102,35 @@ final Set<String> _replayed = <String>{};
 /// Fixed order, so a ledger written by one binding names the same scenarios as
 /// a ledger written by any other:
 ///
-///  1. `id` — the three `stdlib/*.json` fixtures;
-///  2. else `name` — the other 27 scenario-bearing fixtures;
-///  3. else the positional index, spelled `#<n>` (0-based).
+///  1. `id`;
+///  2. else `name`.
 ///
-/// The positional fallback exists only because
-/// `collections/mergecell_algebra.json` carries NO identifier — its three
-/// scenarios are distinguished by `policy` alone. It is a fallback, not a
-/// design: `scripts/check-conformance-coverage.sh` reports every scenario that
-/// lands on it, so the corpus gap stays visible until it is fixed upstream.
-/// Adding the missing identifiers is a `lazily-spec` change and does not belong
-/// to any one binding.
+/// There is no third step (`#lzspecscenarioids`). The positional `#<n>` fallback
+/// let the ledger record a scenario BY POSITION, where inserting one ahead of it
+/// silently rebinds that entry — and any excuse naming it — to a different
+/// scenario, with nothing turning red: the guard compares "index 1 was replayed"
+/// against whatever now sits at index 1 and agrees with itself.
+///
+/// It was load-bearing for exactly one fixture,
+/// `collections/mergecell_algebra.json`, whose three scenarios were
+/// distinguished by `policy` alone. They carry ids now, and lazily-spec's
+/// `scenario-identity-check` keeps every scenario identified — so this is a hole
+/// with no users, which is one waiting to become load-bearing again.
+///
+/// A blank identifier is refused for the same reason: it would file every
+/// blank-id scenario under one ledger entry, which reads as "replayed" the moment
+/// any one of them runs.
 String scenarioIdOf(Map<String, dynamic> scenario, int index) {
   final id = scenario['id'];
-  if (id is String && id.isNotEmpty) return id;
+  if (id is String && id.trim().isNotEmpty) return id;
   final name = scenario['name'];
-  if (name is String && name.isNotEmpty) return name;
-  return '#$index';
+  if (name is String && name.trim().isNotEmpty) return name;
+  throw StateError(
+    'scenario at index $index carries neither `id` nor `name`. The replay ledger '
+    'would have to record it by POSITION, where inserting a scenario ahead of it '
+    'silently rebinds that entry to a different scenario. Give it a stable id '
+    'upstream in lazily-spec (#lzspecscenarioids).',
+  );
 }
 
 /// Record that [scenario] — the [index]th of [fixture] — was replayed.
