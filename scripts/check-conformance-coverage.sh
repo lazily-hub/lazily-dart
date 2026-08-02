@@ -23,8 +23,25 @@
 set -euo pipefail
 
 SPEC_DIR="${LAZILY_SPEC_CONFORMANCE_DIR:-../lazily-spec/conformance}"
+
+# A missing corpus is a legitimate LOCAL state and an illegitimate CI state
+# (#lzvacuousrun). Every rung below reasons about fixtures the run OPENED, so an
+# absent corpus makes all of them vacuously true and this script reports OK
+# having examined zero fixtures — a CI job with a wrong checkout would announce
+# conformance coverage it never measured. Under CI that is missing EVIDENCE, not
+# evidence of absence, and it fails the same way a missing manifest already does
+# below. Locally it stays a skip, because a contributor without the lazily-spec
+# sibling is not making a false claim.
 if [ ! -d "$SPEC_DIR" ]; then
+  if [ -n "${CI:-}" ]; then
+    echo "ERROR: canonical corpus not found at $SPEC_DIR, and CI is set." >&2
+    echo "       The checkout is wrong, not the corpus. Exiting 0 here would report" >&2
+    echo "       conformance coverage OK having opened zero fixtures, which is the" >&2
+    echo "       vacuous green this guard exists to prevent (#lzvacuousrun)." >&2
+    exit 1
+  fi
   echo "SKIP: canonical corpus not found at $SPEC_DIR (clone the lazily-spec sibling)" >&2
+  echo "      Local checkout only — this is a hard failure under CI." >&2
   exit 0
 fi
 
@@ -290,6 +307,49 @@ done
 
 if [ "$missing" -gt 0 ]; then
   echo "conformance coverage FAILED: $missing problem(s)" >&2
+  exit 1
+fi
+
+# ---- Positive-evidence floors (#lzvacuousrun) ----
+#
+# Everything above is a NEGATIVE check: it reasons about fixtures the run
+# OPENED and scenarios the run REPLAYED, so all of it is vacuously satisfied by
+# an empty population. Zero opened fixtures means zero uncovered fixtures, zero
+# unreplayed scenarios, and zero stale excuses — nothing in this file can
+# contradict a run that examined nothing. `missing -eq 0` cannot tell "nothing
+# is wrong" apart from "nothing was measured", so assert the MAGNITUDE before
+# printing OK.
+#
+# The constants are calibrated from a real green run of `make check` on this
+# binding (132 of 138 canonical fixtures opened, 118 scenarios replayed) and sit
+# slightly under it, so ordinary corpus churn does not trip them while a
+# collapse does. Do NOT lower them to make a red run green: a drop here means
+# the corpus shrank or the recorder detached mid-run, and that is the finding,
+# not the obstacle.
+MIN_FIXTURES="${MIN_FIXTURES:-128}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-112}"
+
+if [ "$total" -eq 0 ]; then
+  echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2
+  echo "       Every check above is vacuously green over an empty population, so" >&2
+  echo "       this run proves nothing about conformance (#lzvacuousrun)." >&2
+  exit 1
+fi
+if [ "$covered" -lt "$MIN_FIXTURES" ]; then
+  echo "ERROR: only $covered distinct canonical fixtures were OPENED, expected >= $MIN_FIXTURES." >&2
+  echo "       A replay was removed, renamed, or short-circuited, or the recorder" >&2
+  echo "       detached mid-run. Do not lower MIN_FIXTURES to fix this." >&2
+  exit 1
+fi
+if [ "$SCENARIO_TOTAL" -eq 0 ]; then
+  echo "ERROR: ZERO scenarios were found across the OPENED fixtures." >&2
+  echo "       The per-scenario rung above compared nothing and reported no gaps." >&2
+  exit 1
+fi
+if [ "$SCENARIO_REPLAYED" -lt "$MIN_SCENARIOS" ]; then
+  echo "ERROR: only $SCENARIO_REPLAYED scenarios were REPLAYED, expected >= $MIN_SCENARIOS." >&2
+  echo "       A scenario dispatch stopped matching, or the ledger detached." >&2
+  echo "       Do not lower MIN_SCENARIOS to fix this." >&2
   exit 1
 fi
 
