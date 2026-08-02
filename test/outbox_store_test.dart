@@ -35,7 +35,7 @@ List<int> _replayEpochs(List<OutboxFrame> frames) =>
 
 void main() {
   test('OutboxStore protocol replays canonical fixture', () {
-    final ordered = _scenario('unordered puts replay in ascending epoch order');
+    final ordered = _scenario('unordered_puts_replay_in_epoch_order');
     final store = InMemoryStore();
     for (final epoch in (ordered['put_epochs'] as List<dynamic>).cast<int>()) {
       store.put(epoch, Uint8List.fromList([epoch]));
@@ -46,7 +46,7 @@ void main() {
       store.scanAfter(ordered['scan_after'] as int).map((e) => e.$1).toList(),
     );
 
-    final monotone = _scenario('ack cursor is monotone and prune-safe');
+    final monotone = _scenario('ack_cursor_is_monotone_and_prune_safe');
     final outbox = StoredOutbox(InMemoryStore());
     for (final epoch in (monotone['put_epochs'] as List<dynamic>).cast<int>()) {
       outbox.append(epoch, _message(epoch));
@@ -63,7 +63,7 @@ void main() {
   });
 
   test('file outbox reloads durable cursor and suffix', () {
-    final restart = _scenario('restart reloads cursor and unacked suffix');
+    final restart = _scenario('restart_reloads_cursor_and_unacked_suffix');
     final directory = Directory.systemTemp.createTempSync('lazily-outbox-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final path = '${directory.path}/outbox.jsonl';
@@ -83,7 +83,7 @@ void main() {
   });
 
   test('stale file handle cannot regress serialized cursor', () {
-    final scenario = _scenario('stale handle cannot regress serialized cursor');
+    final scenario = _scenario('stale_handle_cannot_regress_cursor');
     final directory = Directory.systemTemp.createTempSync('lazily-cursor-');
     addTearDown(() => directory.deleteSync(recursive: true));
     final path = '${directory.path}/outbox.jsonl';

@@ -39,8 +39,7 @@ String _opIdentities(TextCrdt tree) {
 
 void main() {
   test('CrdtTree merge algebra is order and duplication independent', () {
-    final scenario =
-        _scenario('merge algebra is order and duplication independent');
+    final scenario = _scenario('merge_is_order_and_duplication_independent');
     final seed = scenario['seed'] as Map<String, dynamic>;
     final base = TextCrdt.fromStr(seed['peer'] as int, seed['text'] as String);
     final replicas = <String, TextCrdt>{};
@@ -70,7 +69,7 @@ void main() {
   });
 
   test('empty-frontier snapshot preserves operation lineage', () {
-    final scenario = _scenario('empty frontier snapshot preserves lineage');
+    final scenario = _scenario('empty_frontier_snapshot_preserves_lineage');
     final seed = scenario['seed'] as Map<String, dynamic>;
     final source =
         TextCrdt.fromStr(seed['peer'] as int, seed['text'] as String);
@@ -89,7 +88,7 @@ void main() {
   });
 
   test('own frontier emits an idempotent empty delta', () {
-    final scenario = _scenario('own frontier emits an empty delta');
+    final scenario = _scenario('own_frontier_emits_empty_delta');
     final seed = scenario['seed'] as Map<String, dynamic>;
     final tree = TextCrdt.fromStr(seed['peer'] as int, seed['text'] as String);
     final delta = tree.deltaSince(tree.versionVector());
