@@ -338,17 +338,25 @@ fi
 # printing OK.
 #
 # The constants are calibrated from a real green run of `make check` on this
-# binding (133 of 139 canonical fixtures opened, 126 scenarios replayed) and sit
+# binding (133 of 139 canonical fixtures opened, 132 scenarios replayed) and sit
 # slightly under it, so ordinary corpus churn does not trip them while a
 # collapse does. Do NOT lower them to make a red run green: a drop here means
 # the corpus shrank or the recorder detached mid-run, and that is the finding,
 # not the obstacle.
 #
-# They RISE with coverage: the blob-backend discriminator fixture added one
-# fixture and eight scenarios, so leaving the old floors in place would have
-# left room to silently drop the new replay again.
+# They RISE with coverage, and only ever upward:
+#
+#  * the blob-backend discriminator fixture first added one fixture and eight
+#    scenarios, taking MIN_SCENARIOS to 120;
+#  * its v2 hardening took the SAME fixture from 8 scenarios to 14 — seven wire
+#    shapes (omitted, shm, arrow, in_process, null, non_string, rdma) x two
+#    codecs — so the replayed total moved 126 -> 132 with no new file. The
+#    fixture floor is unchanged because no fixture was added; leaving the
+#    scenario floor at 120 would have left room to silently drop all six new
+#    shapes while the file kept being opened, which is precisely the gap
+#    #lzscenariocoverage exists to close.
 MIN_FIXTURES="${MIN_FIXTURES:-129}"
-MIN_SCENARIOS="${MIN_SCENARIOS:-120}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-126}"
 
 if [ "$total" -eq 0 ]; then
   echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2
