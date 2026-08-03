@@ -188,10 +188,16 @@ void _playCausalReceipts(Map<String, dynamic> fixture) {
 
   assertKey(assertions, 'receipt_count', cr.receipts.length);
 
-  final generation = assertions['current_generation'] as int;
+  // The generation each receipt is observed AT comes from the receipt's own wire
+  // field, never from the assertion block (#lznullformblind). Reading
+  // `current_generation` out of the fixture and feeding it into `observe` made
+  // the assertion below a tautology: the projection's generation is the max of
+  // whatever was passed in, so the fixture's value was compared against itself
+  // and flipping it in the corpus moved BOTH sides. The corpus perturbation pass
+  // found it — the one key of 107 whose flip left this suite green.
   final projection = ReceiptProjection();
   for (final receipt in cr.receipts) {
-    projection.observe(generation, receipt);
+    projection.observe(receipt.generation, receipt);
   }
 
   assertKey(assertions, 'current_generation', projection.currentGeneration);
