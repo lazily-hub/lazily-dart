@@ -1,4 +1,4 @@
-.PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage formal-check ci-reach
+.PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage assertion-ordering-check formal-check ci-reach
 
 # lazily-dart had no Makefile; verification was ad-hoc `dart analyze` + `dart test`.
 # The conformance-coverage guard needs somewhere to hang, and a named `check` makes
@@ -7,8 +7,11 @@
 # `conformance-coverage` runs AFTER `test`, not before: the guard now reads the
 # runtime manifest the suite writes, so ordering it first would only ever see the
 # previous run's evidence, or none at all.
-check: fmt analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage formal-check ci-reach
+check: fmt analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage assertion-ordering-check formal-check ci-reach
 	@echo "lazily-dart: check OK"
+
+assertion-ordering-check:
+	python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding dart --root .
 
 # CI-reachability guard (#lzcheckcireachguard). Fails when a target above runs a
 # gate no CI workflow step reaches — the drift that hid #lzinteroppeerci in every

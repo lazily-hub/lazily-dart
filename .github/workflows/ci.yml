@@ -202,6 +202,9 @@ jobs:
           command -v jq >/dev/null 2>&1 || { echo "::error::jq is not installed on this runner — the scenario replay guard cannot read the corpus's scenario ids"; exit 1; }
           ./scripts/check-conformance-coverage.sh
 
+      - name: Assertion observation ordering (#lzassertordering)
+        run: python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding dart --root .
+
       # `make check` runs `formal-check` as its own gate, and CI reached the Lean
       # proofs only through `dart test`'s formal_check_test — which accepts a SKIP
       # as a pass, by design, so pub.dev consumers and shallow clones still run.
