@@ -242,33 +242,33 @@ void main() {
       // scenario: a cancel arriving after `applied` must be IGNORED, never
       // rewrite applied into rejected. Checking only the projection would pass
       // against a fold that rejected the frame for the wrong reason.
-      final ignored =
-          (expectSpec['ignored_frame_indices'] as List?)?.cast<int>() ??
-              const <int>[];
-      assertKeyIfPresent(expectSpec, 'ignored_frame_indices', (v) {
-        // Every named index must be in range, or the expectation never runs.
-        for (final i in (v as List).cast<int>()) {
-          expect(i, lessThan((scenario['frames'] as List).length),
-              reason: '${scenario['name']} names out-of-range frame $i');
-        }
-      });
       final p = CommandProjection();
       final frames = (scenario['frames'] as List).cast<Map<String, dynamic>>();
+      // "Ignored" is a property of the FOLD, not of the returned status
+      // variant: `CommandProjection.cancel` reports `Recorded` for a cancel it
+      // accepted into its dedup log even when the cancel changes nothing, so
+      // the status is the wrong signal. What the fixture asserts is that a
+      // cancel arriving after `applied` never rewrites applied into rejected —
+      // i.e. the projection is unchanged.
+      final unchanged = <int>[];
       for (var i = 0; i < frames.length; i++) {
         final before = p.toImage();
         foldFrame(p, frames[i]);
-        if (ignored.contains(i)) {
-          // "Ignored" is a property of the FOLD, not of the returned status
-          // variant: `CommandProjection.cancel` reports `Recorded` for a cancel
-          // it accepted into its dedup log even when the cancel changes
-          // nothing, so the status is the wrong signal. What the fixture
-          // asserts is that a cancel arriving after `applied` never rewrites
-          // applied into rejected — i.e. the projection is unchanged.
-          expect(p.toImage(), before,
-              reason: '${scenario['name']} frame $i must not change the '
-                  'projection');
-        }
+        if (p.toImage() == before) unchanged.add(i);
       }
+      // Against the indices the FOLD really left unchanged (`#lznullformblind`).
+      // This used to be an in-range check against `scenario['frames'].length` —
+      // the fixture compared to its own shape, which cannot move for a library
+      // regression — while the value that drove the real comparison was read
+      // raw and never routed through an assertion at all. Equality in both
+      // directions: a fold that started ignoring a frame the fixture does not
+      // name is as red as one that stopped ignoring the frame it does.
+      assertKeyIfPresent(expectSpec, 'ignored_frame_indices', (v) {
+        expect(unchanged, equals((v as List).cast<int>()),
+            reason: '${scenario['name']}: the frames this fold left the '
+                'projection unchanged on must be exactly the ones the fixture '
+                'names as ignored');
+      });
       _assertProjection(p, expectSpec);
     }
   });

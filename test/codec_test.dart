@@ -188,7 +188,6 @@ void main() {
     assertKey(meta, 'byte_canonical', true);
     assertKey(meta, 'required_of_binding', 'MUST');
     assertKey(meta, 'role', 'reference');
-    assertKey(meta, 'scenario_count', (fixture['scenarios'] as List).length);
     // `note` is declared prose by the corpus (`#lzprosekeyconvention`), so it
     // is DISCHARGED rather than excused: the paragraph's whole claim is that
     // `role` and `byte_canonical` are two senses a runner must not conflate,
@@ -213,6 +212,11 @@ void main() {
       _assertValues(block, roundTripped);
       replayed += 1;
     }
+    // Against the scenarios this run REALLY replayed. It used to be compared to
+    // `fixture['scenarios'].length` — the fixture compared to itself, green
+    // over a runner that decodes nothing, which is the exact vacuity the
+    // anti-vacuity clauses exist to name (`#lznullformblind`).
+    assertKey(meta, 'scenario_count', replayed);
     expect(replayed, 3, reason: 'one scenario per IpcMessage variant');
   });
 
@@ -229,7 +233,6 @@ void main() {
     assertKey(meta, 'byte_canonical', false);
     assertKey(meta, 'required_of_binding', 'MUST');
     assertKey(meta, 'role', 'cross_language_binary_default');
-    assertKey(meta, 'scenario_count', (fixture['scenarios'] as List).length);
     // The paragraph states two things: `byte_canonical: false` is why this
     // fixture pins decoded values instead of golden bytes, and msgpack frames
     // encode each struct as a MAP KEYED BY THE JSON FIELD NAME — which it names
@@ -306,6 +309,9 @@ void main() {
       _assertValues(block, roundTripped);
       replayed += 1;
     }
+    // See the json half: the count is EVIDENCE of a replay, never the fixture
+    // restating its own shape (`#lznullformblind`).
+    assertKey(meta, 'scenario_count', replayed);
     expect(replayed, 3, reason: 'one scenario per IpcMessage variant');
   });
 

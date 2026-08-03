@@ -225,6 +225,24 @@ void _playCausalReceipts(Map<String, dynamic> fixture) {
 void _playSignalingSession(Map<String, dynamic> fixture) {
   final room = SignalingRoom();
 
+  // The fixture-level block, which this runner never bound at all: three
+  // load-bearing properties sat unread beside the transcript, and an UNTRACKED
+  // block reports nothing when it goes unconsumed (`#lznullformblind`,
+  // `#lzassertunknownkeys`). Each is computed from the frames the room really
+  // produced — never from the fixture's own `expect` entries, which is the
+  // fixture agreeing with itself.
+  final block = assertionsOf(fixture['assertions'], 'assertions');
+  // conn -> the peer id the SERVER registered for it, read off the `welcome`
+  // frame the server sent, not off the client's `join` input.
+  final registered = <Object, Object?>{};
+  var rosterExcludesSelf = true;
+  var rosterSortedAscending = true;
+  var forwardedFromIsServerRegistered = true;
+  // Anti-vacuity: each property above is trivially true over a transcript that
+  // never produces the frame it is about.
+  var rostersSeen = 0;
+  var forwardsSeen = 0;
+
   for (final step in (fixture['steps'] as List).cast<Map<String, dynamic>>()) {
     final input =
         (step['input'] as Map<String, dynamic>).cast<String, dynamic>();
@@ -255,8 +273,51 @@ void _playSignalingSession(Map<String, dynamic> fixture) {
         expect(actualWire[entry.key], entry.value,
             reason: 'frame[$i].${entry.key}');
       }
+
+      // The three fixture-level properties, observed off the PRODUCED frame.
+      switch (actualWire['type']) {
+        case 'welcome':
+          // The server's own answer to "who are you here": everything after
+          // this reads the registration from the room, not from the client.
+          registered[frames[i].connId] = actualWire['peer'];
+          final roster = (actualWire['peers']! as List).cast<int>();
+          if (roster.isNotEmpty) rostersSeen += 1;
+          if (roster.contains(actualWire['peer'])) rosterExcludesSelf = false;
+          for (var p = 1; p < roster.length; p++) {
+            if (roster[p - 1] >= roster[p]) rosterSortedAscending = false;
+          }
+        case 'offer':
+        case 'answer':
+        case 'ice':
+          // Anti-spoof: `from` is the SENDING connection's server-registered
+          // peer id. The sender is `input.conn` — the frame goes OUT to someone
+          // else — and a client-supplied `from` must never reach it.
+          forwardsSeen += 1;
+          if (actualWire['from'] != registered[connId]) {
+            forwardedFromIsServerRegistered = false;
+          }
+      }
     }
   }
+
+  // Polarity kept honest: the observation is compared against whatever the
+  // corpus declares, so a fixture that flips a claim to `false` requires the
+  // property to be ABSENT rather than silently passing.
+  assertKey(block, 'roster_excludes_self', rosterExcludesSelf,
+      'the `welcome` roster must not carry the joining peer itself');
+  assertKey(block, 'roster_sorted_ascending', rosterSortedAscending,
+      'the `welcome` roster is in ascending peer order');
+  assertKey(
+      block,
+      'forwarded_from_is_server_registered',
+      forwardedFromIsServerRegistered,
+      'a forwarded frame carries the SENDER\'s server-registered peer id');
+  expect(rostersSeen, greaterThan(0),
+      reason: 'a transcript whose rosters are all empty satisfies both roster '
+          'properties without exercising either');
+  expect(forwardsSeen, greaterThan(0),
+      reason: 'a transcript that forwards nothing satisfies the anti-spoof '
+          'property without exercising it');
 
   for (final reject
       in (fixture['rejects'] as List).cast<Map<String, dynamic>>()) {

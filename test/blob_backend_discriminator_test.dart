@@ -114,6 +114,139 @@ IpcMessage _decode(Map<String, dynamic> scenario) {
   }
 }
 
+/// Navigate a schema-less frame tree to the `SharedBlob` descriptor.
+///
+/// Shared by the RAW-WIRE control and the RE-ENCODED inspection so both read
+/// the same slot of the same shape, one before the decoder and one after the
+/// encoder.
+Map<String, dynamic> _blobSite(Object? frame, String what) {
+  final body =
+      (frame! as Map<String, dynamic>)['Delta']! as Map<String, dynamic>;
+  final op = (body['ops']! as List<dynamic>)[0] as Map<String, dynamic>;
+  final slot = op['SlotValue']! as Map<String, dynamic>;
+  final payload = slot['payload']! as Map<String, dynamic>;
+  final blob = payload['SharedBlob'];
+  expect(blob, isA<Map<String, dynamic>>(),
+      reason: '$what should carry a SharedBlob descriptor');
+  return blob! as Map<String, dynamic>;
+}
+
+/// msgpack `nil`, the byte an explicit `backend: null` is written as.
+const _msgpackNil = 0xc0;
+
+/// The lowest and highest `fixstr` tags: `0b101xxxxx`, five bits of length.
+const _msgpackFixstrLow = 0xa0;
+const _msgpackFixstrHigh = 0xbf;
+
+/// `fixstr(7) "backend"` — the field NAME as msgpack writes it.
+const _msgpackBackendFieldName = <int>[
+  0xa7, 0x62, 0x61, 0x63, 0x6b, 0x65, 0x6e, 0x64, //
+];
+
+int _indexOfSequence(List<int> haystack, List<int> needle) {
+  for (var i = 0; i + needle.length <= haystack.length; i++) {
+    var hit = true;
+    for (var j = 0; j < needle.length; j++) {
+      if (haystack[i + j] != needle[j]) {
+        hit = false;
+        break;
+      }
+    }
+    if (hit) return i;
+  }
+  return -1;
+}
+
+/// SECOND WITNESS for the msgpack form, read straight off the bytes.
+///
+/// The tree walk in [_wireBackendForm] goes through [msgpackToJson], which is
+/// THIS BINDING'S OWN schema-less decoder, so a defect in it would corrupt the
+/// control and the thing controlled together and stay invisible. This witness
+/// never touches that path: find `fixstr(7) "backend"` in the raw bytes and
+/// read the tag immediately after it — `0xc0` is nil, a `fixstr` tag opens the
+/// token itself (whose ASCII follows inline), anything else is a value that is
+/// not a string, and a frame that never spells the field name is `omitted`.
+String _msgpackBackendFormWitness(List<int> bytes, String where) {
+  final at = _indexOfSequence(bytes, _msgpackBackendFieldName);
+  if (at == -1) return 'omitted';
+  final valueAt = at + _msgpackBackendFieldName.length;
+  expect(valueAt, lessThan(bytes.length),
+      reason: '$where: the frame ends on the `backend` field NAME, with no '
+          'value byte after it');
+  final tag = bytes[valueAt];
+  if (tag == _msgpackNil) return 'null';
+  if (tag < _msgpackFixstrLow || tag > _msgpackFixstrHigh) return 'non_string';
+  final length = tag & 0x1f;
+  expect(valueAt + 1 + length, lessThanOrEqualTo(bytes.length),
+      reason: '$where: the `backend` fixstr runs past the end of the frame');
+  return String.fromCharCodes(bytes.sublist(valueAt + 1, valueAt + 1 + length));
+}
+
+/// SECOND WITNESS for the json form, read straight off the text.
+String _jsonBackendFormWitness(String text) {
+  final match = RegExp(r'"backend"\s*:\s*').firstMatch(text);
+  if (match == null) return 'omitted';
+  final rest = text.substring(match.end);
+  if (rest.startsWith('null')) return 'null';
+  if (!rest.startsWith('"')) return 'non_string';
+  return rest.substring(1, rest.indexOf('"', 1));
+}
+
+/// Which wire form the scenario's OWN BYTES carry for `backend`, read BEFORE
+/// the decoder runs (`#lznullformblind`).
+///
+/// The `omitted` and `null` families have byte-identical `expect` blocks —
+/// both decode to `shm` and both re-encode with the field absent, because
+/// reading an explicit null as absent IS the leniency — so no post-decode
+/// assertion can tell the two apart, and `backend_forms` used to be
+/// differenced against the fixture's own LABELS, which agree with themselves
+/// whatever the bytes say. Only the raw slot sees the difference: in the
+/// schema-less view an absent map entry and an explicit null / msgpack nil
+/// (`0xc0`) are still two different things, separated by `containsKey`.
+/// TWO WITNESSES, and they must agree: the tree walk is only as trustworthy as
+/// the code path it runs through, so each arm is cross-checked against a
+/// reading that never touches this package's decoders.
+String _wireBackendForm(Map<String, dynamic> scenario) {
+  final Object? frame;
+  final String witness;
+  final where = scenario['id'] as String;
+  switch (scenario['codec'] as String) {
+    case 'json':
+      final text = scenario['wire_json'] as String;
+      witness = _jsonBackendFormWitness(text);
+      frame = jsonDecode(text);
+    case 'msgpack':
+      final bytes = _hexToBytes(scenario['wire_msgpack_hex'] as String);
+      witness = _msgpackBackendFormWitness(bytes, where);
+      frame = msgpackToJson(bytes);
+    default:
+      // Fail closed (`#lzscenariobodyskip`).
+      fail('unknown codec: ${scenario['codec']}');
+  }
+  final blob = _blobSite(frame, "$where: the scenario's own wire");
+  final String form;
+  if (!blob.containsKey('backend')) {
+    form = 'omitted';
+  } else {
+    final value = blob['backend'];
+    // A present token names ITSELF as the form — `shm`, `arrow`, `in_process`,
+    // `rdma` — and anything that is not a string is the non-string form, which
+    // is the one the fixture cannot spell as a token.
+    form = value == null
+        ? 'null'
+        : value is String
+            ? value
+            : 'non_string';
+  }
+  expect(form, witness,
+      reason: '$where: the two independent readings of the `backend` slot '
+          'disagree. One walks the schema-less tree this package decodes the '
+          'frame into, the other reads the raw carrier without touching that '
+          'decoder — so a defect in the decoder cannot hide inside its own '
+          'control');
+  return form;
+}
+
 /// The `SharedBlob` descriptor as this scenario's codec RE-ENCODES it.
 ///
 /// Read off the wire tree because the encoder half is invisible to the decoded
@@ -128,12 +261,7 @@ Map<String, dynamic> _reencodedBlob(
   if (scenario['codec'] == 'msgpack') {
     wire = msgpackToJson(encodeMsgpack(message));
   }
-  final body =
-      (wire! as Map<String, dynamic>)['Delta']! as Map<String, dynamic>;
-  final op = (body['ops']! as List<dynamic>)[0] as Map<String, dynamic>;
-  final slot = op['SlotValue']! as Map<String, dynamic>;
-  final payload = slot['payload']! as Map<String, dynamic>;
-  return payload['SharedBlob']! as Map<String, dynamic>;
+  return _blobSite(wire, '${scenario['id']}: re-encoded frame');
 }
 
 String _variantOf(IpcMessage message) {
@@ -152,10 +280,6 @@ void main() {
 
     final meta = assertionsOf(fixture['assertions'], 'assertions');
     assertKey(meta, 'required_of_binding', 'MUST');
-    assertKey(meta, 'codecs', ['json', 'msgpack']);
-    assertKey(meta, 'outcomes', ['accept', 'reject']);
-    assertKey(
-        meta, 'scenario_count', (fixture['scenarios'] as List<dynamic>).length);
 
     // The enum the fixture names is the enum this binding implements — the one
     // fact in the meta block that is about lazily-dart rather than about the
@@ -192,7 +316,12 @@ void main() {
       // Both codecs are replayed, and the forms an ABSENT map entry, an
       // explicit nil and a present short string produce are each replayed as a
       // distinct member of the vocabulary — which is only possible because the
-      // fixture carries raw text / hex rather than a parsed object.
+      // fixture carries raw text / hex rather than a parsed object. The
+      // three-way split is now read OFF THOSE BYTES by `backend_form`, before
+      // the decoder runs: if the carriage had collapsed absent-entry and
+      // explicit-nil the split could not survive into this runner at all
+      // (`#lznullformblind`).
+      'backend_form',
       'codecs',
       'backend_forms',
     ]);
@@ -212,7 +341,10 @@ void main() {
       'rejection_is_decode_error',
     ]);
     proseKey(meta, 'null_form', dischargedBy: [
-      // The null frames are accept scenarios decoding as shm,
+      // The frames really carry an explicit nil rather than an absent entry —
+      // the one fact the two families' identical `expect` blocks cannot state,
+      'backend_form',
+      // the null frames are accept scenarios decoding as shm,
       'decoded_backend',
       // and the null does not survive the round trip as a null.
       'reencoded_backend_field_present',
@@ -271,26 +403,81 @@ void main() {
     var decodeErrorRefusals = 0;
 
     // Populations the meta block's vocabularies are differenced against after
-    // the loop. Each is EVIDENCE of a replay, never a declaration.
+    // the loop. Each is EVIDENCE of a replay, never a declaration —
+    // `formsReplayed` off the RAW WIRE rather than off the fixture's own
+    // labels, `outcomesReplayed` off what the decoder really did
+    // (`#lznullformblind`).
+    final codecsReplayed = <String>{};
+    final outcomesReplayed = <String>{};
     final formsReplayed = <String>{};
     final rejectionKindsReplayed = <String>{};
     final backendsDecoded = <String>{};
 
-    for (final scenario in scenariosOf(fixture)) {
-      final where = scenario['id'] as String;
-      final outcome = scenario['outcome'] as String;
+    for (final entry in scenariosOf(fixture)) {
+      // `id` and `name` are label keys: reading them books nothing
+      // (`#lzscenariobodyskip`).
+      final where = entry['id'] as String;
+      // The scenario map itself is tracked, not just its `expect` block: the
+      // wire form, the outcome, the variant and the codec selector live OUT
+      // here, and an untracked scenario is where `backend_form` sat read but
+      // never asserted against anything the run produced.
+      final scenario = assertionsOf(entry, where);
+      excuseKey(scenario, 'id',
+          'the ledger key this loop records; it names the scenario rather than asserting it');
+      assertKey(scenario, 'name', where, '$where: name');
+      excuseKey(
+          scenario,
+          'codec',
+          'a selector: it chooses which raw carrier the wire-form control and '
+              'the decoder read, and is differenced into `assertions.codecs` '
+              'after the loop rather than compared here');
+      excuseKey(
+          scenario,
+          entry['codec'] == 'json' ? 'wire_json' : 'wire_msgpack_hex',
+          'the frame under test: this runner\'s INPUT, classified by '
+          '`backend_form` and proven by the decoded values asserted below');
+      excuseKey(scenario, 'expect',
+          'container: asserted key-by-key against the DECODED and RE-ENCODED frames below');
       final block = assertionsOf(scenario['expect'], where);
-      formsReplayed.add(scenario['backend_form'] as String);
       replayed += 1;
+      codecsReplayed.add(scenario['codec'] as String);
+
+      // THE CONTROL, read off the RAW frame before the decoder runs. A scenario
+      // tagged `null` whose frame omits the entry — or a classifier that
+      // stopped telling the two apart — reddens HERE, which is the only place
+      // it can (`#lznullformblind`).
+      final wireForm = _wireBackendForm(scenario);
+      formsReplayed.add(wireForm);
+      assertKey(
+          scenario,
+          'backend_form',
+          wireForm,
+          '$where: the scenario declares a backend form its own bytes must '
+              'carry; the label and the wire disagree');
+
+      // ONE decode attempt per scenario, so `outcome` is asserted against the
+      // decoder's real answer instead of being used as a selector: a reject
+      // frame this binding accepted, or an accept frame it refused, is caught
+      // by this assertion rather than by the shape of the branch it took.
+      Object? caught;
+      IpcMessage? decoded;
+      try {
+        decoded = _decode(scenario);
+      } catch (e) {
+        caught = e;
+      }
+      final outcome = caught == null ? 'accept' : 'reject';
+      outcomesReplayed.add(outcome);
+      assertKey(scenario, 'outcome', outcome,
+          '$where: what the decoder really did with this frame');
 
       if (outcome == 'reject') {
         rejected += 1;
-        Object? caught;
-        try {
-          _decode(scenario);
-        } catch (e) {
-          caught = e;
-        }
+        excuseKey(
+            scenario,
+            'variant',
+            'the frame was REFUSED, so there is no decoded message whose '
+                'variant could be read; the refusal itself is asserted below');
         // Not `expect(..., throwsA)`: the fixture's `rejected` key is the value
         // under assertion, so it has to reach a comparison.
         assertKey(
@@ -354,9 +541,9 @@ void main() {
       }
 
       accepted += 1;
-      final message = _decode(scenario);
-      expect(_variantOf(message), scenario['variant'],
-          reason: '$where: fixture variant vs decoded frame');
+      final message = decoded!;
+      assertKey(scenario, 'variant', _variantOf(message),
+          '$where: fixture variant vs decoded frame');
 
       final delta = message.delta!;
       final op = delta.ops[0];
@@ -368,8 +555,11 @@ void main() {
       final blob = (payload as IpcValueSharedBlob).blob;
       if (blob.backend == BlobBackendKind.arrow) arrowsDecoded += 1;
       if (blob.backend == BlobBackendKind.inProcess) inProcessDecoded += 1;
-      if (scenario['backend_form'] == 'null' &&
-          blob.backend == BlobBackendKind.shm) {
+      // Off the WIRE form, not the label: `nullsDecodedAsShm` is the counter
+      // that separates the explicit-nil family from the omitted one, so taking
+      // its membership from the fixture's own tag would be the same blindness
+      // one level down (`#lznullformblind`).
+      if (wireForm == 'null' && blob.backend == BlobBackendKind.shm) {
         nullsDecodedAsShm += 1;
       }
       backendsDecoded.add(blob.backend.wire);
@@ -424,12 +614,29 @@ void main() {
         reason: 'and nothing decodes to a backend the clause does not declare');
 
     // The same shape one level out: every wire FORM the fixture declares was
-    // replayed, and no scenario carried a form the vocabulary omits.
+    // replayed, and no scenario carried a form the vocabulary omits. The
+    // population is read off the BYTES, so a corpus whose `null` frames stopped
+    // carrying an explicit nil replays two forms where three are declared.
     assertKeyWith(meta, 'backend_forms', (expected) {
       expect(formsReplayed, equals((expected as List<dynamic>).toSet()),
           reason: 'every declared wire shape must be replayed by this runner, '
               'and no scenario may carry a form the vocabulary does not name');
     });
+    // The two vocabularies and the count that used to be hand-written literals
+    // and the fixture's own `scenarios.length` — none of which could move for a
+    // library regression (`#lznullformblind`).
+    assertKeyWith(meta, 'codecs', (expected) {
+      expect(codecsReplayed, equals((expected as List<dynamic>).toSet()),
+          reason: 'every declared codec must be replayed by this runner, and '
+              'no scenario may carry a codec the vocabulary does not name');
+    });
+    assertKeyWith(meta, 'outcomes', (expected) {
+      expect(outcomesReplayed, equals((expected as List<dynamic>).toSet()),
+          reason: 'both outcomes must be REACHED — the population is what the '
+              'decoder really did, so a binding that accepted everything '
+              'replays one outcome where the corpus declares two');
+    });
+    assertKey(meta, 'scenario_count', replayed);
     assertKeyWith(meta, 'rejection_kinds', (expected) {
       expect(
           rejectionKindsReplayed, equals((expected as List<dynamic>).toSet()),

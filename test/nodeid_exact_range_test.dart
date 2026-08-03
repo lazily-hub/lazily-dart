@@ -106,13 +106,15 @@ void main() {
     // corpus's new `prose` declaration would have slipped past here.
     final block = assertionsOf(fixture['assertions'], 'assertions');
     assertKey(block, 'required_of_binding', 'MUST');
-    assertKey(block, 'codecs', ['json', 'msgpack']);
-    assertKey(block, 'scenario_count',
-        (fixture['scenarios'] as List<dynamic>).length);
 
     // Populations the vocabularies below are differenced against after the
-    // loop. Evidence of a replay, never a declaration.
+    // loop. Evidence of a replay, never a declaration. `codecs` used to be a
+    // hand-written literal and `scenario_count` the fixture's own
+    // `scenarios.length` — the fixture compared to itself and to a runner-side
+    // constant, neither of which moves for a library regression
+    // (`#lznullformblind`).
     final outcomesReplayed = <String>{};
+    final codecsReplayed = <String>{};
 
     // ---- prose keys (`#lzprosekeyconvention`) -------------------------------
     //
@@ -184,6 +186,9 @@ void main() {
         }
       });
 
+      // Recorded where the decode DISPATCHES on it, so the vocabulary below is
+      // differenced against the carriers this run really read.
+      codecsReplayed.add(scenario['codec'] as String);
       final message = _decode(scenario);
 
       if (message == null) {
@@ -253,6 +258,18 @@ void main() {
           reason: 'every outcome the clause declares must be replayed, and no '
               'scenario may carry an outcome the vocabulary does not name');
     });
+
+    // The same shape for the two keys that used to be compared to a literal and
+    // to the fixture's own shape (`#lznullformblind`). Every scenario ends in
+    // exactly one of the two arms, so `accepted + refused` is the count of
+    // scenarios whose BODY ran — which a `continue` past the payload, or a
+    // dispatch chain that matches no arm, cannot inflate.
+    assertKeyWith<void>(block, 'codecs', (expected) {
+      expect(codecsReplayed, equals((expected as List<dynamic>).toSet()),
+          reason: 'every declared codec must be replayed by this runner, and '
+              'no scenario may carry a codec the vocabulary does not name');
+    });
+    assertKey(block, 'scenario_count', accepted + refused);
 
     // Two scenarios sit at 2^53 - 1 and two at 2^53 + 1; two are at u64::MAX,
     // which no Dart target represents. Pinning the split BOTH ways is what makes

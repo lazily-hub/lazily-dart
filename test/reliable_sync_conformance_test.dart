@@ -352,6 +352,22 @@ void main() {
       final fx = _load('multi_epoch_delta.json');
       expect(fx['kind'], 'ReliableSync');
 
+      // The fixture-level block, which this runner never bound at all: five
+      // keys — `base_epoch`, `epoch`, `span`, `is_multi_epoch`, `op_count` —
+      // sat unread beside a `wire` frame nothing decoded, and an UNTRACKED
+      // block reports nothing when it goes unconsumed (`#lznullformblind`,
+      // `#lzassertunknownkeys`). They are asserted against the DECODED frame,
+      // not against the scenario's own `delta` object one line down: reading
+      // `assertions.epoch` off `scenarios[…].delta.epoch` is the fixture
+      // compared to itself, green over a decoder that never ran.
+      final meta = assertionsOf(fx['assertions'], 'assertions');
+      final wired = _msg(fx['wire']).delta!;
+      assertKey(meta, 'base_epoch', wired.baseEpoch);
+      assertKey(meta, 'epoch', wired.epoch);
+      assertKey(meta, 'span', wired.span);
+      assertKey(meta, 'is_multi_epoch', wired.span > 1);
+      assertKey(meta, 'op_count', wired.ops.length);
+
       final sc = _scenario(fx, 'span_3_applies_equal_to_unit_fold');
       final ex = assertionsOf(sc['expect']);
       final d = sc['delta'] as Map<String, dynamic>;
@@ -623,6 +639,15 @@ void main() {
       final unobserved = addedTags.difference(observedTags);
       expect(set.present(), unobserved.isNotEmpty,
           reason: 'present iff some added tag outlived every remove');
+      // The tag set above is computed from the TRANSCRIPT, so holding the
+      // corpus's prose to it would otherwise be the fixture agreeing with
+      // itself (`#lznullformblind`). This pins it against the LIBRARY: observe
+      // exactly those tags and the set must go absent, so a wrong survivor set
+      // reddens here before it can be used to check anything else.
+      expect(
+          (replayOrSet(addOps)..removeObserved(unobserved)).present(), isFalse,
+          reason: 'observing every surviving tag must clear the set — if it '
+              'does not, `unobserved` is not the surviving set at all');
       assertKeyWith(addEx, 'reason', (v) {
         for (final tag in unobserved) {
           expect(v, contains(tag),
