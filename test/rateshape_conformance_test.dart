@@ -57,10 +57,8 @@ void _replay(
     final emitted = drive(step);
     expect(emitted, equals(step['returns']), reason: 'emit');
     assertKey(expected, 'output', cell.output());
-    assertKeyWith(expected, 'invalidates', (v) {
-      expect(_invalidated(ctx, observed), equals((v as Map)['output']),
-          reason: 'invalidation');
-    });
+    assertKey(subKey(expected, 'invalidates'), 'output',
+        _invalidated(ctx, observed), 'invalidation');
   }
 }
 

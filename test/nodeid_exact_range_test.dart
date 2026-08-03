@@ -251,13 +251,13 @@ void main() {
     // The vocabulary the corpus declares, differenced against the outcomes this
     // run actually replayed. `outcomes` maps a vocabulary to English glosses,
     // so the assertion is the KEY SET — the gloss text itself is prose nested
-    // inside a data key, which is not a prose key.
-    assertKeyWith<void>(block, 'outcomes', (expected) {
-      expect(outcomesReplayed,
-          equals((expected as Map<String, dynamic>).keys.toSet()),
-          reason: 'every outcome the clause declares must be replayed, and no '
-              'scenario may carry an outcome the vocabulary does not name');
-    });
+    // inside a data key, which is not a prose key. Spelled through
+    // [assertKeySet] (`#lzsubblockkeyset`) so the tracker KNOWS the key set was
+    // compared: an object-valued key routed through the plain assertKeyWith
+    // entry point is now a finish-time failure, whatever the callback does.
+    assertKeySet(block, 'outcomes', outcomesReplayed,
+        reason: 'every outcome the clause declares must be replayed, and no '
+            'scenario may carry an outcome the vocabulary does not name');
 
     // The same shape for the two keys that used to be compared to a literal and
     // to the fixture's own shape (`#lznullformblind`). Every scenario ends in

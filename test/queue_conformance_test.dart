@@ -81,28 +81,34 @@ class _Readers<T> {
 /// Assert per-reader-kind invalidation. A reader kind explicitly present in the
 /// fixture's `invalidates` map is asserted; absent kinds are not asserted
 /// (fixtures that focus on one reader kind only declare that one).
+/// The matrix is consumed through the child tracker (`#lzsubblockkeyset`):
+/// checking five named reader kinds and returning left a sixth key added to
+/// `invalidates` upstream compared by nothing, while every scalar sibling of
+/// `invalidates` reddened. [assertKeysOf] bounds the key set by the readers
+/// this runner really primes and asserts every key the fixture does name.
 void _assertInvalidation(
   String name,
   int stepIndex,
   String opType,
   _Readers readers,
   Context ctx,
-  Map<String, dynamic> invalidates,
+  Map<String, dynamic> expected,
 ) {
-  void check(String kind, Slot<dynamic> reader) {
-    if (!invalidates.containsKey(kind)) return;
-    final expected = invalidates[kind] as bool;
-    final warm = _isWarm(reader, ctx);
-    expect(warm, !expected,
+  final byKind = <String, Slot<dynamic>>{
+    'head': readers.head,
+    'len': readers.len,
+    'is_empty': readers.isEmpty,
+    'is_full': readers.isFull,
+    'closed': readers.isClosed,
+  };
+  assertKeysOfIfPresent(expected, 'invalidates', byKind.keys, (kind, want) {
+    final warm = _isWarm(byKind[kind]!, ctx);
+    expect(warm, want != true,
         reason: '$name step $stepIndex `$opType` reader `$kind`: '
-            'expected invalidated=$expected (warm=$warm)');
-  }
-
-  check('head', readers.head);
-  check('len', readers.len);
-  check('is_empty', readers.isEmpty);
-  check('is_full', readers.isFull);
-  check('closed', readers.isClosed);
+            'expected invalidated=$want (warm=$warm)');
+  },
+      reason: '$name step $stepIndex `$opType`: `invalidates` names a reader '
+          'kind this runner never primes');
 }
 
 /// Assert observable queue state (only fields present in `expected`).
@@ -189,10 +195,7 @@ void _runFixture(String name) {
     _assertState(q, expected);
 
     // Assert per-reader-kind invalidation.
-    assertKeyIfPresent(expected, 'invalidates', (v) {
-      _assertInvalidation(name, i, op['type'] as String, readers, ctx,
-          (v as Map).cast<String, dynamic>());
-    });
+    _assertInvalidation(name, i, op['type'] as String, readers, ctx, expected);
   }
 }
 

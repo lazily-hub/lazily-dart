@@ -167,12 +167,15 @@ void _assertExpect(
     expect(world.replicas['a']!.render(), v,
         reason: '$scenario: render on `a`');
   });
-  assertKeyIfPresent(expectSpec, 'render_on', (v) {
-    for (final entry in (v as Map).entries) {
-      expect(world.replicas[entry.key]!.render(), entry.value,
-          reason: '$scenario: render on `${entry.key}`');
-    }
-  });
+  // Keyed by replica label, bounded by the replicas this scenario really
+  // built (`#lzsubblockkeyset`).
+  assertKeysOfIfPresent(expectSpec, 'render_on', world.replicas.keys,
+      (label, want) {
+    expect(world.replicas[label]!.render(), want,
+        reason: '$scenario: render on `$label`');
+  },
+      reason:
+          '$scenario: `render_on` names a replica this scenario never built');
   assertKeyIfPresent(expectSpec, 'live_nodes', (v) {
     expect(world.replicas['a']!.liveNodeCount(), v,
         reason: '$scenario: live_nodes on `a`');

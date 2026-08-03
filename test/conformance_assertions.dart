@@ -86,6 +86,41 @@
 /// `expect.blob_epoch`, asserted per scenario long after that block is finished.
 /// A named key is therefore matched by NAME in any block of the same fixture,
 /// and the comparison happens once the fixture's replay is over.
+///
+/// ## Rung 5: an object-valued key is checked by its KEY SET (`#lzsubblockkeyset`)
+///
+/// Everything above guards the keys BESIDE an assertion. One level down, inside
+/// an assertion key whose value is a JSON object, the same null form returns:
+/// a runner reads five named sub-fields out of `assertions.descriptor` and a
+/// sixth planted there upstream is compared by nothing, while every scalar
+/// sibling reddens. The `#lznullformblind` perturbation pass found exactly that
+/// in lazily-zig.
+///
+/// The cheap fix is a per-call-site field count, and it is the wrong one: it
+/// relies on each site remembering, which is the property that already failed.
+/// So the TRACKER holds an object-valued key's key set the way it already holds
+/// the block's, and a key whose value is an object may be satisfied only by:
+///
+/// - [subKey] — DESCEND. Hands back a child tracker bound to the object, which
+///   owns the drop/finish check for every key beneath it. An unconsumed
+///   sub-key then fails exactly the way an unconsumed top-level key does, and
+///   the rule applies recursively to the child's own object values.
+/// - [assertKeySet] — KEY SET. Compares the object's key set against the set
+///   the run actually produced, in BOTH directions: a fixture key nothing
+///   replayed and a replayed key the fixture omits are each a failure. Returns
+///   the object so the caller can go on to compare the values.
+/// - [assertKeyDeep] — WHOLE OBJECT. Deep-equals the fixture's object against
+///   one the run built. The key set is compared by construction, both
+///   directions, because that is what map equality is.
+/// - [excuseKey] / [proseKey] — the existing channels, unchanged. Each records
+///   a reason or a discharge claim, so a key that genuinely carries no
+///   obligation here still says so out loud.
+///
+/// Reaching for plain [assertKey] / [assertKeyWith] / [assertKeyIfPresent] on
+/// an object value is what [verifyAssertionsConsumed] now names as an
+/// "object-valued key consumed without a key-set check". That is the whole
+/// point of the rung: the NEXT object-valued key the corpus grows fails loudly
+/// at the site that forgot, instead of opening a silent hole.
 library;
 
 import 'dart:collection';
@@ -317,6 +352,193 @@ void excuseKey(Map<String, dynamic> block, String key, String reason) {
   if (tracked == null) return;
   tracked._read.add(key);
   tracked._excused[key] = reason;
+}
+
+// ---------------------------------------------------------------------------
+// Object-valued assertion keys (`#lzsubblockkeyset`)
+// ---------------------------------------------------------------------------
+
+/// Consume the object-valued [key] by DESCENDING into it: returns a CHILD
+/// tracker bound to the object, which owns the drop/finish check for every key
+/// beneath it.
+///
+/// This is design point (1) of `#lzsubblockkeyset`. Use it when the object's
+/// sub-fields are a fixed record the runner asserts one by one — a planted
+/// sixth field then fails as an unconsumed key, which is the failure the
+/// per-call-site field count was only pretending to be:
+///
+/// ```dart
+/// final descriptor = subKey(block, 'descriptor');
+/// assertKey(descriptor, 'offset', header.offset);
+/// assertKey(descriptor, 'len', header.len);
+/// ```
+///
+/// [key] itself is marked read and asserted on the PARENT, so a prose discharge
+/// naming it still resolves. [where] labels the child block in a failure
+/// message; it defaults to the parent's label plus `.key`.
+Map<String, dynamic> subKey(
+  Map<String, dynamic> block,
+  String key, [
+  String? where,
+]) {
+  final tracked = block is _TrackedAssertions ? block : _trackers[block];
+  final raw = _markAsserted(block, key);
+  if (raw is! Map) {
+    throw StateError('subKey($key): expected a JSON object, got $raw. '
+        'A scalar or array key is asserted with assertKey / assertKeyWith.');
+  }
+  tracked?._keySetChecked.add(key);
+  final label = where ??
+      (tracked == null
+          ? key
+          : (tracked.where.isEmpty ? key : '${tracked.where}.$key'));
+  return assertionsOf(raw, label);
+}
+
+/// [subKey], but a no-op returning null when the block does not carry [key].
+///
+/// The union-shaped blocks [assertKeyIfPresent] exists for carry object values
+/// too; an ABSENT key is the fixture's business.
+Map<String, dynamic>? subKeyIfPresent(
+  Map<String, dynamic> block,
+  String key, [
+  String? where,
+]) {
+  final inner = block is _TrackedAssertions ? block._inner : block;
+  if (!inner.containsKey(key)) return null;
+  return subKey(block, key, where);
+}
+
+/// Consume the object-valued [key] by comparing its KEY SET against [actual] —
+/// the set the run really produced — and return the object so the caller can go
+/// on to compare the values.
+///
+/// This is design point (2) of `#lzsubblockkeyset`. Use it when the object is a
+/// VOCABULARY or a map keyed by something the replay dispatches on: the outcome
+/// tokens a decode loop really took, the node ids a graph really exposed. The
+/// comparison is set equality in BOTH directions, so a fixture key nothing
+/// replayed and a replayed key the fixture omits are each a failure.
+///
+/// ```dart
+/// assertKeySet(block, 'outcomes', outcomesReplayed,
+///     reason: 'every outcome the clause declares must be replayed');
+/// ```
+Map<String, dynamic> assertKeySet(
+  Map<String, dynamic> block,
+  String key,
+  Iterable<String> actual, {
+  String? reason,
+}) {
+  final tracked = block is _TrackedAssertions ? block : _trackers[block];
+  final raw = _markAsserted(block, key);
+  if (raw is! Map) {
+    throw StateError('assertKeySet($key): expected a JSON object, got $raw.');
+  }
+  tracked?._keySetChecked.add(key);
+  final expected = raw.keys.map((k) => '$k').toSet();
+  expect(actual.toSet(), equals(expected),
+      reason: reason ??
+          '$key: the key set the run produced must equal the key set the '
+              'fixture declares, in both directions');
+  return raw.cast<String, dynamic>();
+}
+
+/// [assertKeySet], but a no-op when the block does not carry [key].
+Map<String, dynamic>? assertKeySetIfPresent(
+  Map<String, dynamic> block,
+  String key,
+  Iterable<String> actual, {
+  String? reason,
+}) {
+  final inner = block is _TrackedAssertions ? block._inner : block;
+  if (!inner.containsKey(key)) return null;
+  return assertKeySet(block, key, actual, reason: reason);
+}
+
+/// Consume the object-valued [key] by deep-equalling the WHOLE object against
+/// [actual].
+///
+/// The third sanctioned shape of `#lzsubblockkeyset`, and the strongest when
+/// the runner can build the whole object: map equality compares the key set by
+/// construction, in both directions, so a planted sub-field fails without the
+/// site naming anything. It is spelled separately from [assertKey] only so the
+/// tracker can tell it apart from the field-by-field reads that motivated the
+/// rung.
+void assertKeyDeep(
+  Map<String, dynamic> block,
+  String key,
+  Object? actual, [
+  String? where,
+]) {
+  final tracked = block is _TrackedAssertions ? block : _trackers[block];
+  final expected = _markAsserted(block, key);
+  if (expected is! Map) {
+    throw StateError('assertKeyDeep($key): expected a JSON object, got '
+        '$expected.');
+  }
+  tracked?._keySetChecked.add(key);
+  expect(actual, equals(expected), reason: where ?? key);
+}
+
+/// Consume the object-valued [key] by descending into it, checking every
+/// sub-key against a run-derived POPULATION, and handing each one to [check].
+///
+/// The middle ground between [subKey] and [assertKeySet], for the shape most of
+/// this corpus uses: an object keyed by a runtime identifier — a reader name, a
+/// subscriber id, a node id — where a step names only the identifiers it cares
+/// about, so set EQUALITY against the population is wrong but a free-for-all
+/// key set is the hole this rung closes. The key set must be a SUBSET of
+/// [population], and every key the object does carry is asserted, so the child
+/// tracker's finish check still catches one that is dropped.
+///
+/// [population] must be derived from the RUN — the readers a harness really
+/// primed, the ids an op stream really named. Scraping it out of the same
+/// expectation blocks it is checking makes the comparison a fixture against
+/// itself, which is the vacuity this whole file exists to remove.
+void assertKeysOf(
+  Map<String, dynamic> block,
+  String key,
+  Iterable<String> population,
+  void Function(String subKey, dynamic expected) check, {
+  String? reason,
+}) {
+  final child = subKey(block, key);
+  final known = population.toSet();
+  final unknown = child.keys.where((k) => !known.contains(k)).toList()..sort();
+  expect(unknown, isEmpty,
+      reason: reason ??
+          '$key names $unknown, which this run has nothing for. An '
+              'object-valued assertion key may only name identifiers the run '
+              'really produced');
+  for (final subKeyName in child.keys.toList()) {
+    assertKeyWith<void>(
+        child, subKeyName, (expected) => check(subKeyName, expected));
+  }
+}
+
+/// [assertKeysOf], but a no-op when the block does not carry [key].
+void assertKeysOfIfPresent(
+  Map<String, dynamic> block,
+  String key,
+  Iterable<String> population,
+  void Function(String subKey, dynamic expected) check, {
+  String? reason,
+}) {
+  final inner = block is _TrackedAssertions ? block._inner : block;
+  if (!inner.containsKey(key)) return;
+  assertKeysOf(block, key, population, check, reason: reason);
+}
+
+/// [assertKeyDeep], but a no-op when the block does not carry [key].
+void assertKeyDeepIfPresent(
+  Map<String, dynamic> block,
+  String key,
+  Object? Function() actual, [
+  String? where,
+]) {
+  final inner = block is _TrackedAssertions ? block._inner : block;
+  if (!inner.containsKey(key)) return;
+  assertKeyDeep(block, key, actual(), where);
 }
 
 dynamic _markAsserted(Map<String, dynamic> block, String key) {
@@ -560,12 +782,16 @@ void verifyAssertionsConsumed() {
   final unread = <String>[];
   final unasserted = <String>[];
   final stale = <String>[];
+  final keySetUnchecked = <String>[];
   for (final block in blocks) {
     if (block.unreadKeys.isNotEmpty) {
       unread.add('${block.label}: ${block.unreadKeys}');
     }
     if (block.unassertedKeys.isNotEmpty) {
       unasserted.add('${block.label}: ${block.unassertedKeys}');
+    }
+    if (block.keySetUncheckedKeys.isNotEmpty) {
+      keySetUnchecked.add('${block.label}: ${block.keySetUncheckedKeys}');
     }
     for (final key in block.staleExcuses) {
       stale.add('${block.label}: $key — "${block._excused[key]}"');
@@ -589,6 +815,16 @@ void verifyAssertionsConsumed() {
         'the fixture would change nothing. Route them through assertKey / '
         'assertKeyWith, or declare an excuseKey with a '
         'reason:\n  ${unasserted.join('\n  ')}');
+  }
+  if (keySetUnchecked.isNotEmpty) {
+    complaints.add('object-valued key(s) consumed without a key-set check '
+        '(`#lzsubblockkeyset`) — the fixture value is a JSON object and this '
+        'runner asserted it through a channel that never compared the '
+        'object\'s KEY SET, so a sub-field added to it upstream would be '
+        'compared by nothing while every scalar sibling reddened. Descend into '
+        'it with subKey(), compare the key set with assertKeySet(), or '
+        'deep-equal the whole object with '
+        'assertKeyDeep():\n  ${keySetUnchecked.join('\n  ')}');
   }
   if (stale.isNotEmpty) {
     complaints.add('stale excuse(s) — these keys are excused AND asserted in '
@@ -615,6 +851,10 @@ class _TrackedAssertions extends MapBase<String, dynamic> {
   final Set<String> _read = <String>{};
   final Set<String> _asserted = <String>{};
   final Map<String, String> _excused = <String, String>{};
+
+  /// Object-valued keys satisfied by a key-set check (`#lzsubblockkeyset`) —
+  /// [subKey], [assertKeySet], or [assertKeyDeep].
+  final Set<String> _keySetChecked = <String>{};
 
   /// Prose keys discharged here, each mapped to the executable keys claimed to
   /// carry it (`#lzprosekeyconvention`).
@@ -686,6 +926,23 @@ class _TrackedAssertions extends MapBase<String, dynamic> {
               !_asserted.contains(key) &&
               !_excused.containsKey(key) &&
               !_discharged.containsKey(key) &&
+              !_exempt(key))
+            key,
+      ]..sort();
+
+  /// Keys whose fixture value is a JSON OBJECT and which a runner asserted
+  /// through a channel that never compared the object's KEY SET
+  /// (`#lzsubblockkeyset`).
+  ///
+  /// Field-by-field reads out of an object value are the null form one level
+  /// down: five named sub-fields are compared, a sixth planted beside them is
+  /// compared by nothing, and the block-level tracker above sees the parent key
+  /// asserted and is satisfied.
+  List<String> get keySetUncheckedKeys => [
+        for (final key in _inner.keys)
+          if (_inner[key] is Map &&
+              _asserted.contains(key) &&
+              !_keySetChecked.contains(key) &&
               !_exempt(key))
             key,
       ]..sort();

@@ -56,6 +56,15 @@ void main() {
     final m = MembershipCell<int>(ctx, config);
     final observed = _observe(ctx, m.peerSetCell);
 
+    // Every peer the fixture's OPS name — the population `states` is bounded
+    // by (`#lzsubblockkeyset`). Derived from the op stream, never from the
+    // expectation blocks it is used to check.
+    final peers = <String>{
+      for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>())
+        if ((step['op'] as Map<String, dynamic>)['peer'] case final int peer)
+          '$peer',
+    };
+
     for (final step in (fx['steps'] as List).cast<Map<String, dynamic>>()) {
       final op = step['op'] as Map<String, dynamic>;
       final expected = assertionsOf(step['expected']);
@@ -74,12 +83,12 @@ void main() {
       }
 
       // Per-peer state.
-      assertKeyWith(expected, 'states', (v) {
-        (v as Map).forEach((peer, want) {
-          expect(m.state(int.parse(peer as String))?.label, equals(want),
-              reason: 'state of peer $peer');
-        });
-      });
+      // Keyed by peer id, bounded by the peers this fixture's ops really name
+      // (`#lzsubblockkeyset`).
+      assertKeysOf(expected, 'states', peers, (peer, want) {
+        expect(m.state(int.parse(peer))?.label, equals(want),
+            reason: 'state of peer $peer');
+      }, reason: '`states` names a peer no op in this fixture ever touched');
 
       // Alive set (the reactive `PeerSet`).
       assertKeyWith(expected, 'alive_set', (v) {

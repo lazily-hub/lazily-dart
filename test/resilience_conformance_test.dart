@@ -87,10 +87,8 @@ void main() {
       assertKeyWith(expected, 'state', (v) {
         expect(cb.state(), equals(_breakerState(v as String)), reason: 'state');
       });
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['state']),
-            reason: 'state invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'state',
+          _invalidated(ctx, observed), 'state invalidation');
     }
   });
 
@@ -105,10 +103,8 @@ void main() {
       final expected = assertionsOf(step['expected']);
       expect(r.nextDelay(), equals(step['returns']), reason: 'delay');
       assertKey(expected, 'delay', r.delay());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['delay']),
-            reason: 'delay invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'delay',
+          _invalidated(ctx, observed), 'delay invalidation');
     }
   });
 
@@ -134,10 +130,8 @@ void main() {
           fail('BulkheadCell: unknown op type `${op['type']}`');
       }
       assertKey(expected, 'in_use', b.permitsInUse());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['in_use']),
-            reason: 'in_use invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'in_use',
+          _invalidated(ctx, observed), 'in_use invalidation');
     }
   });
 
@@ -165,10 +159,8 @@ void main() {
       }
       expect(edge, equals(step['returns']), reason: 'edge');
       assertKey(expected, 'is_timed_out', t.isTimedOut());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['is_timed_out']),
-            reason: 'is_timed_out invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'is_timed_out',
+          _invalidated(ctx, observed), 'is_timed_out invalidation');
     }
   });
 }

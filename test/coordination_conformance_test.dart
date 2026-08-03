@@ -75,10 +75,8 @@ void main() {
       assertKey(expected, 'holder', lease.holder(now));
       assertKey(expected, 'held', lease.isHeld(now));
       assertKey(expected, 'fence', lease.fence());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['holder']),
-            reason: 'holder invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'holder',
+          _invalidated(ctx, observed), 'holder invalidation');
     }
   });
 
@@ -120,11 +118,8 @@ void main() {
         expect(role, equals(wantRole));
       });
       assertKey(expected, 'current_leader', leader.currentLeader(now));
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(
-            _invalidated(ctx, observed), equals((v as Map)['current_leader']),
-            reason: 'current_leader invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'current_leader',
+          _invalidated(ctx, observed), 'current_leader invalidation');
     }
   });
 
@@ -156,10 +151,8 @@ void main() {
       }
       assertKey(expected, 'is_locked', lock.isLocked(now));
       assertKey(expected, 'fence', lock.fence());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['is_locked']),
-            reason: 'is_locked invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'is_locked',
+          _invalidated(ctx, observed), 'is_locked invalidation');
     }
   });
 
@@ -185,11 +178,8 @@ void main() {
           fail('SemaphoreCell: unknown op type `${op['type']}`');
       }
       assertKey(expected, 'permits_available', sem.permitsAvailable());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed),
-            equals((v as Map)['permits_available']),
-            reason: 'permits_available invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'permits_available',
+          _invalidated(ctx, observed), 'permits_available invalidation');
     }
   });
 
@@ -206,10 +196,8 @@ void main() {
       expect(q.arrive(op['peer'] as int), equals(step['returns']));
       assertKey(expected, 'votes', q.count());
       assertKey(expected, 'is_open', q.isOpen());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['is_open']),
-            reason: 'is_open invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'is_open',
+          _invalidated(ctx, observed), 'is_open invalidation');
     }
   });
 }

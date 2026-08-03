@@ -49,10 +49,8 @@ void _check(
     Context ctx, Slot observed, Map<String, dynamic> step, Object? out) {
   final expected = assertionsOf(step['expected']);
   assertKey(expected, 'output', out);
-  assertKeyWith(expected, 'invalidates', (v) {
-    expect(_invalidated(ctx, observed), equals((v as Map)['output']),
-        reason: 'invalidation');
-  });
+  assertKey(subKey(expected, 'invalidates'), 'output',
+      _invalidated(ctx, observed), 'invalidation');
 }
 
 void main() {

@@ -260,12 +260,9 @@ int _replayQueue(_Flavor flavor, String name) {
       expect(returns, step['returns'],
           reason: '${flavor.label} $name step $i returns');
     }
-    assertKeyWith(expected, 'invalidates', (v) {
-      for (final entry in (v as Map).entries) {
-        expect(harness.warm(entry.key as String), !(entry.value as bool),
-            reason: '${flavor.label} $name step $i '
-                'invalidates.${entry.key}');
-      }
+    assertKeysOf(expected, 'invalidates', harness.readers.keys, (reader, want) {
+      expect(harness.warm(reader), !(want as bool),
+          reason: '${flavor.label} $name step $i invalidates.$reader');
     });
     assertKeyIfPresent(expected, 'elements', (v) {
       expect(harness.queue.elements(), v,
@@ -430,10 +427,6 @@ Set<String> _topicIds(Map<String, dynamic> fixture) {
     final op = step['op'] as Map<String, dynamic>;
     final subscriber = op['subscriber'];
     if (subscriber is String) ids.add(subscriber);
-    final expected = assertionsOf(step['expected']);
-    addKeys(expected['subscriptions']);
-    addKeys(expected['reads']);
-    addKeys(expected['invalidates']);
   }
   return ids;
 }
@@ -456,12 +449,9 @@ int _replayTopic(_Flavor flavor, String name) {
       expect(returns, step['returns'],
           reason: '${flavor.label} $name step $i returns');
     }
-    assertKeyWith(expected, 'invalidates', (v) {
-      for (final entry in (v as Map).entries) {
-        expect(harness.warm(entry.key as String), !(entry.value as bool),
-            reason: '${flavor.label} $name step $i '
-                'invalidates.${entry.key}');
-      }
+    assertKeysOf(expected, 'invalidates', ids, (id, want) {
+      expect(harness.warm(id), !(want as bool),
+          reason: '${flavor.label} $name step $i invalidates.$id');
     });
     assertKeyWith(expected, 'base_offset', (v) {
       expect(harness.topic.baseOffset, v,
@@ -472,31 +462,44 @@ int _replayTopic(_Flavor flavor, String name) {
           reason: '${flavor.label} $name step $i elements');
     });
 
-    assertKeyWith(expected, 'subscriptions', (v) {
-      final expectedSubscriptions = (v as Map).cast<String, dynamic>();
-      for (final id in ids) {
-        final actual = harness.topic.subscription(id);
-        final raw = expectedSubscriptions[id];
-        if (raw == null) {
-          expect(actual, isNull,
-              reason: '${flavor.label} $name step $i subscription $id');
-          continue;
-        }
-        final want = raw as Map<String, dynamic>;
-        expect(actual, isNotNull);
-        expect(actual.cursor, want['cursor']);
-        expect(actual.connected, want['connected']);
-        final expectedDurability = _durability(want['durability']);
-        expect(actual.durability, expectedDurability,
-            reason: '${flavor.label} $name step $i durability $id');
+    // A subscription's own record is descended into too (`#lzsubblockkeyset`):
+    // reading `cursor` / `connected` / `durability` by name off a raw map is
+    // the same field-by-field shape one level further down, and a fourth field
+    // added to the record upstream would be compared by nothing.
+    final wantSubscriptions =
+        subKey(expected, 'subscriptions', '$name step $i subscriptions');
+    final unknownSubscribers = wantSubscriptions.keys
+        .where((id) => !ids.contains(id))
+        .toList()
+      ..sort();
+    expect(unknownSubscribers, isEmpty,
+        reason: '${flavor.label} $name step $i: `subscriptions` names '
+            '$unknownSubscribers, which no initial subscription and no op in '
+            'this fixture ever introduced');
+    for (final id in ids) {
+      final actual = harness.topic.subscription(id);
+      if (!wantSubscriptions.keys.contains(id)) {
+        expect(actual, isNull,
+            reason: '${flavor.label} $name step $i subscription $id');
+        continue;
       }
-    });
+      final want =
+          subKey(wantSubscriptions, id, '$name step $i subscription $id');
+      expect(actual, isNotNull);
+      assertKey(want, 'cursor', actual.cursor,
+          '${flavor.label} $name step $i cursor $id');
+      assertKey(want, 'connected', actual.connected,
+          '${flavor.label} $name step $i connected $id');
+      assertKeyWith<void>(
+          want,
+          'durability',
+          (v) => expect(actual.durability, _durability(v),
+              reason: '${flavor.label} $name step $i durability $id'));
+    }
 
-    assertKeyWith(expected, 'reads', (v) {
-      for (final entry in (v as Map).entries) {
-        expect(harness.topic.readStream(entry.key as String), entry.value,
-            reason: '${flavor.label} $name step $i reads.${entry.key}');
-      }
+    assertKeysOf(expected, 'reads', ids, (id, want) {
+      expect(harness.topic.readStream(id), want,
+          reason: '${flavor.label} $name step $i reads.$id');
     });
   }
   return steps.length;
@@ -668,12 +671,9 @@ int _replayWork(_Flavor flavor, String name) {
       expect(returns, step['returns'],
           reason: '${flavor.label} $name step $i returns');
     }
-    assertKeyWith(expected, 'invalidates', (v) {
-      for (final entry in (v as Map).entries) {
-        expect(harness.warm(entry.key as String), !(entry.value as bool),
-            reason: '${flavor.label} $name step $i '
-                'invalidates.${entry.key}');
-      }
+    assertKeysOf(expected, 'invalidates', harness.readers.keys, (reader, want) {
+      expect(harness.warm(reader), !(want as bool),
+          reason: '${flavor.label} $name step $i invalidates.$reader');
     });
     assertKeyWith(expected, 'pending', (v) {
       expect(_pending(harness.queue), v,
@@ -688,13 +688,11 @@ int _replayWork(_Flavor flavor, String name) {
           reason: '${flavor.label} $name step $i dead_letters');
     });
 
-    assertKeyWith(expected, 'reads', (v) {
-      final reads = v as Map;
-      expect(harness.queue.pendingLen(), reads['pending_len']);
-      expect(harness.queue.isEmpty(), reads['is_empty']);
-      expect(harness.queue.inFlightLen(), reads['in_flight_len']);
-      expect(harness.queue.deadLetterLen(), reads['dead_letter_len']);
-    });
+    final reads = subKey(expected, 'reads', '$name step $i reads');
+    assertKey(reads, 'pending_len', harness.queue.pendingLen());
+    assertKey(reads, 'is_empty', harness.queue.isEmpty());
+    assertKey(reads, 'in_flight_len', harness.queue.inFlightLen());
+    assertKey(reads, 'dead_letter_len', harness.queue.deadLetterLen());
   }
   return steps.length;
 }

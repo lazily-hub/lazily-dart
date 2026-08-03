@@ -451,7 +451,15 @@ void main() {
       }
       assertKey(ex, 'final_last_epoch', coord.lastEpoch);
       assertKey(ex, 'resync_requests_emitted', requests);
-      assertKeyWith(ex, 'converged_nodes', (v) => expect(state, _stateOf(v)));
+      // Key set first (`#lzsubblockkeyset`): the node set this receiver really
+      // holds, compared both directions against the node set the fixture
+      // declares. The equality below then covers the bytes.
+      expect(
+          state,
+          _stateOf(assertKeySet(
+              ex, 'converged_nodes', state.keys.map((node) => '$node'),
+              reason: 'the node set this receiver converged on must equal the '
+                  'node set the fixture declares')));
       assertKey(ex, 'equals_no_drop_receiver', _sameState(state, sender),
           'gap recovery is state-equivalent, not lossy');
       expect(_sameState(deltasOnly, sender), isFalse,
@@ -498,7 +506,12 @@ void main() {
           expect(coord.lastEpoch, frame['last_epoch_after']);
         }
         assertKey(ex, 'final_last_epoch', coord.lastEpoch);
-        assertKeyWith(ex, 'state_after', (v) => expect(state, _stateOf(v)));
+        expect(
+            state,
+            _stateOf(assertKeySet(
+                ex, 'state_after', state.keys.map((node) => '$node'),
+                reason: '$name: the node set after the fold must equal the '
+                    'node set the fixture declares')));
         assertKey(ex, 'net_effect_unchanged', _sameState(state, before),
             'at-least-once delivery, exactly-once effect ($name)');
       }

@@ -552,17 +552,18 @@ void _materialize(_IngressModel model, List<String> keys) {
   model.schedule();
 }
 
+/// Every scope key the fixture's OPS name.
+///
+/// Derived from the op stream alone (`#lzsubblockkeyset`). It used to also
+/// scrape `expected.scopes`, which made this population the very expectation
+/// blocks it is used to bound: a scope key planted in `expected.scopes` added
+/// itself to the probed set and then found itself there, and the check passed.
 List<String> _keysOf(Map<String, dynamic> fixture) {
   final keys = <String>[];
   for (final raw in fixture['steps'] as List) {
     final step = raw as Map<String, dynamic>;
     final key = (step['op'] as Map<String, dynamic>)['key'];
     if (key is String && !keys.contains(key)) keys.add(key);
-    final scopes =
-        assertionsOf(step['expected'])['scopes'] as Map<String, dynamic>;
-    for (final scopeKey in scopes.keys) {
-      if (!keys.contains(scopeKey)) keys.add(scopeKey);
-    }
   }
   return keys;
 }
@@ -651,7 +652,7 @@ int _replay(_Flavor flavor, String name) {
     }
 
     final after = _snapshot(model, keys);
-    _assertState(model, step, where);
+    _assertState(model, step, keys, where);
     _assertInvalidation(step, before, after, keys, where);
     _materialize(model, keys);
   }
@@ -659,66 +660,77 @@ int _replay(_Flavor flavor, String name) {
   return steps.length;
 }
 
-void _assertState(
-    _IngressModel model, Map<String, dynamic> step, String where) {
+void _assertState(_IngressModel model, Map<String, dynamic> step,
+    List<String> keys, String where) {
   final expected = assertionsOf(step['expected']);
-  assertKeyWith(expected, 'scopes', (v) {
-    final scopes = (v as Map).cast<String, dynamic>();
-    for (final entry in scopes.entries) {
-      final key = entry.key;
-      final want = entry.value as Map<String, dynamic>;
-      final view = model.view(key);
-      expect(view, isNotNull, reason: '$where: scope $key absent');
-      expect(view!.lifecycle, _lifecycle(want['lifecycle'] as String),
-          reason: '$where: $key lifecycle');
-      expect(view.generation, want['generation'],
-          reason: '$where: $key generation');
-      expect(view.deliveredThrough, want['delivered_through'],
-          reason: '$where: $key watermark');
-      expect(view.buffered, want['buffered'], reason: '$where: $key buffered');
-      expect(view.consecutiveErrors, want['consecutive_errors'],
-          reason: '$where: $key consecutive errors');
-      expect(model.value(key), want['window'], reason: '$where: $key window');
-      expect(model.readiness(key), _readiness(want['readiness'] as String),
-          reason: '$where: $key readiness');
+  // Three nesting levels, each DESCENDED into (`#lzsubblockkeyset`): the
+  // `scopes` map keyed by scope, the per-scope record, and the `authority` /
+  // `retry` records inside it. Every one of them used to be read by naming its
+  // fields, so a field added at any level was compared by nothing.
+  final scopes = subKey(expected, 'scopes', '$where scopes');
+  final unknownScopes = scopes.keys.where((key) => !keys.contains(key)).toList()
+    ..sort();
+  expect(unknownScopes, isEmpty,
+      reason: '$where: `scopes` names $unknownScopes, which no op in this '
+          'fixture ever opened');
+  for (final key in scopes.keys.toList()) {
+    final want = subKey(scopes, key, '$where scope $key');
+    final view = model.view(key);
+    expect(view, isNotNull, reason: '$where: scope $key absent');
+    assertKeyWith<void>(
+        want,
+        'lifecycle',
+        (v) => expect(view!.lifecycle, _lifecycle(v as String),
+            reason: '$where: $key lifecycle'));
+    assertKey(want, 'generation', view!.generation, '$where: $key generation');
+    assertKey(want, 'delivered_through', view.deliveredThrough,
+        '$where: $key watermark');
+    assertKey(want, 'buffered', view.buffered, '$where: $key buffered');
+    assertKey(want, 'consecutive_errors', view.consecutiveErrors,
+        '$where: $key consecutive errors');
+    assertKey(want, 'window', model.value(key), '$where: $key window');
+    assertKeyWith<void>(
+        want,
+        'readiness',
+        (v) => expect(model.readiness(key), _readiness(v as String),
+            reason: '$where: $key readiness'));
 
-      final wantAuthority = want['authority'] as Map<String, dynamic>?;
-      expect(
-        model.authority(key),
-        wantAuthority == null
-            ? isNull
-            : IngressAuthority(
-                generation: wantAuthority['generation'] as int,
-                deliveredThrough: wantAuthority['delivered_through'] as int?,
-                stampedAt: wantAuthority['stamped_at'] as int,
-              ),
-        reason: '$where: $key authority',
-      );
-
-      final wantRetry = want['retry'] as Map<String, dynamic>?;
-      expect(
-        model.retry(key),
-        wantRetry == null
-            ? isNull
-            : IngressRetry(
-                attempt: wantRetry['attempt'] as int,
-                backoff: wantRetry['backoff'] as int,
-                resumeFrom: wantRetry['resume_from'] as int,
-              ),
-        reason: '$where: $key retry',
-      );
+    if (want['authority'] == null) {
+      assertKey(
+          want, 'authority', model.authority(key), '$where: $key authority');
+    } else {
+      final wantAuthority = subKey(want, 'authority', '$where $key authority');
+      final authority = model.authority(key);
+      expect(authority, isNotNull, reason: '$where: $key authority');
+      assertKey(wantAuthority, 'generation', authority!.generation,
+          '$where: $key authority generation');
+      assertKey(wantAuthority, 'delivered_through', authority.deliveredThrough,
+          '$where: $key authority watermark');
+      assertKey(wantAuthority, 'stamped_at', authority.stampedAt,
+          '$where: $key authority stamp');
     }
-  });
 
-  assertKeyWith(expected, 'receipts', (v) {
-    final receipts = v as Map;
-    expect(model.acceptedLen(), receipts['accepted'],
-        reason: '$where: accepted receipts');
-    expect(model.droppedLen(), receipts['dropped'],
-        reason: '$where: dropped receipts');
-    expect(model.errorsLen(), receipts['error'],
-        reason: '$where: error receipts');
-  });
+    if (want['retry'] == null) {
+      assertKey(want, 'retry', model.retry(key), '$where: $key retry');
+    } else {
+      final wantRetry = subKey(want, 'retry', '$where $key retry');
+      final retry = model.retry(key);
+      expect(retry, isNotNull, reason: '$where: $key retry');
+      assertKey(
+          wantRetry, 'attempt', retry!.attempt, '$where: $key retry attempt');
+      assertKey(
+          wantRetry, 'backoff', retry.backoff, '$where: $key retry backoff');
+      assertKey(wantRetry, 'resume_from', retry.resumeFrom,
+          '$where: $key retry resume');
+    }
+  }
+
+  final receipts = subKey(expected, 'receipts', '$where receipts');
+  assertKey(
+      receipts, 'accepted', model.acceptedLen(), '$where: accepted receipts');
+  assertKey(
+      receipts, 'dropped', model.droppedLen(), '$where: dropped receipts');
+  assertKey(receipts, 'error', model.errorsLen(), '$where: error receipts');
 }
 
 /// Assert `invalidates` in both directions. `true` means the reader's cache went
@@ -732,32 +744,37 @@ void _assertInvalidation(
 ) {
   const kinds = ['value', 'readiness', 'authority', 'retry'];
   const channels = ['accepted', 'dropped', 'error'];
-  assertKeyWith(assertionsOf(step['expected']), 'invalidates', (v) {
-    final want = v as Map;
-    final wantScopes = want['scopes'] as Map<String, dynamic>;
-    for (final entry in wantScopes.entries) {
-      final key = entry.key;
-      expect(keys, contains(key),
-          reason: '$where: $key was never probed; the expectation is vacuous');
-      final wantScope = entry.value as Map<String, dynamic>;
-      for (var slot = 0; slot < kinds.length; slot++) {
-        final expected = wantScope[kinds[slot]] as bool;
-        final invalidated =
-            before.scopes[key]![slot] && !after.scopes[key]![slot];
-        expect(invalidated, expected,
-            reason: '$where: $key.${kinds[slot]} invalidation '
-                '(was valid=${before.scopes[key]![slot]}, '
-                'now valid=${after.scopes[key]![slot]})');
-      }
+  // Descended at all three levels (`#lzsubblockkeyset`), for the same reason
+  // `_assertState` is: `invalidates`, the per-scope matrix, and the receipts
+  // matrix were each read by naming their fields.
+  final want = subKey(
+      assertionsOf(step['expected']), 'invalidates', '$where invalidates');
+  final wantScopes = subKey(want, 'scopes', '$where invalidates.scopes');
+  final unknownScopes =
+      wantScopes.keys.where((key) => !keys.contains(key)).toList()..sort();
+  expect(unknownScopes, isEmpty,
+      reason: '$where: $unknownScopes were never probed; the expectation is '
+          'vacuous');
+  for (final key in wantScopes.keys.toList()) {
+    final wantScope = subKey(wantScopes, key, '$where invalidates.scopes.$key');
+    for (var slot = 0; slot < kinds.length; slot++) {
+      final invalidated =
+          before.scopes[key]![slot] && !after.scopes[key]![slot];
+      assertKey(
+          wantScope,
+          kinds[slot],
+          invalidated,
+          '$where: $key.${kinds[slot]} invalidation '
+          '(was valid=${before.scopes[key]![slot]}, '
+          'now valid=${after.scopes[key]![slot]})');
     }
-    final wantReceipts = want['receipts'] as Map<String, dynamic>;
-    for (var slot = 0; slot < channels.length; slot++) {
-      final expected = wantReceipts[channels[slot]] as bool;
-      final invalidated = before.receipts[slot] && !after.receipts[slot];
-      expect(invalidated, expected,
-          reason: '$where: receipts.${channels[slot]} invalidation');
-    }
-  });
+  }
+  final wantReceipts = subKey(want, 'receipts', '$where invalidates.receipts');
+  for (var slot = 0; slot < channels.length; slot++) {
+    final invalidated = before.receipts[slot] && !after.receipts[slot];
+    assertKey(wantReceipts, channels[slot], invalidated,
+        '$where: receipts.${channels[slot]} invalidation');
+  }
 }
 
 // ---------------------------------------------------------------------------

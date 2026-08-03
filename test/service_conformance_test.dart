@@ -67,10 +67,8 @@ void main() {
       h.set(op['name'] as String, op['up'] as bool, op['critical'] as bool);
       assertKeyWith(expected, 'health',
           (v) => expect(h.health(), equals(_health(v as String))));
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['health']),
-            reason: 'health invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'health',
+          _invalidated(ctx, observed), 'health invalidation');
     }
   });
 
@@ -85,10 +83,8 @@ void main() {
       final expected = assertionsOf(step['expected']);
       r.set(op['name'] as String, op['ready'] as bool);
       assertKey(expected, 'ready', r.ready());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['ready']),
-            reason: 'ready invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'ready',
+          _invalidated(ctx, observed), 'ready invalidation');
     }
   });
 
@@ -117,13 +113,9 @@ void main() {
         default:
           fail('DiscoveryCell: unknown op type `${op['type']}`');
       }
-      assertKeyWith(expected, 'discovery', (v) {
-        expect(d.discovery(), equals((v as Map).cast<String, String>()));
-      });
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['discovery']),
-            reason: 'discovery invalidation');
-      });
+      assertKeyDeep(expected, 'discovery', d.discovery());
+      assertKey(subKey(expected, 'invalidates'), 'discovery',
+          _invalidated(ctx, observed), 'discovery invalidation');
     }
   });
 
@@ -147,13 +139,9 @@ void main() {
         default:
           fail('ServiceRegistry: unknown op type `${op['type']}`');
       }
-      assertKeyWith(expected, 'projection', (v) {
-        expect(reg.projection(), equals((v as Map).cast<String, String>()));
-      });
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['projection']),
-            reason: 'projection invalidation');
-      });
+      assertKeyDeep(expected, 'projection', reg.projection());
+      assertKey(subKey(expected, 'invalidates'), 'projection',
+          _invalidated(ctx, observed), 'projection invalidation');
     }
   });
 }

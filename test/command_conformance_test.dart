@@ -69,10 +69,16 @@ CommandApplyStatus foldFrame(
 
 void _assertProjection(
     CommandProjection projection, Map<String, dynamic> expectSpec) {
-  assertKeyWith(expectSpec, 'projection', (v) {
-    expect(projection.toImage(), CommandProjectionImage.fromWire(v),
-        reason: 'projection image mismatch');
-  });
+  // Key set first (`#lzsubblockkeyset`), against the wire form the LIBRARY
+  // produces. `CommandProjectionImage.fromWire` reads two named fields and
+  // ignores the rest, so a third field added to the fixture's projection image
+  // upstream would be parsed away and compared by nothing.
+  final image = projection.toImage();
+  final want = assertKeySet(expectSpec, 'projection', image.toWire().keys,
+      reason: 'the projection image the library emits must carry exactly the '
+          'fields the fixture declares');
+  expect(image, CommandProjectionImage.fromWire(want),
+      reason: 'projection image mismatch');
 }
 
 /// A canonical submit frame builder (mirrors the kt `submitFixture`).
@@ -229,9 +235,12 @@ void main() {
         'the frame index at which the fold raised a terminal conflict');
     assertKey(expectSpec, 'conflict', p.hasConflict(commandId),
         'fixture declares whether the fold ends in conflict');
-    assertKeyWith(expectSpec, 'projection_before_conflict', (v) {
-      expect(p.toImage(), CommandProjectionImage.fromWire(v));
-    });
+    final imageBefore = p.toImage();
+    final wantBefore = assertKeySet(
+        expectSpec, 'projection_before_conflict', imageBefore.toWire().keys,
+        reason: 'the projection image the library emits must carry exactly '
+            'the fields the fixture declares');
+    expect(imageBefore, CommandProjectionImage.fromWire(wantBefore));
   });
 
   test('cancel preempts nonterminal scenarios', () {
@@ -285,25 +294,38 @@ void main() {
   test('rpc call waits for terminal', () {
     final fx = _load('rpc_call_waits_for_terminal.json');
     final expectSpec = assertionsOf(fx['expect']);
-    assertKeyWith(expectSpec, 'rpc', (v) {
-      final rpc = v as Map<String, dynamic>;
-      final commandId = rpc['command_id'] as String;
-      final resolvesAt = rpc['resolves_after_frame_index'] as int;
-      final unresolved =
-          (rpc['unresolved_after_frame_indices'] as List).cast<int>().toList();
+    // DESCENDED into (`#lzsubblockkeyset`): three named sub-fields were read
+    // off a raw map, so a fourth added upstream drove nothing.
+    final rpc = subKey(expectSpec, 'rpc');
+    final commandId =
+        assertKeyWith<String>(rpc, 'command_id', (v) => v as String);
+    final resolvesAt =
+        assertKeyWith<int>(rpc, 'resolves_after_frame_index', (v) => v as int);
+    final unresolved = assertKeyWith<List<int>>(
+        rpc, 'unresolved_after_frame_indices', (v) => (v as List).cast<int>());
+    {
       final p = CommandProjection();
       final frames = _frames(fx);
       for (var i = 0; i < frames.length; i++) {
         foldFrame(p, frames[i]);
-        final resolved = p.terminalFor(commandId) != null;
+        final terminal = p.terminalFor(commandId);
         if (unresolved.contains(i)) {
-          expect(resolved, isFalse, reason: 'frame $i must not resolve');
+          expect(terminal, isNull, reason: 'frame $i must not resolve');
         }
         if (i == resolvesAt) {
-          expect(resolved, isTrue, reason: 'frame $i must resolve');
+          expect(terminal, isNotNull, reason: 'frame $i must resolve');
+          // The descend found this key unconsumed (`#lzsubblockkeyset`): the
+          // fixture names WHICH terminal status the call resolves to, and this
+          // runner only checked that it resolved at all — an rpc that resolved
+          // to `rejected` passed.
+          assertKeyWith<void>(
+              rpc,
+              'terminal_status',
+              (v) => expect(terminal!.status.wire, v,
+                  reason: 'frame $i terminal status'));
         }
       }
-    });
+    }
     final p = CommandProjection();
     for (final frame in _frames(fx)) {
       foldFrame(p, frame);

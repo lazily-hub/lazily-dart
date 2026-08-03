@@ -67,10 +67,8 @@ void main() {
         expect(timer.value(), equals(wantValue));
       });
       assertKey(expected, 'next_fire', timer.nextFire());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['fired']),
-            reason: 'invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'fired',
+          _invalidated(ctx, observed), 'invalidation');
     }
   });
 
@@ -88,10 +86,8 @@ void main() {
           reason: 'fire edge');
       assertKey(expected, 'count', iv.count());
       assertKey(expected, 'next_fire', iv.nextFire());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['count']),
-            reason: 'invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'count',
+          _invalidated(ctx, observed), 'invalidation');
     }
   });
 
@@ -113,10 +109,8 @@ void main() {
           reason: 'fire edge');
       assertKey(expected, 'count', cron.count());
       assertKey(expected, 'next_fire', cron.nextFire());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['count']),
-            reason: 'invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'count',
+          _invalidated(ctx, observed), 'invalidation');
     }
   });
 
@@ -146,10 +140,8 @@ void main() {
         expect(state.state, equals(wantLabel));
       });
       assertKey(expected, 'value', state.value);
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['state']),
-            reason: 'invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'state',
+          _invalidated(ctx, observed), 'invalidation');
     }
   });
 }

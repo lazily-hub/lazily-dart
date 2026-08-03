@@ -259,6 +259,14 @@ abstract class _Model {
 
   _Kind kindOf(String id);
 
+  /// Every node id this replay has actually created.
+  ///
+  /// The population an object-valued assertion key is bounded by
+  /// (`#lzsubblockkeyset`): `final_state.dependents_of` and friends are maps
+  /// keyed by node id, and a key naming an id no op ever defined asserted
+  /// nothing.
+  Iterable<String> get nodeIds;
+
   bool isEffectActive(String id);
 
   int dependentsOf(String id);
@@ -424,6 +432,9 @@ class _SyncModel implements _Model {
     // and disposing it again must be a no-op.
     ctx.disposeNode(nodes[id]!);
   }
+
+  @override
+  Iterable<String> get nodeIds => nodes.keys;
 
   @override
   _Kind kindOf(String id) {
@@ -602,6 +613,9 @@ class _AsyncModel implements _Model {
 
   @override
   Future<void> disposeId(String id) => ctx.disposeNode(nodes[id]!);
+
+  @override
+  Iterable<String> get nodeIds => nodes.keys;
 
   @override
   _Kind kindOf(String id) {
@@ -947,42 +961,50 @@ Future<_Report> _replay(
   // tracked in its own right and every key inside it is asserted below, so the
   // parent key is satisfied by handing its value through rather than by a bare
   // read.
-  final finalState =
-      assertionsOfOrNull(assertKeyWith(tail, 'final_state', (v) => v));
+  //
+  // Each of the three maps below is keyed by node id and was read whole off a
+  // raw map, so an id the replay never defined named nothing and was compared
+  // against nothing (`#lzsubblockkeyset`). They go through [assertKeysOf] now,
+  // bounded by `model.nodeIds`.
+  final finalState = subKeyIfPresent(tail, 'final_state');
   if (finalState != null) {
-    final degrees = assertKeyWith(finalState, 'dependents_of',
-        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
-    for (final id in degrees.keys.toList()..sort()) {
+    // Sorted so evaluation order stays deterministic and matches the reference
+    // runner's — `dependents_of` before `read`, as in the per-step loop.
+    assertKeysOf(finalState, 'dependents_of', model.nodeIds, (id, want) {
       final got = model.dependentsOf(id);
-      check('final.dependents_of.$id', got, degrees[id]);
+      check('final.dependents_of.$id', got, want);
       report.observation.degrees[id] = got;
-    }
-    final readable = assertKeyWith(finalState, 'readable',
-        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
-    for (final id in readable.keys.toList()..sort()) {
+    }, reason: 'final_state.dependents_of names an id this replay never made');
+    for (final id in _sortedKeys(finalState, 'readable')) {
       final ok = await alive(id);
-      check('final.readable.$id', ok, readable[id]);
       report.observation.readable[id] = ok;
     }
-    final reads = assertKeyWith(
-        finalState, 'read', (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
-    for (final id in reads.keys.toList()..sort()) {
+    assertKeysOf(finalState, 'readable', model.nodeIds, (id, want) {
+      check('final.readable.$id', report.observation.readable[id], want);
+    }, reason: 'final_state.readable names an id this replay never made');
+    for (final id in _sortedKeys(finalState, 'read')) {
       final (value, err) = await readId(id);
-      final got = err ? 'read_after_dispose' : value;
-      check('final.read.$id', got, reads[id]);
-      report.observation.reads[id] = got;
+      report.observation.reads[id] = err ? 'read_after_dispose' : value;
     }
+    assertKeysOf(finalState, 'read', model.nodeIds, (id, want) {
+      check('final.read.$id', report.observation.reads[id], want);
+    }, reason: 'final_state.read names an id this replay never made');
   }
 
-  final publish =
-      assertionsOfOrNull(assertKeyWith(tail, 'after_publish', (v) => v));
-  final publishOp = publish == null
-      ? null
-      : assertKeyWith(
-          publish, 'op', (v) => (v as Map?)?.cast<String, dynamic>());
+  final publish = subKeyIfPresent(tail, 'after_publish');
+  final publishOp = publish == null ? null : subKeyIfPresent(publish, 'op');
   if (publish != null && publishOp != null) {
     final before = model.runLog.length;
-    await model.setCell(publishOp['id'] as String, publishOp['value'] as num);
+    // The descend found `type` unconsumed (`#lzsubblockkeyset`): this runner
+    // assumed a `set_cell` and would have replayed anything else as one.
+    assertKeyWith<void>(
+        publishOp,
+        'type',
+        (v) => expect(v, 'set_cell',
+            reason: 'after_publish.op: this runner only replays set_cell'));
+    await model.setCell(
+        assertKeyWith<String>(publishOp, 'id', (v) => v as String),
+        assertKeyWith<num>(publishOp, 'value', (v) => v as num));
     await model.settle();
     report.observation.afterPublishObserved = model.runLog.sublist(before);
     assertKeyWith(publish, 'observed_by', (v) {
@@ -991,23 +1013,34 @@ Future<_Report> _replay(
     });
     // Order matches the reference runner: reads (which re-register edges in a
     // lazy binding) precede the degree assertions that count them.
-    final reads = assertKeyWith(
-        publish, 'read', (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
-    for (final id in reads.keys.toList()..sort()) {
+    for (final id in _sortedKeys(publish, 'read')) {
       final (value, err) = await readId(id);
-      final got = err ? 'read_after_dispose' : value;
-      check('after_publish.read.$id', got, reads[id]);
-      report.observation.afterPublishReads[id] = got;
+      report.observation.afterPublishReads[id] =
+          err ? 'read_after_dispose' : value;
     }
-    final degrees = assertKeyWith(publish, 'dependents_of',
-        (v) => (v as Map?)?.cast<String, dynamic>() ?? {});
-    for (final id in degrees.keys.toList()..sort()) {
-      check('after_publish.dependents_of.$id', model.dependentsOf(id),
-          degrees[id]);
-    }
+    assertKeysOf(publish, 'read', model.nodeIds, (id, want) {
+      check('after_publish.read.$id', report.observation.afterPublishReads[id],
+          want);
+    }, reason: 'after_publish.read names an id this replay never made');
+    assertKeysOf(publish, 'dependents_of', model.nodeIds, (id, want) {
+      check('after_publish.dependents_of.$id', model.dependentsOf(id), want);
+    },
+        reason:
+            'after_publish.dependents_of names an id this replay never made');
   }
 
   return report;
+}
+
+/// The sub-keys of an object-valued assertion key, sorted.
+///
+/// Read WITHOUT marking anything asserted: the observation loops below have to
+/// visit the ids in a deterministic order before [assertKeysOf] compares them,
+/// and asking for the key names is not consuming the key.
+List<String> _sortedKeys(Map<String, dynamic> block, String key) {
+  final raw = block.keys.contains(key) ? block[key] : null;
+  if (raw is! Map) return const <String>[];
+  return raw.keys.map((k) => '$k').toList()..sort();
 }
 
 Future<void> _churn(_Model model, Map<String, dynamic> op) async {

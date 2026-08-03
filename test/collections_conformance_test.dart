@@ -137,11 +137,15 @@ void _runStepsFixture(String name) {
     _applyOp(ctx, map, op);
 
     // Assert invalidation, all three readers, against the fixture's block.
-    assertKeyWith(expected, 'invalidates', (v) {
-      final invalidates = v as Map;
+    // DESCENDED into rather than read field by field (`#lzsubblockkeyset`):
+    // `invalidates` names three reader projections, and reading exactly those
+    // three off a raw map left a fourth added upstream compared by nothing.
+    // The child tracker now owns them, so an unrecognised projection fails as
+    // an unconsumed key.
+    final invalidates = subKey(expected, 'invalidates', 'step $i invalidates');
+    assertKeyWith<void>(invalidates, 'value', (v) {
       // Value readers: only check survivor keys.
-      final expectedValueInvalidations =
-          (invalidates['value'] as List?)?.cast<String>() ?? const [];
+      final expectedValueInvalidations = (v as List).cast<String>();
       final survivors = map.keys();
       for (final entry in valueReaders.entries) {
         final k = entry.key;
@@ -152,18 +156,16 @@ void _runStepsFixture(String name) {
             reason: '$name step $i `${op['type']}` value reader `$k`: '
                 'expected invalidated=$invalidated');
       }
-
-      // Membership reader.
-      final membershipInvalidated = invalidates['membership'] == true;
-      expect(_isWarm(membershipReader, ctx), !membershipInvalidated,
+    });
+    assertKeyWith<void>(invalidates, 'membership', (v) {
+      expect(_isWarm(membershipReader, ctx), v != true,
           reason: '$name step $i `${op['type']}` membership reader: '
-              'expected invalidated=$membershipInvalidated');
-
-      // Order reader.
-      final orderInvalidated = invalidates['order'] == true;
-      expect(_isWarm(orderReader, ctx), !orderInvalidated,
+              'expected invalidated=$v');
+    });
+    assertKeyWith<void>(invalidates, 'order', (v) {
+      expect(_isWarm(orderReader, ctx), v != true,
           reason: '$name step $i `${op['type']}` order reader: '
-              'expected invalidated=$orderInvalidated');
+              'expected invalidated=$v');
     });
 
     // Assert resulting state: order, membership (set-equal), values.
@@ -177,24 +179,23 @@ void _runStepsFixture(String name) {
           reason: '$name step $i `${op['type']}` membership');
     });
 
-    assertKeyIfPresent(expected, 'values', (v) {
-      for (final e in (v as Map).entries) {
-        expect(map.get(e.key as String), e.value,
-            reason: '$name step $i `${op['type']}` value[${e.key}]');
-      }
-    });
+    assertKeysOfIfPresent(expected, 'values', map.keys(), (k, want) {
+      expect(map.get(k), want,
+          reason: '$name step $i `${op['type']}` value[$k]');
+    },
+        reason: '$name step $i `${op['type']}`: `values` names a key this map '
+            'does not carry');
 
     // Assert handle stability (same Cell identity before & after).
-    assertKeyIfPresent(expected, 'handle_stable', (v) {
-      for (final e in (v as Map).entries) {
-        final k = e.key as String;
-        final after = map.cell(k);
-        expect(after, isNotNull,
-            reason: '$name step $i `$k` handle still present');
-        expect(identical(handleStableBefore[k], after), equals(e.value),
-            reason: '$name step $i `${op['type']}` `$k` handle_stable');
-      }
-    });
+    assertKeysOfIfPresent(expected, 'handle_stable', map.keys(), (k, want) {
+      final after = map.cell(k);
+      expect(after, isNotNull,
+          reason: '$name step $i `$k` handle still present');
+      expect(identical(handleStableBefore[k], after), equals(want),
+          reason: '$name step $i `${op['type']}` `$k` handle_stable');
+    },
+        reason: '$name step $i `${op['type']}`: `handle_stable` names a key '
+            'this map does not carry');
   }
 }
 

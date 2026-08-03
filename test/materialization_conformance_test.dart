@@ -123,14 +123,12 @@ Map<String, dynamic> _checkValFixture(String name) {
   expect(lazy.presentCount(), 0, reason: 'lazy defers every derived slot');
 
   // observe_canonical / eager_lazy_observationally_equivalent.
-  assertKeyWith(expected, 'observe', (v) {
-    for (final e in (v as Map).entries) {
-      final k = e.key as String;
-      expect(eager.get(k), e.value, reason: 'eager observe $k');
-      expect(lazy.getOrInsertWith(k, lookup), e.value,
-          reason: 'lazy observe $k');
-    }
-  });
+  // Keyed by spec key, bounded by the spec this run really materialized
+  // (`#lzsubblockkeyset`).
+  assertKeysOf(expected, 'observe', spec.keys, (k, want) {
+    expect(eager.get(k), want, reason: 'eager observe $k');
+    expect(lazy.getOrInsertWith(k, lookup), want, reason: 'lazy observe $k');
+  }, reason: '`observe` names a key the spec does not carry');
 
   return fixture;
 }
@@ -277,19 +275,15 @@ void main() {
           (v) => expect(lazyAfter, _asSet((v as List).cast<String>())));
 
       // Observational transparency across kinds.
-      assertKeyWith(expected, 'observe', (v) {
-        for (final e in (v as Map).entries) {
-          final k = e.key as String;
-          if (cellKeys.contains(k)) {
-            expect(eagerCells.get(k), e.value);
-            expect(lazyCells.get(k), e.value);
-          } else {
-            expect(eagerSlots.get(k), e.value);
-            expect(
-                lazySlots.getOrInsertWith(k, (_, key) => lookup(key)), e.value);
-          }
+      assertKeysOf(expected, 'observe', {...cellKeys, ...slotKeys}, (k, want) {
+        if (cellKeys.contains(k)) {
+          expect(eagerCells.get(k), want);
+          expect(lazyCells.get(k), want);
+        } else {
+          expect(eagerSlots.get(k), want);
+          expect(lazySlots.getOrInsertWith(k, (_, key) => lookup(key)), want);
         }
-      });
+      }, reason: '`observe` names a key the spec does not carry');
     });
   });
 }

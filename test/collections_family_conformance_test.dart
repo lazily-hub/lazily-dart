@@ -284,12 +284,12 @@ void _replay(_Flavor flavor, String fixtureName) {
           reason: '${where(i)}: membership set diverged');
     });
 
-    assertKeyIfPresent(expected, 'values', (v) {
-      (v as Map).forEach((key, want) {
-        expect(flavor.valueUntracked(key as String), want,
-            reason: '${where(i)}: value for $key diverged');
-      });
-    });
+    assertKeysOfIfPresent(expected, 'values', gotOrder, (key, want) {
+      expect(flavor.valueUntracked(key), want,
+          reason: '${where(i)}: value for $key diverged');
+    },
+        reason:
+            '${where(i)}: `values` names a key the collection does not carry');
 
     // The invalidation matrix, read from expected.invalidates - where the
     // fixtures actually nest it. lazily-rs read it off the step instead, so its
@@ -299,10 +299,13 @@ void _replay(_Flavor flavor, String fixtureName) {
             'the matrix is the contract');
     matrices += 1;
 
-    assertKeyWith(expected, 'invalidates', (v) {
-      final invalidates = v as Map;
-      final dirty =
-          ((invalidates['value'] as List?) ?? []).cast<String>().toSet();
+    // DESCENDED into (`#lzsubblockkeyset`): the matrix names three reader
+    // projections and this runner used to read exactly those three off a raw
+    // map, so a fourth added upstream was compared by nothing. The child
+    // tracker owns them now.
+    final invalidates = subKey(expected, 'invalidates', 'step $i invalidates');
+    assertKeyWith<void>(invalidates, 'value', (v) {
+      final dirty = (v as List).cast<String>().toSet();
       final survivors = gotOrder.toSet();
       valueReaders.forEach((key, drive) {
         if (!survivors.contains(key)) return; // removed: no entry left to read
@@ -317,31 +320,35 @@ void _replay(_Flavor flavor, String fixtureName) {
                   'cached - per-entry independence is the whole point');
         }
       });
-
-      expect(membership() != membershipBase, invalidates['membership'] == true,
+    });
+    assertKeyWith<void>(invalidates, 'membership', (v) {
+      expect(membership() != membershipBase, v == true,
           reason: '${where(i)}: membership reader invalidation mismatch - '
               'a pure reorder must NOT invalidate set-identity readers');
-      expect(order() != orderBase, invalidates['order'] == true,
+    });
+    assertKeyWith<void>(invalidates, 'order', (v) {
+      expect(order() != orderBase, v == true,
           reason: '${where(i)}: order reader invalidation mismatch');
     });
 
     // Handle stability: the law separating an atomic move from a remove +
     // re-mint. A reorder keeps the entry's node, so dependents and lineage
     // survive.
-    assertKeyIfPresent(expected, 'handle_stable', (v) {
-      (v as Map).forEach((key, wantStable) {
-        final after = flavor.entryIdentity(key as String);
-        final before = idsBefore[key];
-        if (wantStable == true) {
-          expect(before != null && identical(after, before), isTrue,
-              reason: '${where(i)}: handle for $key must survive the move - '
-                  'a reorder that re-mints is a remove + insert, not a move');
-        } else {
-          expect(identical(after, before), isFalse,
-              reason: '${where(i)}: handle for $key should have changed');
-        }
-      });
-    });
+    assertKeysOfIfPresent(expected, 'handle_stable', gotOrder,
+        (key, wantStable) {
+      final after = flavor.entryIdentity(key);
+      final before = idsBefore[key];
+      if (wantStable == true) {
+        expect(before != null && identical(after, before), isTrue,
+            reason: '${where(i)}: handle for $key must survive the move - '
+                'a reorder that re-mints is a remove + insert, not a move');
+      } else {
+        expect(identical(after, before), isFalse,
+            reason: '${where(i)}: handle for $key should have changed');
+      }
+    },
+        reason: '${where(i)}: `handle_stable` names a key the collection does '
+            'not carry');
   }
 
   expect(matrices, greaterThan(0),

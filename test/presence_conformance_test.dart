@@ -74,10 +74,8 @@ void main() {
           fail('EphemeralCell: unknown op type `${op['type']}`');
       }
       assertKey(expected, 'value', cell.value());
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['value']),
-            reason: 'invalidation');
-      });
+      assertKey(subKey(expected, 'invalidates'), 'value',
+          _invalidated(ctx, observed), 'invalidation');
     }
   });
 
@@ -103,15 +101,17 @@ void main() {
         default:
           fail('PresenceCell: unknown op type `${op['type']}`');
       }
-      assertKeyWith(expected, 'present', (v) {
-        expect(cell.present(),
-            equals(_expectedPresent((v as Map).cast<String, dynamic>())),
-            reason: 'present');
-      });
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['present']),
-            reason: 'invalidation');
-      });
+      // Key set first (`#lzsubblockkeyset`): the peers this run really has
+      // present, compared both directions against the peers the fixture names.
+      // The value equality below then covers the payloads.
+      final present = assertKeySet(
+          expected, 'present', cell.present().keys.map((peer) => '$peer'),
+          reason: 'the peer set this run reports present must equal the peer '
+              'set the fixture names, in both directions');
+      expect(cell.present(), equals(_expectedPresent(present)),
+          reason: 'present');
+      assertKey(subKey(expected, 'invalidates'), 'present',
+          _invalidated(ctx, observed), 'invalidation');
     }
   });
 
@@ -134,15 +134,17 @@ void main() {
         default:
           fail('AwarenessCell: unknown op type `${op['type']}`');
       }
-      assertKeyWith(expected, 'present', (v) {
-        expect(cell.present(),
-            equals(_expectedPresent((v as Map).cast<String, dynamic>())),
-            reason: 'present');
-      });
-      assertKeyWith(expected, 'invalidates', (v) {
-        expect(_invalidated(ctx, observed), equals((v as Map)['present']),
-            reason: 'invalidation');
-      });
+      // Key set first (`#lzsubblockkeyset`): the peers this run really has
+      // present, compared both directions against the peers the fixture names.
+      // The value equality below then covers the payloads.
+      final present = assertKeySet(
+          expected, 'present', cell.present().keys.map((peer) => '$peer'),
+          reason: 'the peer set this run reports present must equal the peer '
+              'set the fixture names, in both directions');
+      expect(cell.present(), equals(_expectedPresent(present)),
+          reason: 'present');
+      assertKey(subKey(expected, 'invalidates'), 'present',
+          _invalidated(ctx, observed), 'invalidation');
     }
   });
 }

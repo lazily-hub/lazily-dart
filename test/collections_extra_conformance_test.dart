@@ -288,20 +288,32 @@ void _checkTextCrdtDeltaExpect(
     final b = pair[1] as String;
     expect(replicas[a]!.text(), replicas[b]!.text(), reason: 'texts_equal');
   });
-  assertKeyIfPresent(expect_, 'text_on', (v) {
-    for (final entry in (v as Map).entries) {
-      expect(replicas[entry.key]!.text(), entry.value,
-          reason: 'text_on ${entry.key}');
+  // Keyed by replica id, so the key set is bounded by the replicas this
+  // scenario really built (`#lzsubblockkeyset`).
+  assertKeysOfIfPresent(expect_, 'text_on', replicas.keys, (id, want) {
+    expect(replicas[id]!.text(), want, reason: 'text_on $id');
+  }, reason: '`text_on` names a replica this scenario never built');
+  // Two levels (`#lzsubblockkeyset`): replica id, then peer id inside each
+  // vector. The peer set is compared both directions against the vector the
+  // replica really carries.
+  final wantVectors = subKeyIfPresent(expect_, 'version_vector_on');
+  if (wantVectors != null) {
+    final unknown = wantVectors.keys
+        .where((id) => !replicas.containsKey(id))
+        .toList()
+      ..sort();
+    expect(unknown, isEmpty,
+        reason: '`version_vector_on` names $unknown, which this scenario '
+            'never built');
+    for (final id in wantVectors.keys.toList()) {
+      final actual = replicas[id]!.versionVector();
+      final want = assertKeySet(
+          wantVectors, id, actual.keys.map((peer) => '$peer'),
+          reason: 'version_vector_on $id: peer set');
+      expect(actual, equals(want.map((k, v) => MapEntry(int.parse(k), v))),
+          reason: 'version_vector_on $id');
     }
-  });
-  assertKeyIfPresent(expect_, 'version_vector_on', (v) {
-    for (final entry in (v as Map).entries) {
-      final expected = (entry.value as Map)
-          .map((k, v) => MapEntry(int.parse(k as String), v as int));
-      expect(replicas[entry.key]!.versionVector(), expected,
-          reason: 'version_vector_on ${entry.key}');
-    }
-  });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -405,12 +417,13 @@ void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas,
           v));
   assertKeyIfPresent(
       expect_, 'len', (v) => expect(replicas[primaryReplica]!.len(), v));
-  assertKeyIfPresent(expect_, 'get', (v) {
-    for (final entry in (v as Map).entries) {
-      expect(replicas[primaryReplica]!.get(entry.key), entry.value,
-          reason: 'get ${entry.key}');
-    }
-  });
+  assertKeysOfIfPresent(
+      expect_,
+      'get',
+      replicas[primaryReplica]!.order().map((s) => s.toString()),
+      (id, want) =>
+          expect(replicas[primaryReplica]!.get(id), want, reason: 'get $id'),
+      reason: '`get` names an element the primary replica does not carry');
   assertKeyIfPresent(expect_, 'orders_equal', (v) {
     final pair = ((v as List)[0] as List);
     final a = pair[0] as String;
@@ -423,31 +436,35 @@ void _checkSeqCrdtExpect(Map<String, SeqCrdt<String, dynamic>> replicas,
           reason: 'contains $id');
     }
   });
-  assertKeyIfPresent(expect_, 'order_on', (v) {
-    for (final entry in (v as Map).entries) {
-      expect(replicas[entry.key]!.order().map((s) => s.toString()).toList(),
-          entry.value,
-          reason: 'order_on ${entry.key}');
+  // Keyed by replica id (`#lzsubblockkeyset`).
+  assertKeysOfIfPresent(expect_, 'order_on', replicas.keys, (id, want) {
+    expect(replicas[id]!.order().map((s) => s.toString()).toList(), want,
+        reason: 'order_on $id');
+  }, reason: '`order_on` names a replica this scenario never built');
+  // Two levels (`#lzsubblockkeyset`): replica id, then element id.
+  final wantGetOn = subKeyIfPresent(expect_, 'get_on');
+  if (wantGetOn != null) {
+    final unknown = wantGetOn.keys
+        .where((id) => !replicas.containsKey(id))
+        .toList()
+      ..sort();
+    expect(unknown, isEmpty,
+        reason: '`get_on` names $unknown, which this scenario never built');
+    for (final id in wantGetOn.keys.toList()) {
+      final rep = replicas[id]!;
+      assertKeysOf(wantGetOn, id, rep.order().map((s) => s.toString()),
+          (element, want) {
+        expect(rep.get(element), want, reason: 'get_on $id/$element');
+      }, reason: 'get_on $id names an element the replica does not carry');
     }
-  });
-  assertKeyIfPresent(expect_, 'get_on', (v) {
-    for (final entry in (v as Map).entries) {
-      final rep = replicas[entry.key]!;
-      for (final kv in (entry.value as Map).entries) {
-        expect(rep.get(kv.key), kv.value,
-            reason: 'get_on ${entry.key}/${kv.key}');
-      }
+  }
+  assertKeysOfIfPresent(expect_, 'not_contains_on', replicas.keys, (id, want) {
+    final rep = replicas[id]!;
+    for (final absent in (want as List)) {
+      expect(rep.contains(absent.toString()), isFalse,
+          reason: 'not_contains $id/$absent');
     }
-  });
-  assertKeyIfPresent(expect_, 'not_contains_on', (v) {
-    for (final entry in (v as Map).entries) {
-      final rep = replicas[entry.key]!;
-      for (final id in (entry.value as List)) {
-        expect(rep.contains(id.toString()), isFalse,
-            reason: 'not_contains ${entry.key}/$id');
-      }
-    }
-  });
+  }, reason: '`not_contains_on` names a replica this scenario never built');
 }
 
 // ---------------------------------------------------------------------------

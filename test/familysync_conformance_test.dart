@@ -93,12 +93,15 @@ void main() {
             target.familyKeys(namespace).length);
 
         // Value adoption / LWW convergence.
-        assertKeyWith(expect_, 'target_values', (v) {
-          (v as Map).cast<String, dynamic>().forEach((suffix, want) {
-            expect(target.familyValueLww(namespace, suffix), want as bool,
-                reason: 'value for $namespace/$suffix diverged');
-          });
-        });
+        // Keyed by family-member suffix, bounded by the membership the target
+        // really materialized (`#lzsubblockkeyset`).
+        assertKeysOf(expect_, 'target_values',
+            target.familyKeys(namespace).map(_suffixOf), (suffix, want) {
+          expect(target.familyValueLww(namespace, suffix), want as bool,
+              reason: 'value for $namespace/$suffix diverged');
+        },
+            reason: '`target_values` names a family member the target does '
+                'not carry');
 
         // Derived-aggregate transparency: count of `true` entries converges.
         assertKey(expect_, 'target_count_true',
