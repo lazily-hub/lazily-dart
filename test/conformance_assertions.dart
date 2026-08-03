@@ -53,20 +53,60 @@
 /// - a stale excuse: a key both excused and asserted in the same run, so the
 ///   excuse is now hiding nothing. This is the same both-directions rule the
 ///   coverage guard's `KNOWN_UNCOVERED` allowlist already follows.
+///
+/// ## Rung 4: prose keys are discharged, never excused (`#lzprosekeyconvention`)
+///
+/// A few `assertions` keys carry an English paragraph — `clause`, `null_form`,
+/// `anti_vacuity`, `theorem`, a top-level `note`. They state an obligation and
+/// carry nothing a runner can compare, so neither [assertKey] nor [excuseKey]
+/// fits: asserting one pins WORDING (a copy-edit reddens the run, a library
+/// regression does not) and excusing one writes an unfalsifiable sentence that
+/// no tracker can check. lazily-dart wrote the second shape, naming the
+/// discharging assertion in free text — falsifiable in principle, checked by
+/// nothing.
+///
+/// The corpus now declares which keys are prose, in `assertions.prose`, and a
+/// runner DISCHARGES each one by naming the executable keys that carry its
+/// obligation:
+///
+/// ```dart
+/// proseKey(meta, 'epoch_disambiguation',
+///     dischargedBy: ['frame_epoch', 'blob_epoch']);
+/// ...
+/// addTearDown(() => verifyProse(fixtureId));
+/// ```
+///
+/// [verifyProse] then checks the naming, which is the whole point: "this key is
+/// discharged by `frame_epoch` and `blob_epoch`" is a claim about the run, and
+/// the ledger can refute it. The seven ways a run fails are listed on
+/// [verifyProse].
+///
+/// The ledger is FIXTURE-scoped, not block-scoped: `epoch_disambiguation` sits
+/// in the `assertions` block and is discharged by `expect.frame_epoch` /
+/// `expect.blob_epoch`, asserted per scenario long after that block is finished.
+/// A named key is therefore matched by NAME in any block of the same fixture,
+/// and the comparison happens once the fixture's replay is over.
 library;
 
 import 'dart:collection';
 
 import 'package:test/test.dart';
 
-/// Keys that are prose, not assertions, and so are never expected to be
-/// consumed by a runner.
+/// Reserved ANNOTATION names, exempt from consumption by name.
 ///
 /// This is the ONLY allowlist in this file and it is deliberately tiny: a key
 /// here must be documentation the corpus carries for a human reader. An
 /// assertion a binding does not implement does NOT belong here — it belongs in
 /// the binding.
-const _proseKeys = <String>{
+///
+/// The exemption is by name and therefore a place no runner can be made to
+/// discharge anything, so it is safe only while these keys ANNOTATE. A key the
+/// corpus lists in `assertions.prose` states an obligation, so the exemption is
+/// switched off for it (see [_TrackedAssertions._exempt]) — that is what makes
+/// the top-level `note` of `codec/frame_roundtrip_json.json` a discharge
+/// obligation while the ~97 per-step `note`s of the reactive-graph corpus stay
+/// annotations.
+const _annotationKeys = <String>{
   'comment',
   'description',
   'note',
@@ -284,7 +324,215 @@ dynamic _markAsserted(Map<String, dynamic> block, String key) {
   if (tracked == null) return block[key];
   tracked._read.add(key);
   tracked._asserted.add(key);
+  _ledgerFor(tracked.fixture).asserted.add(key);
   return tracked._inner[key];
+}
+
+// ---------------------------------------------------------------------------
+// Prose assertion keys (`#lzprosekeyconvention`)
+// ---------------------------------------------------------------------------
+
+/// Every fixture that has recorded a discharge claim or an assertion, by id.
+final Map<String, _ProseLedger> _ledgers = <String, _ProseLedger>{};
+
+_ProseLedger _ledgerFor(String fixture) =>
+    _ledgers.putIfAbsent(fixture, () => _ProseLedger(fixture));
+
+/// One fixture's discharge ledger.
+///
+/// [asserted] is the union of every key name the fixture's replay routed
+/// through [assertKey] / [assertKeyWith] / [assertKeyIfPresent], in ANY block —
+/// that is what makes a discharge naming `frame_epoch` checkable from the
+/// `assertions` block, which never carries a `frame_epoch` of its own.
+class _ProseLedger {
+  _ProseLedger(this.fixture);
+
+  final String fixture;
+  final Set<String> asserted = <String>{};
+
+  /// Blocks of this fixture that declared `prose` and recorded a discharge,
+  /// awaiting [verifyProse]. Identity-keyed for the same reason [_trackers] is.
+  final Set<_TrackedAssertions> blocks = LinkedHashSet<_TrackedAssertions>(
+    equals: identical,
+    hashCode: identityHashCode,
+  );
+}
+
+/// Discharge [key] — a key the corpus declares prose in `assertions.prose` — by
+/// naming the executable assertion keys that carry its obligation.
+///
+/// [key] is marked read and satisfied, and is NEITHER asserted nor excused: a
+/// paragraph has no value to compare, and an excuse for one is a sentence no
+/// tracker can check. [dischargedBy] must name keys the same fixture's replay
+/// really asserts, which is what turns the old free-text excuse into a claim
+/// [verifyProse] can refute.
+///
+/// The named keys are matched by NAME anywhere in the fixture, so a key of the
+/// `assertions` block may be discharged by per-scenario `expect` keys asserted
+/// later in the replay.
+void proseKey(
+  Map<String, dynamic> block,
+  String key, {
+  required List<String> dischargedBy,
+}) {
+  final tracked = block is _TrackedAssertions ? block : _trackers[block];
+  if (tracked == null) {
+    throw StateError('proseKey($key): the block is not tracked, so nothing '
+        'would check the discharge. Wrap it with assertionsOf() first.');
+  }
+  tracked._read.add(key);
+  tracked._discharged[key] = List<String>.unmodifiable(dischargedBy);
+  _ledgerFor(tracked.fixture).blocks.add(tracked);
+}
+
+/// Verify every discharge claim recorded for [fixture], and consume the
+/// `prose` declaration itself.
+///
+/// [fixture] is a fixture id (`'codec/frame_roundtrip_json.json'`) or any
+/// object decoded out of that fixture — the decoded root is the usual one.
+/// Register it with [addTearDown] AFTER the [proseKey] calls, so the per-
+/// scenario assertions a discharge names have all run by the time it fires.
+///
+/// The run fails when:
+///
+///  1. a key listed in `assertions.prose` is ASSERTED — comparing a paragraph,
+///     or a tally derived from one, to an English string pins wording;
+///  2. a key listed in `assertions.prose` is EXCUSED with free text;
+///  3. a key NOT listed in `assertions.prose` is discharged;
+///  4. the set of discharged keys differs from `assertions.prose` — the
+///     comparison that consumes `prose` itself, and what makes a forgotten key
+///     fail rather than vanish;
+///  5. a discharge names no keys;
+///  6. a discharge names a key the same fixture's run did not assert;
+///  7. a discharge names a key that is itself prose.
+///
+/// A block that declares `prose` and carries nothing else has nothing that
+/// could discharge it, and is rejected for that too.
+///
+/// A claim never verified is reported by [verifyAssertionsConsumed], which is
+/// registered before any of this and therefore always runs last: a run that
+/// forgets to verify is as red as one that names the wrong key.
+void verifyProse(Object fixture) {
+  final id = _fixtureIdOf(fixture);
+  final ledger = _ledgers[id];
+  if (ledger == null || ledger.blocks.isEmpty) {
+    fail('verifyProse($id): no prose discharge was recorded for this fixture. '
+        'Either the runner never called proseKey — in which case a declared '
+        '`prose` key is going unconsumed — or it verified twice.');
+  }
+  final complaints = _verifyProseLedger(ledger);
+  _ledgers.remove(id);
+  if (complaints.isNotEmpty) {
+    fail('prose assertion key(s) mis-discharged in $id '
+        '(`#lzprosekeyconvention`):\n  ${complaints.join('\n  ')}');
+  }
+}
+
+String _fixtureIdOf(Object fixture) {
+  if (fixture is String) return fixture;
+  return fixtureOwnerOf(fixture) ??
+      currentConformanceFixture ??
+      '<unknown fixture>';
+}
+
+List<String> _verifyProseLedger(_ProseLedger ledger) {
+  final complaints = <String>[];
+
+  // Pass one: read every block's declaration. Reading it through _markAsserted
+  // is what CONSUMES and ASSERTS `prose` — rule 4's comparison is the assertion.
+  final declaredPerBlock = LinkedHashMap<_TrackedAssertions, Set<String>>(
+    equals: identical,
+    hashCode: identityHashCode,
+  );
+  // `prose` is not a discharge target either: it is the declaration, not an
+  // obligation, and it self-lists in no fixture.
+  final proseNames = <String>{'prose'};
+  for (final block in ledger.blocks) {
+    final raw = _markAsserted(block, 'prose');
+    if (raw is! List) {
+      complaints.add('${block.label}: `assertions.prose` must be an array of '
+          'sibling key names, got $raw');
+      declaredPerBlock[block] = <String>{};
+      continue;
+    }
+    final declared = raw.map((k) => '$k').toSet();
+    declaredPerBlock[block] = declared;
+    proseNames.addAll(declared);
+  }
+
+  for (final entry in declaredPerBlock.entries) {
+    final block = entry.key;
+    final declared = entry.value;
+    final at = block.label;
+    final discharged = block._discharged.keys.toSet();
+
+    // A block that is entirely prose has nothing that could discharge it.
+    final executable = block._inner.keys
+        .where((k) => k != 'prose' && !declared.contains(k))
+        .toList();
+    if (declared.isNotEmpty && executable.isEmpty) {
+      complaints.add('$at: the block declares `prose` and carries no other '
+          'key, so nothing in it could discharge anything');
+    }
+
+    for (final key in declared) {
+      // Rule 1.
+      if (block._asserted.contains(key)) {
+        complaints.add('$at: `$key` is declared prose and was ASSERTED — '
+            'comparing an English paragraph, or a tally derived from one, to a '
+            'literal pins wording, not behaviour. Discharge it with proseKey '
+            'instead.');
+      }
+      // Rule 2.
+      if (block._excused.containsKey(key)) {
+        complaints.add('$at: `$key` is declared prose and was EXCUSED — '
+            '"${block._excused[key]}". An unfalsifiable reason is exactly the '
+            'undocumented default this convention removes. Replace the '
+            'excuseKey with a proseKey naming the assertions that carry it.');
+      }
+    }
+
+    // Rule 3.
+    for (final key in discharged.difference(declared)) {
+      complaints.add('$at: `$key` was discharged but the corpus does not list '
+          'it in `assertions.prose`. A binding does not decide what is prose.');
+    }
+    // Rule 4.
+    final missing = declared.difference(discharged).toList()..sort();
+    if (missing.isNotEmpty) {
+      complaints.add('$at: declared prose key(s) $missing were never '
+          'discharged. `assertions.prose` is the checklist; a key dropped from '
+          'a runner has to fail rather than vanish.');
+    }
+
+    for (final key in block._discharged.keys) {
+      final names = block._discharged[key]!;
+      // Rule 5.
+      if (names.isEmpty) {
+        complaints.add('$at: `$key` is discharged by NOTHING. A discharge that '
+            'names no assertion is the free-text excuse again, with the text '
+            'removed.');
+        continue;
+      }
+      // Rule 6 — the rule the whole convention exists for.
+      final unasserted =
+          names.where((n) => !ledger.asserted.contains(n)).toList()..sort();
+      if (unasserted.isNotEmpty) {
+        complaints.add('$at: `$key` claims to be discharged by $unasserted, '
+            'which this fixture\'s run never asserted. The claim is false: '
+            'nothing in the replay carries that obligation.');
+      }
+      // Rule 7.
+      final prosy = names.where(proseNames.contains).toList()..sort();
+      if (prosy.isNotEmpty) {
+        complaints.add('$at: `$key` claims to be discharged by $prosy, which '
+            'is itself prose. A paragraph cannot discharge a paragraph.');
+      }
+    }
+  }
+
+  ledger.blocks.clear();
+  return complaints;
 }
 
 /// Fail if any tracked block carries a key no runner read, a key a runner read
@@ -297,21 +545,39 @@ void verifyAssertionsConsumed() {
   final blocks = List<_TrackedAssertions>.of(_pending);
   _pending.clear();
   _trackers.clear();
+  // Discharge claims nobody verified (`#lzprosekeyconvention`). This function
+  // is armed by the FIRST assertionsOf of a test, so it is always the last
+  // teardown to run — which makes it the one place that can tell a runner that
+  // forgot verifyProse from one that called it.
+  final unverified = <String>[];
+  for (final ledger in _ledgers.values) {
+    for (final block in ledger.blocks) {
+      unverified
+          .add('${block.label}: ${block._discharged.keys.toList()..sort()}');
+    }
+  }
+  _ledgers.clear();
   final unread = <String>[];
   final unasserted = <String>[];
   final stale = <String>[];
   for (final block in blocks) {
-    final at = block.where.isEmpty ? '' : ' ${block.where}';
-    final at_ = '${block.fixture}$at';
-    if (block.unreadKeys.isNotEmpty) unread.add('$at_: ${block.unreadKeys}');
+    if (block.unreadKeys.isNotEmpty) {
+      unread.add('${block.label}: ${block.unreadKeys}');
+    }
     if (block.unassertedKeys.isNotEmpty) {
-      unasserted.add('$at_: ${block.unassertedKeys}');
+      unasserted.add('${block.label}: ${block.unassertedKeys}');
     }
     for (final key in block.staleExcuses) {
-      stale.add('$at_: $key — "${block._excused[key]}"');
+      stale.add('${block.label}: $key — "${block._excused[key]}"');
     }
   }
   final complaints = <String>[];
+  if (unverified.isNotEmpty) {
+    complaints.add('unverified prose discharge claim(s) — the runner named the '
+        'assertions that discharge a prose key and then never called '
+        'verifyProse(fixture), so nothing checked the naming. An unverified '
+        'claim is as bad as an unconsumed key:\n  ${unverified.join('\n  ')}');
+  }
   if (unread.isNotEmpty) {
     complaints.add('unconsumed assertion key(s) — the fixture asserts '
         'something this runner never evaluated, so replaying it proves '
@@ -350,6 +616,30 @@ class _TrackedAssertions extends MapBase<String, dynamic> {
   final Set<String> _asserted = <String>{};
   final Map<String, String> _excused = <String, String>{};
 
+  /// Prose keys discharged here, each mapped to the executable keys claimed to
+  /// carry it (`#lzprosekeyconvention`).
+  final Map<String, List<String>> _discharged = <String, List<String>>{};
+
+  /// This block's location, for a failure message.
+  String get label => where.isEmpty ? fixture : '$fixture $where';
+
+  /// Keys the corpus declares prose in THIS block, or empty when it declares
+  /// none. Read straight off the raw value rather than through the tracker, so
+  /// asking does not count as consuming `prose`.
+  Set<String> get _declaredProse {
+    final raw = _inner['prose'];
+    return raw is List ? raw.map((k) => '$k').toSet() : const <String>{};
+  }
+
+  /// Whether [key] is exempt from consumption by NAME.
+  ///
+  /// A reserved annotation name stops being an annotation the moment the corpus
+  /// declares it prose: `note` in a per-step block annotates, `note` listed in
+  /// `assertions.prose` states an obligation, and only the second has to be
+  /// discharged.
+  bool _exempt(String key) =>
+      _annotationKeys.contains(key) && !_declaredProse.contains(key);
+
   @override
   dynamic operator [](Object? key) {
     if (key is String) _read.add(key);
@@ -385,17 +675,18 @@ class _TrackedAssertions extends MapBase<String, dynamic> {
 
   List<String> get unreadKeys => [
         for (final key in _inner.keys)
-          if (!_read.contains(key) && !_proseKeys.contains(key)) key,
+          if (!_read.contains(key) && !_exempt(key)) key,
       ]..sort();
 
   /// Keys a runner read but never routed through [assertKey] / [assertKeyWith]
-  /// / [excuseKey] — the read-then-discard shapes.
+  /// / [excuseKey] / [proseKey] — the read-then-discard shapes.
   List<String> get unassertedKeys => [
         for (final key in _inner.keys)
           if (_read.contains(key) &&
               !_asserted.contains(key) &&
               !_excused.containsKey(key) &&
-              !_proseKeys.contains(key))
+              !_discharged.containsKey(key) &&
+              !_exempt(key))
             key,
       ]..sort();
 

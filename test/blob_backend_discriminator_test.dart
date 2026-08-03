@@ -170,54 +170,92 @@ void main() {
       return declared;
     });
 
-    for (final prose in const [
-      'clause',
-      'wire_encoding',
-      'reject_obligation',
-      'anti_vacuity',
-      'theorem',
+    // ---- prose keys (`#lzprosekeyconvention`) -------------------------------
+    //
+    // The nine keys the corpus declares in `assertions.prose` state obligations
+    // in English and carry nothing to compare. Each is DISCHARGED by naming the
+    // executable keys this run really asserts — the previous free-text excuses
+    // named the same assertions in a sentence nothing could check, which is the
+    // shape this convention removes. `verifyProse` below refutes a name the run
+    // never asserted.
+    proseKey(meta, 'clause', dischargedBy: [
+      // omitted/null decode as shm and arrow/in_process do not,
+      'decoded_backend',
+      // a present non-member is refused,
+      'rejected',
+      // through the documented decode-error family,
+      'rejection_is_decode_error',
+      // naming the token.
+      'error_names_token',
+    ]);
+    proseKey(meta, 'wire_encoding', dischargedBy: [
+      // Both codecs are replayed, and the forms an ABSENT map entry, an
+      // explicit nil and a present short string produce are each replayed as a
+      // distinct member of the vocabulary — which is only possible because the
+      // fixture carries raw text / hex rather than a parsed object.
+      'codecs',
+      'backend_forms',
+    ]);
+    proseKey(meta, 'backend_form_vocabulary', dischargedBy: [
+      // The runner obligation this paragraph states — every backend in
+      // `assertions.backends` appears as some accept scenario's
+      // `decoded_backend` — is the set difference after the loop, over the list
+      // `backends` carries out and the values `decoded_backend` asserts.
+      'backends',
+      'decoded_backend',
+      'backend_forms',
+    ]);
+    proseKey(meta, 'reject_obligation', dischargedBy: [
+      // "the frame was refused FOR THE STATED REASON": the paragraph names
+      // `error_names_token` as the assertion that separates the two.
+      'error_names_token',
+      'rejection_is_decode_error',
+    ]);
+    proseKey(meta, 'null_form', dischargedBy: [
+      // The null frames are accept scenarios decoding as shm,
+      'decoded_backend',
+      // and the null does not survive the round trip as a null.
+      'reencoded_backend_field_present',
+    ]);
+    proseKey(meta, 'non_string_form', dischargedBy: [
+      // Refused through the same family the unknown-token refusal uses,
+      'rejection_is_decode_error',
+      // and told apart from it by which door it came through.
+      'rejection_kind',
+    ]);
+    proseKey(meta, 'epoch_disambiguation',
+        // Two epochs from two objects, given different values by the fixture so
+        // a runner reading either one twice is red. Asserted per accept
+        // scenario, long after this block is finished — which is why the ledger
+        // is fixture-scoped.
+        dischargedBy: ['frame_epoch', 'blob_epoch']);
+    proseKey(meta, 'anti_vacuity', dischargedBy: [
+      // (1) omitted forces a real decode and (2) arrow forces the field to be
+      // READ — both land on `decoded_backend`;
+      'decoded_backend',
+      // (3) explicit shm forces the ENCODER half;
+      'reencoded_backend_field_present',
+      // (4) in_process forces the VOCABULARY to be complete, which is the
+      // difference between the declared list and the forms replayed.
+      'backends',
+      'backend_forms',
+    ]);
+    proseKey(meta, 'theorem', dischargedBy: [
+      // resolve_wrong_backend: an unknown kind is REFUSED rather than
+      // normalized to shm and routed,
+      'rejected',
+      // and each known kind decodes as itself rather than collapsing.
+      'decoded_backend',
+    ]);
+    // `generator` is NOT declared prose: it names a file, and there is nothing
+    // in a replay that could observe which script wrote the fixture.
+    excuseKey(
+      meta,
       'generator',
-    ]) {
-      excuseKey(
-        meta,
-        prose,
-        'prose: it states WHY the fixture is shaped this way; the behaviour it '
-        'describes is asserted by the per-scenario decode, re-encode and '
-        'rejection below',
-      );
-    }
-    excuseKey(
-      meta,
-      'backend_form_vocabulary',
-      'prose: it names the seven wire shapes and states the runner obligation '
-          'that every backend in `assertions.backends` appear as some accept '
-          "scenario's `decoded_backend`. `backend_forms` is asserted as a set "
-          'against the forms this run replayed, and the obligation itself is the '
-          'vocabulary-completeness difference after the loop',
+      'names the script that regenerates this fixture; a replay cannot observe '
+          'which generator produced the bytes it is reading',
     );
-    excuseKey(
-      meta,
-      'null_form',
-      'prose: it argues WHY an explicit null is the absent form rather than a '
-          'present-unknown one. The behaviour is asserted by the backend_null_* '
-          'scenarios — decoded_backend shm, and no `backend` entry re-encoded',
-    );
-    excuseKey(
-      meta,
-      'non_string_form',
-      'prose: it argues why a non-string refusal must arrive through the '
-          "codec's documented decode-error family. The behaviour is asserted by "
-          'the backend_non_string_* scenarios via `rejection_is_decode_error`, '
-          'checked against `caught is FormatException`',
-    );
-    excuseKey(
-      meta,
-      'epoch_disambiguation',
-      'prose: it explains why `expect.epoch` was removed. The behaviour is '
-          'asserted per accept scenario — `frame_epoch` against `Delta.epoch` and '
-          '`blob_epoch` against `ShmBlobRef.epoch`, which the fixture now gives '
-          'different values so a runner reading the wrong one is red',
-    );
+    addTearDown(() => verifyProse(fixture));
 
     // Anti-vacuity counters, one per way a runner can pass while proving less
     // than it claims. `accepted`/`rejected` catch a runner that treats every

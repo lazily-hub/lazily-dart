@@ -101,25 +101,54 @@ void main() {
       () {
     final fixture = _loadFixture();
 
-    final block = fixture['assertions'] as Map<String, dynamic>;
+    // Tracked, so the meta block is subject to the consumption guard — an
+    // untracked block silently accepts a key no runner reads, which is how the
+    // corpus's new `prose` declaration would have slipped past here.
+    final block = assertionsOf(fixture['assertions'], 'assertions');
     assertKey(block, 'required_of_binding', 'MUST');
     assertKey(block, 'codecs', ['json', 'msgpack']);
     assertKey(block, 'scenario_count',
         (fixture['scenarios'] as List<dynamic>).length);
-    for (final prose in const [
-      'clause',
-      'wire_encoding',
+
+    // Populations the vocabularies below are differenced against after the
+    // loop. Evidence of a replay, never a declaration.
+    final outcomesReplayed = <String>{};
+
+    // ---- prose keys (`#lzprosekeyconvention`) -------------------------------
+    //
+    // `outcomes` is NOT among them: it maps a vocabulary to English glosses, so
+    // the assertion is its KEY SET and the parent key's own assertion discharges
+    // it. It used to be excused as prose here, which is precisely the
+    // binding-decides-for-itself the convention removes.
+    proseKey(block, 'clause', dischargedBy: [
+      // "MUST NOT round, truncate, saturate, or wrap" — the decimal rendering
+      // of the decoded id, which makes a neighbouring value visible rather than
+      // approximately right, under the outcome the corpus allows.
+      'node_id_decimal',
+      'outcome',
       'outcomes',
-      'anti_vacuity',
+    ]);
+    proseKey(block, 'wire_encoding', dischargedBy: [
+      // "the expectation is `expect.node_id_decimal`, a decimal STRING" — none
+      // of the three carriers is a JSON number, and both codecs are replayed.
+      'node_id_decimal',
+      'codecs',
+    ]);
+    proseKey(block, 'anti_vacuity', dischargedBy: [
+      // "the two `exact` scenarios are the control": a binding must prove it
+      // decodes the boundary value correctly before its refusals count, which
+      // is `node_id_decimal` on an `exact` outcome.
+      'outcome',
+      'node_id_decimal',
+      'root_id_decimal',
+    ]);
+    excuseKey(
+      block,
       'generator',
-    ]) {
-      excuseKey(
-        block,
-        prose,
-        'prose: it states WHY the fixture is shaped this way; the behaviour it '
-        'describes is asserted by the per-scenario decode below',
-      );
-    }
+      'names the script that regenerates this fixture; a replay cannot observe '
+          'which generator produced the bytes it is reading',
+    );
+    addTearDown(() => verifyProse(fixture));
 
     // The platform split, read from the library's own predicate rather than
     // restated here. On the VM the exact range is [0, 2^63); compiled to JS it
@@ -140,12 +169,13 @@ void main() {
       final expected =
           BigInt.parse(scenario['expect']['node_id_decimal'] as String);
       final representable = expected <= exactCeiling;
-      final expectBlock = scenario['expect'] as Map<String, dynamic>;
+      final expectBlock = assertionsOf(scenario['expect'], id);
 
       // `outcome` is the corpus-wide statement of what a decoder may do.
       // lazily-dart reads it as a constraint on the FIXTURE: an `exact`
       // scenario no target can represent would be a fixture bug.
       assertKeyWith<void>(expectBlock, 'outcome', (want) {
+        outcomesReplayed.add(want as String);
         expect(want, anyOf('exact', 'exact_or_reject'), reason: '$id outcome');
         if (want == 'exact') {
           expect(expected <= BigInt.from(maxExactInt), isTrue,
@@ -161,6 +191,27 @@ void main() {
             reason: '$id: this runtime represents $expected exactly, so the '
                 'frame must decode rather than be refused');
         refused += 1;
+        // There is no decoded frame, so the rest of the block has nothing to be
+        // compared against. That is the CONFORMING outcome here — `outcome` is
+        // `exact_or_reject` and the refusal is the other arm — but the excuse
+        // has to be recorded rather than skipped, or a runner that refused
+        // every scenario would leave the block silently unconsumed.
+        for (final key in const [
+          'epoch',
+          'node_count',
+          'node_id_decimal',
+          'type_tag',
+          'payload',
+          'root_id_decimal',
+        ]) {
+          excuseKey(
+              expectBlock,
+              key,
+              'this runtime cannot represent $expected exactly, so the frame '
+              'was REFUSED (the `exact_or_reject` arm the clause permits). '
+              'There is no decoded frame to compare against; the refusal '
+              'itself is pinned by the refused counter below');
+        }
         continue;
       }
 
@@ -191,6 +242,17 @@ void main() {
       assertKey(
           expectBlock, 'root_id_decimal', snapshot.roots.first.toString());
     }
+
+    // The vocabulary the corpus declares, differenced against the outcomes this
+    // run actually replayed. `outcomes` maps a vocabulary to English glosses,
+    // so the assertion is the KEY SET — the gloss text itself is prose nested
+    // inside a data key, which is not a prose key.
+    assertKeyWith<void>(block, 'outcomes', (expected) {
+      expect(outcomesReplayed,
+          equals((expected as Map<String, dynamic>).keys.toSet()),
+          reason: 'every outcome the clause declares must be replayed, and no '
+              'scenario may carry an outcome the vocabulary does not name');
+    });
 
     // Two scenarios sit at 2^53 - 1 and two at 2^53 + 1; two are at u64::MAX,
     // which no Dart target represents. Pinning the split BOTH ways is what makes

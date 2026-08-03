@@ -189,8 +189,12 @@ void main() {
     assertKey(meta, 'required_of_binding', 'MUST');
     assertKey(meta, 'role', 'reference');
     assertKey(meta, 'scenario_count', (fixture['scenarios'] as List).length);
-    excuseKey(meta, 'note',
-        'prose: documents the reference-vs-byte-canonical distinction, states nothing the replay observes');
+    // `note` is declared prose by the corpus (`#lzprosekeyconvention`), so it
+    // is DISCHARGED rather than excused: the paragraph's whole claim is that
+    // `role` and `byte_canonical` are two senses a runner must not conflate,
+    // and the two assertions above are what keep them apart.
+    proseKey(meta, 'note', dischargedBy: ['role', 'byte_canonical']);
+    addTearDown(() => verifyProse(fixture));
 
     var replayed = 0;
     for (final scenario in scenariosOf(fixture)) {
@@ -226,8 +230,18 @@ void main() {
     assertKey(meta, 'required_of_binding', 'MUST');
     assertKey(meta, 'role', 'cross_language_binary_default');
     assertKey(meta, 'scenario_count', (fixture['scenarios'] as List).length);
-    excuseKey(meta, 'note',
-        'prose: restates the named-field rule that `encoded_body_field_names` and `first_node_encoded_field_names` below assert executably');
+    // The paragraph states two things: `byte_canonical: false` is why this
+    // fixture pins decoded values instead of golden bytes, and msgpack frames
+    // encode each struct as a MAP KEYED BY THE JSON FIELD NAME — which it names
+    // `encoded_body_field_names` as the executable form of. A positional
+    // encoder passes a naive value round trip and fails those keys.
+    proseKey(meta, 'note', dischargedBy: [
+      'byte_canonical',
+      'encoded_envelope_key',
+      'encoded_body_field_names',
+      'first_node_encoded_field_names',
+    ]);
+    addTearDown(() => verifyProse(fixture));
 
     var replayed = 0;
     for (final scenario in scenariosOf(fixture)) {

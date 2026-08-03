@@ -112,27 +112,50 @@ void main() {
       () {
     final fixture = _loadFixture();
 
-    final block = fixture['assertions'] as Map<String, dynamic>;
+    // Tracked, so the meta block is subject to the consumption guard — an
+    // untracked block silently accepts a key no runner reads, which is how the
+    // corpus's new `prose` declaration would have slipped past here.
+    final block = assertionsOf(fixture['assertions'], 'assertions');
     assertKey(block, 'required_of_binding', 'MUST');
     assertKey(block, 'codecs', ['json', 'msgpack']);
     assertKey(block, 'fields', ['snapshot', 'node_add']);
     assertKey(block, 'key_forms', ['omitted', 'null', 'present']);
     assertKey(block, 'scenario_count',
         (fixture['scenarios'] as List<dynamic>).length);
-    for (final prose in const [
-      'clause',
-      'wire_encoding',
-      'reencode_obligation',
-      'anti_vacuity',
+
+    // ---- prose keys (`#lzprosekeyconvention`) -------------------------------
+    proseKey(block, 'clause', dischargedBy: [
+      // "a decoder MUST accept both an omitted `key` and an explicit
+      // `key: null` and read both as absent" — the decoded value, over the
+      // three wire forms the fixture replays.
+      'decoded_key',
+      'key_forms',
+    ]);
+    proseKey(block, 'wire_encoding', dischargedBy: [
+      // The distinction an ABSENT map entry / an explicit null / a present key
+      // makes survives into the runner in BOTH codecs, which is what the raw
+      // text and hex carriage exists for.
+      'codecs',
+      'key_forms',
+    ]);
+    proseKey(block, 'reencode_obligation',
+        // The paragraph names its own executable form: "`expect.
+        // reencoded_key_field_present` is the half a decode assertion cannot
+        // reach."
+        dischargedBy: ['reencoded_key_field_present']);
+    proseKey(block, 'anti_vacuity', dischargedBy: [
+      // "`present` forces a real key through and `omitted` forces a real
+      // decode" — both are `decoded_key` over the declared form vocabulary.
+      'decoded_key',
+      'key_forms',
+    ]);
+    excuseKey(
+      block,
       'generator',
-    ]) {
-      excuseKey(
-        block,
-        prose,
-        'prose: it states WHY the fixture is shaped this way; the behaviour it '
-        'describes is asserted by the per-scenario decode and re-encode below',
-      );
-    }
+      'names the script that regenerates this fixture; a replay cannot observe '
+          'which generator produced the bytes it is reading',
+    );
+    addTearDown(() => verifyProse(fixture));
 
     // Anti-vacuity in both directions. A runner that never decodes reports
     // "absent" for everything and satisfies all eight omitted/null scenarios;
@@ -141,7 +164,8 @@ void main() {
     var keysDecoded = 0;
 
     for (final scenario in scenariosOf(fixture)) {
-      final expectBlock = scenario['expect'] as Map<String, dynamic>;
+      final expectBlock =
+          assertionsOf(scenario['expect'], scenario['id'] as String);
       replayed += 1;
 
       final message = _decode(scenario);
