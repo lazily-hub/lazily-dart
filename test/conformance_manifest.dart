@@ -50,6 +50,19 @@ import 'conformance_assertions.dart';
 /// was OPENED, `conformance_assertions.dart` proves its assertions were READ.
 export 'conformance_assertions.dart';
 
+/// Lowercase, zero-padded FNV-1a 64 over the exact bytes supplied by a wire
+/// fixture. BigInt keeps the modulo-2^64 arithmetic identical on every Dart
+/// target.
+String wireInputFnv1a64Hex(List<int> bytes) {
+  var hash = BigInt.parse('cbf29ce484222325', radix: 16);
+  final prime = BigInt.parse('100000001b3', radix: 16);
+  final mask = (BigInt.one << 64) - BigInt.one;
+  for (final byte in bytes) {
+    hash = ((hash ^ BigInt.from(byte)) * prime) & mask;
+  }
+  return hash.toRadixString(16).padLeft(16, '0');
+}
+
 /// Everything after this marker in a resolved path is the fixture's id, so the
 /// manifest is keyed the same way the canonical corpus listing is.
 const _conformanceMarker = 'lazily-spec/conformance/';

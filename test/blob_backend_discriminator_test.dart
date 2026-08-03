@@ -103,12 +103,18 @@ List<int> _hexToBytes(String hex) {
 /// have to distinguish an ABSENT map entry from a present short string (and,
 /// since v2, from an explicit nil), which a re-serialized parse would not
 /// preserve either. So both codecs start from the bytes the fixture ships.
-IpcMessage _decode(Map<String, dynamic> scenario) {
+IpcMessage _decode(
+    Map<String, dynamic> scenario, Map<String, dynamic> expectBlock) {
   switch (scenario['codec'] as String) {
     case 'json':
-      return IpcMessage.decodeJson(scenario['wire_json'] as String);
+      final raw = scenario['wire_json'] as String;
+      assertKey(expectBlock, 'wire_input_fnv1a64',
+          wireInputFnv1a64Hex(utf8.encode(raw)));
+      return IpcMessage.decodeJson(raw);
     case 'msgpack':
-      return decodeMsgpack(_hexToBytes(scenario['wire_msgpack_hex'] as String));
+      final raw = _hexToBytes(scenario['wire_msgpack_hex'] as String);
+      assertKey(expectBlock, 'wire_input_fnv1a64', wireInputFnv1a64Hex(raw));
+      return decodeMsgpack(raw);
     default:
       throw StateError('unknown codec: ${scenario['codec']}');
   }
@@ -313,17 +319,9 @@ void main() {
       'error_names_token',
     ]);
     proseKey(meta, 'wire_encoding', dischargedBy: [
-      // Both codecs are replayed, and the forms an ABSENT map entry, an
-      // explicit nil and a present short string produce are each replayed as a
-      // distinct member of the vocabulary — which is only possible because the
-      // fixture carries raw text / hex rather than a parsed object. The
-      // three-way split is now read OFF THOSE BYTES by `backend_form`, before
-      // the decoder runs: if the carriage had collapsed absent-entry and
-      // explicit-nil the split could not survive into this runner at all
-      // (`#lznullformblind`).
-      'backend_form',
-      'codecs',
-      'backend_forms',
+      // Executable proof that the exact raw text / decoded-hex byte buffer
+      // reaches the library decoder rather than a reconstructed proxy.
+      'wire_input_fnv1a64',
     ]);
     proseKey(meta, 'backend_form_vocabulary', dischargedBy: [
       // The runner obligation this paragraph states — every backend in
@@ -462,7 +460,7 @@ void main() {
       Object? caught;
       IpcMessage? decoded;
       try {
-        decoded = _decode(scenario);
+        decoded = _decode(scenario, block);
       } catch (e) {
         caught = e;
       }

@@ -72,7 +72,8 @@ List<int> _hexToBytes(String hex) {
 /// Returns the message, or `null` when the decoder REFUSED it — a conforming
 /// outcome for an identifier this runtime cannot represent. The caller decides
 /// which of the two is correct, because that split is the whole point.
-IpcMessage? _decode(Map<String, dynamic> scenario) {
+IpcMessage? _decode(
+    Map<String, dynamic> scenario, Map<String, dynamic> expectBlock) {
   try {
     switch (scenario['codec'] as String) {
       case 'json':
@@ -80,10 +81,14 @@ IpcMessage? _decode(Map<String, dynamic> scenario) {
         // object: `jsonDecode` is where the rounding would happen on a JS
         // target, so a runner that parsed the frame itself would move the
         // defect outside the code under test.
-        return IpcMessage.decodeJson(scenario['wire_json'] as String);
+        final raw = scenario['wire_json'] as String;
+        assertKey(expectBlock, 'wire_input_fnv1a64',
+            wireInputFnv1a64Hex(utf8.encode(raw)));
+        return IpcMessage.decodeJson(raw);
       case 'msgpack':
-        return decodeMsgpack(
-            _hexToBytes(scenario['wire_msgpack_hex'] as String));
+        final raw = _hexToBytes(scenario['wire_msgpack_hex'] as String);
+        assertKey(expectBlock, 'wire_input_fnv1a64', wireInputFnv1a64Hex(raw));
+        return decodeMsgpack(raw);
       default:
         throw StateError('unknown codec: ${scenario['codec']}');
     }
@@ -131,10 +136,9 @@ void main() {
       'outcomes',
     ]);
     proseKey(block, 'wire_encoding', dischargedBy: [
-      // "the expectation is `expect.node_id_decimal`, a decimal STRING" — none
-      // of the three carriers is a JSON number, and both codecs are replayed.
-      'node_id_decimal',
-      'codecs',
+      // Executable proof that the exact raw text / decoded-hex byte buffer
+      // reaches the library decoder rather than a reconstructed proxy.
+      'wire_input_fnv1a64',
     ]);
     proseKey(block, 'anti_vacuity', dischargedBy: [
       // "the two `exact` scenarios are the control": a binding must prove it
@@ -189,7 +193,7 @@ void main() {
       // Recorded where the decode DISPATCHES on it, so the vocabulary below is
       // differenced against the carriers this run really read.
       codecsReplayed.add(scenario['codec'] as String);
-      final message = _decode(scenario);
+      final message = _decode(scenario, expectBlock);
 
       if (message == null) {
         expect(representable, isFalse,

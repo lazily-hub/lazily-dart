@@ -70,12 +70,18 @@ List<int> _hexToBytes(String hex) {
   ];
 }
 
-IpcMessage _decode(Map<String, dynamic> scenario) {
+IpcMessage _decode(
+    Map<String, dynamic> scenario, Map<String, dynamic> expectBlock) {
   switch (scenario['codec'] as String) {
     case 'json':
-      return IpcMessage.decodeJson(scenario['wire_json'] as String);
+      final raw = scenario['wire_json'] as String;
+      assertKey(expectBlock, 'wire_input_fnv1a64',
+          wireInputFnv1a64Hex(utf8.encode(raw)));
+      return IpcMessage.decodeJson(raw);
     case 'msgpack':
-      return decodeMsgpack(_hexToBytes(scenario['wire_msgpack_hex'] as String));
+      final raw = _hexToBytes(scenario['wire_msgpack_hex'] as String);
+      assertKey(expectBlock, 'wire_input_fnv1a64', wireInputFnv1a64Hex(raw));
+      return decodeMsgpack(raw);
     default:
       fail('unknown codec: ${scenario['codec']}');
   }
@@ -283,16 +289,9 @@ void main() {
       'fields',
     ]);
     proseKey(block, 'wire_encoding', dischargedBy: [
-      // PROXY. The paragraph is a claim about how the CORPUS carries its bytes
-      // — raw text and lowercase hex rather than a pre-parsed object — and no
-      // assertion a run makes can observe that editorial choice directly. The
-      // honest proxy is the control that reads the raw `key` slot BEFORE the
-      // decoder runs: if the carriage had collapsed absent-entry and explicit
-      // nil, the three-way `key_form` split could not survive into this runner
-      // at all, in either codec.
-      'key_form',
-      'key_forms',
-      'codecs',
+      // Executable proof that the exact raw text / decoded-hex byte buffer
+      // reaches the library decoder rather than a reconstructed proxy.
+      'wire_input_fnv1a64',
     ]);
     proseKey(block, 'reencode_obligation',
         // The paragraph names its own executable form: "`expect.
@@ -373,7 +372,7 @@ void main() {
           '$where: the scenario declares a key form its own bytes must carry; '
               'the label and the wire disagree');
 
-      final message = _decode(scenario);
+      final message = _decode(scenario, expectBlock);
       assertKey(scenario, 'variant', _variantOf(message), '$where: variant');
       final key = _decodedKey(scenario, message);
       if (key != null) keysDecoded += 1;
