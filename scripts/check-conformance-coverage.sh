@@ -355,8 +355,8 @@ fi
 #    scenario floor at 120 would have left room to silently drop all six new
 #    shapes while the file kept being opened, which is precisely the gap
 #    #lzscenariocoverage exists to close.
-MIN_FIXTURES="${MIN_FIXTURES:-129}"
-MIN_SCENARIOS="${MIN_SCENARIOS:-126}"
+MIN_FIXTURES="${MIN_FIXTURES:-130}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-131}"
 
 if [ "$total" -eq 0 ]; then
   echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2
@@ -386,4 +386,3 @@ echo "conformance coverage OK: $covered/$total canonical fixtures OPENED by the 
      "(${#KNOWN_UNCOVERED[@]} listed as known-uncovered; runtime manifest — these bytes were really read)"
 echo "scenario replay OK: $SCENARIO_REPLAYED/$SCENARIO_TOTAL scenarios of the OPENED fixtures" \
      "were REPLAYED (${#KNOWN_UNREPLAYED_SCENARIOS[@]} excused; runtime ledger)"
-

@@ -188,53 +188,87 @@ class CapabilityHandshake {
   bool isCompatibleWith(CapabilityHandshake other) =>
       checkCompatible(other).isOk;
 
-  /// Structured compatibility check. Returns the offending field (and reason)
-  /// on mismatch so a caller can produce a clean fail-closed diagnostic —
-  /// mirrors `lazily-js::SessionHandshake.checkCompatible`.
+  /// Negotiate compatibility and retain the common session state.
+  ///
+  /// A receive ceiling is valid only when positive and negotiates to the
+  /// smaller advertisement. Fragmentation is available only when both peers
+  /// support it. `session_id` is the shared graph identity, so it must be
+  /// non-empty and equal; endpoint `peer_id` values may differ.
   ///
   /// [requiredFeatures] are checked against the *other* peer's offered set: if
   /// this peer requires a feature the other does not offer, the handshake fails
   /// closed on `features`.
-  CapabilityCheck checkCompatible(
+  CapabilityNegotiation negotiate(
     CapabilityHandshake other, {
     Iterable<String> requiredFeatures = const [],
   }) {
+    CapabilityNegotiation fail(String field, String reason) =>
+        CapabilityNegotiation(CapabilityCheck.fail(field, reason), null);
+
     if (protocolId != kProtocolId) {
-      return const CapabilityCheck.fail(
-          'protocol_id', 'local protocol_id != lazily-ipc');
+      return fail('protocol_id', 'local protocol_id != lazily-ipc');
     }
     if (other.protocolId != kProtocolId) {
-      return const CapabilityCheck.fail(
-          'protocol_id', 'remote protocol_id != lazily-ipc');
+      return fail('protocol_id', 'remote protocol_id != lazily-ipc');
     }
     if (protocolMajorVersion != kProtocolMajorVersion) {
-      return CapabilityCheck.fail(
+      return fail(
           'protocol_major_version', 'local major != $kProtocolMajorVersion');
     }
     if (other.protocolMajorVersion != kProtocolMajorVersion) {
-      return CapabilityCheck.fail(
+      return fail(
           'protocol_major_version', 'remote major != $kProtocolMajorVersion');
     }
     if (protocolMajorVersion != other.protocolMajorVersion) {
-      return const CapabilityCheck.fail(
-          'protocol_major_version', 'major version mismatch');
+      return fail('protocol_major_version', 'major version mismatch');
     }
     if (codec != other.codec) {
-      return CapabilityCheck.fail(
-          'codec', 'codec mismatch ($codec vs ${other.codec})');
+      return fail('codec', 'codec mismatch ($codec vs ${other.codec})');
     }
     if (!orderedReliable || !other.orderedReliable) {
-      return const CapabilityCheck.fail('ordered_reliable',
+      return fail('ordered_reliable',
           'both peers must require ordered-reliable delivery');
+    }
+    if (maxFrameSize <= 0 || other.maxFrameSize <= 0) {
+      return fail('max_frame_size',
+          'both peers must advertise a positive receive ceiling');
+    }
+    if (sessionId.isEmpty || other.sessionId.isEmpty) {
+      return fail(
+          'session_id', 'both peers must advertise a non-empty session_id');
+    }
+    if (sessionId != other.sessionId) {
+      return fail('session_id',
+          'session_id mismatch ($sessionId vs ${other.sessionId})');
     }
     final offered = other.features.toSet();
     for (final required in requiredFeatures) {
       if (!offered.contains(required)) {
-        return CapabilityCheck.fail(
+        return fail(
             'features', 'required feature "$required" not offered by peer');
       }
     }
-    return const CapabilityCheck.ok();
+    return CapabilityNegotiation(
+      const CapabilityCheck.ok(),
+      NegotiatedCapabilities(
+        codec: codec,
+        maxFrameSize: maxFrameSize < other.maxFrameSize
+            ? maxFrameSize
+            : other.maxFrameSize,
+        fragmentationSupported:
+            fragmentationSupported && other.fragmentationSupported,
+        sessionId: sessionId,
+      ),
+    );
+  }
+
+  /// Preserve the diagnostics-only API while delegating to [negotiate], so the
+  /// compatibility verdict cannot drift from the retained session state.
+  CapabilityCheck checkCompatible(
+    CapabilityHandshake other, {
+    Iterable<String> requiredFeatures = const [],
+  }) {
+    return negotiate(other, requiredFeatures: requiredFeatures).check;
   }
 
   /// The plain-JSON wire shape (a standalone frame, NOT externally tagged).
@@ -356,4 +390,29 @@ class CapabilityCheck {
   @override
   String toString() =>
       ok ? 'CapabilityCheck.ok' : 'CapabilityCheck.fail($field: $reason)';
+}
+
+/// Common state retained after two endpoint advertisements negotiate.
+class NegotiatedCapabilities {
+  const NegotiatedCapabilities({
+    required this.codec,
+    required this.maxFrameSize,
+    required this.fragmentationSupported,
+    required this.sessionId,
+  });
+
+  final String codec;
+  final int maxFrameSize;
+  final bool fragmentationSupported;
+  final String sessionId;
+}
+
+/// Compatibility diagnostics plus the retained session state.
+class CapabilityNegotiation {
+  const CapabilityNegotiation(this.check, this.capabilities);
+
+  final CapabilityCheck check;
+  final NegotiatedCapabilities? capabilities;
+
+  bool get isOk => check.isOk && capabilities != null;
 }

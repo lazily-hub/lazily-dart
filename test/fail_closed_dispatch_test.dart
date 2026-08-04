@@ -378,10 +378,20 @@ void main() {
     test('a handshake omitting protocol_id passes the compatibility gate', () {
       // The consequence of the leniency above, stated as an assertion so it
       // cannot change silently.
-      final lenient =
-          CapabilityHandshake.fromWire(<String, Object?>{'peer_id': 2});
+      final lenient = CapabilityHandshake.fromWire(
+          <String, Object?>{'peer_id': 2, 'session_id': 's'});
       expect(CapabilityHandshake.defaults(1, 's').checkCompatible(lenient).isOk,
           isTrue);
+    });
+
+    test('an omitted session_id decodes empty but fails the negotiation gate',
+        () {
+      final lenient =
+          CapabilityHandshake.fromWire(<String, Object?>{'peer_id': 2});
+      final check =
+          CapabilityHandshake.defaults(1, 's').checkCompatible(lenient);
+      expect(check.isOk, isFalse);
+      expect(check.field, 'session_id');
     });
 
     test('a PRESENT but wrong protocol_id still fails closed', () {
