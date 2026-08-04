@@ -24,6 +24,21 @@ Map<String, dynamic> _fixture() {
   throw StateError('fixture not found: $name');
 }
 
+Map<String, dynamic> _journalFixture() {
+  const name = 'reliable-sync/outbox_journal_decode.json';
+  for (final path in [
+    '../lazily-spec/conformance/$name',
+    'test/conformance/$name'
+  ]) {
+    final file = File(path);
+    if (file.existsSync()) {
+      return attributeFixture(jsonDecode(file.specReadAsStringSync()))
+          as Map<String, dynamic>;
+    }
+  }
+  throw StateError('fixture not found: $name');
+}
+
 /// By-id lookup through the scenario ledger (`#lzscenariocoverage`).
 Map<String, dynamic> _scenario(String name) => scenarioNamed(_fixture(), name);
 
@@ -98,5 +113,71 @@ void main() {
     final expect_ = assertionsOf(scenario['expect']);
     assertKey(expect_, 'loaded_cursor', handles['stale']!.ackedThrough);
     assertKey(expect_, 'loaded_cursor', FileOutboxStore(path).loadCursor());
+  });
+
+  test('file journal decode replays canonical unknown/torn opposites', () {
+    final fixture = _journalFixture();
+    for (final name in [
+      'unknown_interior_opcode_is_refused',
+      'torn_trailing_record_is_forgiven',
+    ]) {
+      final scenario = scenarioNamed(fixture, name);
+      final directory =
+          Directory.systemTemp.createTempSync('lazily-journal-decode-');
+      addTearDown(() => directory.deleteSync(recursive: true));
+      final path = '${directory.path}/outbox.jsonl';
+      final file = File(path)..createSync();
+      final store = FileOutboxStore(path);
+
+      for (final record in (scenario['records'] as List<dynamic>)
+          .cast<Map<String, dynamic>>()) {
+        final op = record['op'] as String;
+        final epoch = record['epoch'] as int;
+        switch (op) {
+          case 'put':
+            store.put(epoch,
+                Uint8List.fromList((record['frame'] as List).cast<int>()));
+          case 'delete':
+            store.deleteThrough(epoch);
+          case 'cursor':
+            store.saveCursor(epoch);
+          default:
+            file.writeAsStringSync('${jsonEncode(record)}\n',
+                mode: FileMode.append);
+        }
+      }
+
+      if (scenario['tail_fault'] case final Map<String, dynamic> tail) {
+        expect(tail['kind'], 'torn_record');
+        final encoded = jsonEncode({
+          'op': tail['op'],
+          'epoch': tail['epoch'],
+          'frame': tail['frame'],
+        });
+        final keepBytes = tail['keep_bytes'] as int;
+        expect(keepBytes, inInclusiveRange(1, encoded.length - 1));
+        file.writeAsStringSync(encoded.substring(0, keepBytes),
+            mode: FileMode.append);
+      }
+
+      List<StoredOutboxFrame>? entries;
+      Object? error;
+      try {
+        entries = store.scanAfter(scenario['scan_after'] as int);
+      } on FormatException catch (caught) {
+        error = caught;
+      }
+
+      final expected = assertionsOf(scenario['expect']);
+      assertKey(expected, 'outcome', error == null ? 'accept' : 'reject');
+      if (expected.containsKey('retained_epochs')) {
+        assertKey(expected, 'retained_epochs',
+            entries!.map((entry) => entry.$1).toList());
+        assertKey(expected, 'retained_frames',
+            entries.map((entry) => entry.$2.toList()).toList());
+      } else {
+        expect(error, isA<FormatException>());
+      }
+    }
   });
 }
