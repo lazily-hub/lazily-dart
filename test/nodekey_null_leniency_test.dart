@@ -308,12 +308,6 @@ void main() {
       'decoded_key',
       'reencoded_key_field_present',
     ]);
-    excuseKey(
-      block,
-      'generator',
-      'names the script that regenerates this fixture; a replay cannot observe '
-          'which generator produced the bytes it is reading',
-    );
     addTearDown(() => verifyProse(fixture));
 
     // Anti-vacuity in both directions. A runner that never decodes reports

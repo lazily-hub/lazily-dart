@@ -148,12 +148,6 @@ void main() {
       'node_id_decimal',
       'root_id_decimal',
     ]);
-    excuseKey(
-      block,
-      'generator',
-      'names the script that regenerates this fixture; a replay cannot observe '
-          'which generator produced the bytes it is reading',
-    );
     addTearDown(() => verifyProse(fixture));
 
     // The platform split, read from the library's own predicate rather than

@@ -377,14 +377,6 @@ void main() {
       // and each known kind decodes as itself rather than collapsing.
       'decoded_backend',
     ]);
-    // `generator` is NOT declared prose: it names a file, and there is nothing
-    // in a replay that could observe which script wrote the fixture.
-    excuseKey(
-      meta,
-      'generator',
-      'names the script that regenerates this fixture; a replay cannot observe '
-          'which generator produced the bytes it is reading',
-    );
     addTearDown(() => verifyProse(fixture));
 
     // Anti-vacuity counters, one per way a runner can pass while proving less
