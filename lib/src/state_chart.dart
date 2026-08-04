@@ -149,6 +149,11 @@ class ChartDef {
       stateDefs[entry.key] =
           _parseState(entry.key, entry.value as Map<String, dynamic>);
     }
+    final topInitial = obj['initial']! as String;
+    if (!stateDefs.containsKey(topInitial)) {
+      throw FormatException(
+          'chart.initial names undeclared state "$topInitial"');
+    }
 
     final kids = <String, List<String>>{};
     String? rootId;
@@ -266,58 +271,82 @@ String _requireStr(Object? v, String what) {
 }
 
 _StateDef _parseState(String id, Map<String, dynamic> obj) {
-  final parent = _asStr(obj['parent']);
-  final initial = _asStr(obj['initial']);
-  final defaultChild = _asStr(obj['default']);
+  String? optionalString(String field) {
+    final value = obj[field];
+    if (value != null && value is! String) {
+      throw FormatException('state $id: $field must be a string');
+    }
+    return value as String?;
+  }
+
+  final parent = optionalString('parent');
+  final initial = optionalString('initial');
+  final defaultChild = optionalString('default');
 
   if (obj['run'] != null) {
     throw FormatException(
         'state $id uses `run` actions, which are not supported');
   }
 
-  final _Kind kind;
   final histKind = obj['history'];
   final declaredKind = obj['kind'];
+  final parallel = obj['parallel'];
+  if (histKind != null && histKind is! String) {
+    throw FormatException('state $id: history must be a string');
+  }
+  if (parallel != null && parallel is! bool) {
+    throw FormatException('state $id: parallel must be a boolean');
+  }
+
+  final _Kind inferredKind;
+  final String inferredName;
   if (histKind is String) {
     switch (histKind) {
       case 'shallow':
-        kind = const _HistoryKind(false);
+        inferredKind = const _HistoryKind(false);
       case 'deep':
-        kind = const _HistoryKind(true);
+        inferredKind = const _HistoryKind(true);
       default:
         throw FormatException('state $id: unknown history kind $histKind');
     }
-  } else if (declaredKind != null) {
-    // `kind` is a CLOSED five-value enum in the schema, and the schema says it
-    // is INFERRED only when omitted (#failclosedsweep). This branch used to
-    // read `kind` for exactly one comparison — `== 'final'` — and let every
-    // other value, valid or not, fall through to inference. So
-    // `kind: "compound"` on a state without `initial` silently became atomic,
-    // `kind: "parallel"` without `parallel: true` silently became atomic, and
-    // a typo like `kind: "finall"` silently became atomic too: the chart
-    // parsed, ran, and produced a wrong active configuration with no error
-    // anywhere. A declared kind is now honoured, and an undeclared one is
-    // refused by name.
-    kind = switch (declaredKind) {
-      'atomic' => const _Atomic(),
-      'compound' => const _Compound(),
-      'parallel' => const _Parallel(),
-      'final' => const _Final(),
-      // `history` is spelled by the `history` field, which sets the shallow/
-      // deep flag the runtime needs; `kind: "history"` alone cannot say which.
-      'history' => throw FormatException(
-          'state $id: kind "history" requires a `history` field of '
-          '"shallow" or "deep"'),
-      _ => throw FormatException(
-          'state $id: unknown kind ${jsonEncode(declaredKind)} '
-          '(expected one of atomic, compound, parallel, history, final)'),
-    };
-  } else if (obj['parallel'] == true) {
-    kind = const _Parallel();
-  } else if (obj['initial'] is String) {
-    kind = const _Compound();
+    inferredName = 'history';
+  } else if (parallel == true) {
+    inferredKind = const _Parallel();
+    inferredName = 'parallel';
+  } else if (initial != null) {
+    inferredKind = const _Compound();
+    inferredName = 'compound';
   } else {
-    kind = const _Atomic();
+    inferredKind = const _Atomic();
+    inferredName = 'atomic';
+  }
+
+  if (declaredKind != null && declaredKind is! String) {
+    throw FormatException('state $id: kind must be a string');
+  }
+  final _Kind kind;
+  if (declaredKind == 'final') {
+    if (inferredName != 'atomic') {
+      throw FormatException(
+          'state $id: declared kind "final" contradicts "$inferredName"');
+    }
+    kind = const _Final();
+  } else if (declaredKind != null) {
+    if (!const {
+      'atomic',
+      'compound',
+      'parallel',
+      'history',
+    }.contains(declaredKind)) {
+      throw FormatException('state $id: unknown kind "$declaredKind"');
+    }
+    if (declaredKind != inferredName) {
+      throw FormatException(
+          'state $id: declared kind "$declaredKind" contradicts "$inferredName"');
+    }
+    kind = inferredKind;
+  } else {
+    kind = inferredKind;
   }
 
   final entry = _actionList(obj['entry']);
@@ -341,8 +370,6 @@ _StateDef _parseState(String id, Map<String, dynamic> obj) {
     exit: exit,
   );
 }
-
-String? _asStr(Object? v) => v is String ? v : null;
 
 List<String> _actionList(Object? raw) {
   if (raw == null) return const [];
@@ -375,11 +402,15 @@ _Transition _parseTransition(Object? raw) {
     } else {
       throw const FormatException('guard must be a string');
     }
+    final internal = raw['internal'];
+    if (internal != null && internal is! bool) {
+      throw const FormatException('transition internal must be a boolean');
+    }
     return _Transition(
       target: target,
       guard: guard,
       action: _actionList(raw['action']),
-      internal: raw['internal'] == true,
+      internal: internal == true,
     );
   }
   throw const FormatException('transition must be a string or object');

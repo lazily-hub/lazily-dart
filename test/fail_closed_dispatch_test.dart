@@ -103,18 +103,45 @@ void main() {
       expect(chart.configuration().toSet(), contains('child'));
     });
 
-    test('every schema kind value parses', () {
-      for (final kind in ['atomic', 'compound', 'parallel', 'final']) {
+    test('every structurally consistent schema kind value parses', () {
+      for (final chart in [
+        {
+          'initial': 'leaf',
+          'states': {
+            'leaf': {'kind': 'atomic'},
+          },
+        },
+        {
+          'initial': 'root',
+          'states': {
+            'root': {'kind': 'compound', 'initial': 'leaf'},
+            'leaf': {'parent': 'root'},
+          },
+        },
+        {
+          'initial': 'root',
+          'states': {
+            'root': {'kind': 'parallel', 'parallel': true},
+            'leaf': {'parent': 'root'},
+          },
+        },
+        {
+          'initial': 'history',
+          'states': {
+            'history': {'kind': 'history', 'history': 'shallow'},
+          },
+        },
+        {
+          'initial': 'done',
+          'states': {
+            'done': {'kind': 'final'},
+          },
+        },
+      ]) {
         expect(
-          () => ChartDef.fromJson({
-            'initial': 'leaf',
-            'states': {
-              'root': {'initial': 'leaf'},
-              'leaf': {'parent': 'root', 'kind': kind, 'initial': 'root'},
-            },
-          }),
+          () => ChartDef.fromJson(chart),
           returnsNormally,
-          reason: 'kind "$kind" is in the schema enum',
+          reason: 'declared kind agrees with structural kind',
         );
       }
     });

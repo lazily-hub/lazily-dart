@@ -36,6 +36,19 @@ List<String> _activeExpected(Object? expected) {
 }
 
 void main() {
+  test('malformed statechart corpus is rejected', () {
+    final fixture = _loadFixture('malformed_rejected.json');
+    final cases = (fixture['cases'] as List).cast<Map<String, dynamic>>();
+    expect(cases, isNotEmpty);
+    for (final scenario in cases) {
+      expect(
+        () => ChartDef.fromJson(scenario['chart'] as Map<String, dynamic>),
+        throwsA(anything),
+        reason: 'malformed statechart case ${scenario['name']} was accepted',
+      );
+    }
+  });
+
   for (final name in [
     'flat_cycle.json',
     'hierarchical_player.json',
