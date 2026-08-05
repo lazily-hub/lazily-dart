@@ -506,14 +506,18 @@ int _replayTopic(_Flavor flavor, String name) {
 }
 
 final class _WorkHarness {
-  _WorkHarness(this.flavor, {required int maxDeliveries}) {
+  _WorkHarness(
+    this.flavor, {
+    required int visibilityTimeout,
+    required int maxDeliveries,
+  }) {
     switch (flavor) {
       case _Flavor.singleThreaded:
         final context = Context();
         ctx = context;
         queue = WorkQueueCell<String>(
           context,
-          visibilityTimeout: 10,
+          visibilityTimeout: visibilityTimeout,
           maxDeliveries: maxDeliveries,
         );
         readers = {
@@ -528,7 +532,7 @@ final class _WorkHarness {
         ctx = context;
         queue = ThreadSafeWorkQueueCell<String>(
           context,
-          visibilityTimeout: 10,
+          visibilityTimeout: visibilityTimeout,
           maxDeliveries: maxDeliveries,
         );
         readers = context.read((raw) => {
@@ -543,7 +547,7 @@ final class _WorkHarness {
         ctx = context;
         queue = AsyncWorkQueueCell<String>(
           context,
-          visibilityTimeout: 10,
+          visibilityTimeout: visibilityTimeout,
           maxDeliveries: maxDeliveries,
         );
         readers = {
@@ -657,7 +661,8 @@ int _replayWork(_Flavor flavor, String name) {
   expect(initial['dead_letters'], isEmpty);
   final harness = _WorkHarness(
     flavor,
-    maxDeliveries: name == 'workqueue_lease_deadletter.json' ? 2 : 3,
+    visibilityTimeout: initial['visibility_timeout'] as int,
+    maxDeliveries: initial['max_deliveries'] as int,
   );
   final steps = _steps(fixture, name);
 

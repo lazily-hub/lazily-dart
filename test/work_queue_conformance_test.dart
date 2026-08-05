@@ -1,5 +1,18 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
+
+import 'conformance_manifest.dart';
+
+Map<String, dynamic> workQueueInitial(String name) {
+  final file = File('../lazily-spec/conformance/collections/$name');
+  expect(file.existsSync(), isTrue, reason: '$name is declared but absent');
+  final fixture = attributeFixture(jsonDecode(file.specReadAsStringSync()))
+      as Map<String, dynamic>;
+  return fixture['initial'] as Map<String, dynamic>;
+}
 
 void materialize(WorkQueueCell<String> queue) {
   queue.pendingLen();
@@ -25,10 +38,11 @@ void expectInvalidated(
 
 void main() {
   test('competing delivery fixture', () {
+    final initial = workQueueInitial('workqueue_competing_delivery.json');
     final queue = WorkQueueCell<String>(
       Context(),
-      visibilityTimeout: 10,
-      maxDeliveries: 3,
+      visibilityTimeout: initial['visibility_timeout'] as int,
+      maxDeliveries: initial['max_deliveries'] as int,
     );
     materialize(queue);
 
@@ -99,10 +113,11 @@ void main() {
   });
 
   test('visibility timeout and dead-letter fixture', () {
+    final initial = workQueueInitial('workqueue_lease_deadletter.json');
     final queue = WorkQueueCell<String>(
       Context(),
-      visibilityTimeout: 10,
-      maxDeliveries: 2,
+      visibilityTimeout: initial['visibility_timeout'] as int,
+      maxDeliveries: initial['max_deliveries'] as int,
     );
     materialize(queue);
     queue.push('poison');
