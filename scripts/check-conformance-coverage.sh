@@ -70,6 +70,9 @@ fi
 # half fiction is one nobody can read the real gaps out of. The stale-entry check
 # at the bottom of this file now fails on that direction too.
 KNOWN_UNCOVERED=(
+  # Experimental protobuf-v1 generation is piloted in Rust/Kotlin/TypeScript;
+  # Dart must negotiate the capability before replaying this typed trace.
+  "protobuf/graph_boundary_traces.json"
   "agent-doc/delta_agent_doc_state.json"
   "agent-doc/snapshot_agent_doc_state.json"
   "arena_blob.json"
