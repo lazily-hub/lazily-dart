@@ -79,6 +79,31 @@ enum EntryKind {
       };
 }
 
+/// The exact-key state exposed by [DependencyMap].
+///
+/// An absent publication is still represented by a real, stable reactive
+/// source. Publishing therefore changes that source from unavailable to
+/// available instead of requiring a membership signal or request/ack path.
+final class DependencyAvailability<V> {
+  const DependencyAvailability._(this.isAvailable, this.value);
+
+  const DependencyAvailability.unavailable() : this._(false, null);
+
+  const DependencyAvailability.available(V value) : this._(true, value);
+
+  final bool isAvailable;
+  final V? value;
+
+  @override
+  bool operator ==(Object other) =>
+      other is DependencyAvailability<V> &&
+      other.isAvailable == isAvailable &&
+      other.value == value;
+
+  @override
+  int get hashCode => Object.hash(isAvailable, value);
+}
+
 /// A keyed reactive collection generic over the entry handle kind `H`: a map of
 /// `K -> H` with reactive membership + order and independently-tracked per-entry
 /// nodes (cell-model.md § Keyed cell collections, `#reactivemap`).
@@ -397,6 +422,25 @@ class SourceMap<K, V> extends ReactiveMap<K, V, Source<V>> {
       }
     }
   }
+}
+
+/// Exact-key reactive dependency publication.
+///
+/// The first observation materializes one [Source] seeded with
+/// [DependencyAvailability.unavailable]. Later publications update that same
+/// source, so consumers depend on the requested key rather than map membership.
+class DependencyMap<K, V> extends SourceMap<K, DependencyAvailability<V>> {
+  DependencyMap(super.ctx);
+
+  DependencyAvailability<V> observeDependency(K key, [Compute? cx]) {
+    final source = entry(key, DependencyAvailability<V>.unavailable());
+    return cx == null ? source.value : cx.get(source);
+  }
+
+  void publish(K key, V value) =>
+      set(key, DependencyAvailability<V>.available(value));
+
+  void unpublish(K key) => set(key, DependencyAvailability<V>.unavailable());
 }
 
 /// A keyed **computed** collection: every entry is a guarded [Computed] whose

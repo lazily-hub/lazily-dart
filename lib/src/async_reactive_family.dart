@@ -257,6 +257,24 @@ class AsyncSourceMap<K, V> extends AsyncReactiveMap<K, V> {
       });
 }
 
+/// Async-flavor exact-key dependency publication.
+class AsyncDependencyMap<K, V>
+    extends AsyncSourceMap<K, DependencyAvailability<V>> {
+  AsyncDependencyMap(super.ctx);
+
+  DependencyAvailability<V> observeDependency(K key, [Compute? cx]) {
+    if (handle(key) == null) {
+      set(key, DependencyAvailability<V>.unavailable());
+    }
+    return observe(key, cx).$1 as DependencyAvailability<V>;
+  }
+
+  void publish(K key, V value) =>
+      set(key, DependencyAvailability<V>.available(value));
+
+  void unpublish(K key) => set(key, DependencyAvailability<V>.unavailable());
+}
+
 /// An async **derived-slot** map: entries are minted lazily on [touch] (pending)
 /// or eagerly via [materializeAll], and resolved via [drive]. No `set`.
 /// `H = AsyncSlot` (elided — value cache).

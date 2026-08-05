@@ -263,6 +263,24 @@ class ThreadSafeSourceMap<K, V> extends ThreadSafeReactiveMap<K, V> {
       });
 }
 
+/// Thread-safe exact-key dependency publication.
+class ThreadSafeDependencyMap<K, V>
+    extends ThreadSafeSourceMap<K, DependencyAvailability<V>> {
+  ThreadSafeDependencyMap(super.ctx);
+
+  DependencyAvailability<V> observeDependency(K key, [Compute? cx]) =>
+      getOrInsertWith(
+        key,
+        (_) => DependencyAvailability<V>.unavailable(),
+        cx,
+      );
+
+  void publish(K key, V value) =>
+      set(key, DependencyAvailability<V>.available(value));
+
+  void unpublish(K key) => set(key, DependencyAvailability<V>.unavailable());
+}
+
 /// A thread-safe **derived-slot** map: entries are derived values minted lazily
 /// on access ([getOrInsertWith]) or eagerly via [materializeAll]. No `set`.
 /// `H = Slot` (elided — value cache).
