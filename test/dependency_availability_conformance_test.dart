@@ -62,7 +62,10 @@ void main() {
       assertKey(expected, 'recomputes', recomputes);
       assertKey(expected, 'present_count', map.presentCount());
       assertKeyWith(expected, 'identity', (fixtureIdentity) {
-        expect(map.handle(key), same(identity), reason: '$fixtureIdentity');
+        expect(fixtureIdentity, equals('$key-1'),
+            reason: 'fixture identity is derived from the dependency key');
+        expect(map.handle(key), same(identity),
+            reason: 'the fixture identity must keep the same handle');
       });
     }
   });

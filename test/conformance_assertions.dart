@@ -307,7 +307,8 @@ void assertKey(
 /// [assertKey] for a comparison that is not equality — a tolerance, a set
 /// containment, a regex, a derived projection.
 ///
-/// Marks [key] read and asserted, then hands the fixture's value to [check].
+/// Marks [key] read, hands the fixture's value to [check], and marks it
+/// asserted only after the check succeeds.
 /// The contract is that the fixture value reaches the comparison, not that the
 /// comparison is `==`.
 T assertKeyWith<T>(
@@ -315,8 +316,10 @@ T assertKeyWith<T>(
   String key,
   T Function(dynamic expected) check,
 ) {
-  final expected = _markAsserted(block, key);
-  return check(expected);
+  final expected = _readExpected(block, key);
+  final result = check(expected);
+  _recordAsserted(block, key);
+  return result;
 }
 
 /// [assertKeyWith], but a no-op when the block does not carry [key] at all.
@@ -332,7 +335,9 @@ void assertKeyIfPresent(
 ) {
   final inner = block is _TrackedAssertions ? block._inner : block;
   if (!inner.containsKey(key)) return;
-  check(_markAsserted(block, key));
+  final expected = _readExpected(block, key);
+  check(expected);
+  _recordAsserted(block, key);
 }
 
 /// Declare that [key] cannot be asserted at this call site, and say why.
@@ -542,12 +547,23 @@ void assertKeyDeepIfPresent(
 }
 
 dynamic _markAsserted(Map<String, dynamic> block, String key) {
+  final value = _readExpected(block, key);
+  _recordAsserted(block, key);
+  return value;
+}
+
+dynamic _readExpected(Map<String, dynamic> block, String key) {
   final tracked = block is _TrackedAssertions ? block : _trackers[block];
   if (tracked == null) return block[key];
   tracked._read.add(key);
+  return tracked._inner[key];
+}
+
+void _recordAsserted(Map<String, dynamic> block, String key) {
+  final tracked = block is _TrackedAssertions ? block : _trackers[block];
+  if (tracked == null) return;
   tracked._asserted.add(key);
   _ledgerFor(tracked.fixture).asserted.add(key);
-  return tracked._inner[key];
 }
 
 // ---------------------------------------------------------------------------
