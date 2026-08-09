@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:lazily/ipc.dart';
 import 'package:test/test.dart';
@@ -208,15 +207,11 @@ void main() {
     });
 
     test('conformance delta_zero_copy_arrow.json round-trips', () {
-      // Sibling-first (`#lzspecconf`); the local mirror is the fallback only.
-      final path = [
-        '../lazily-spec/conformance/delta_zero_copy_arrow.json',
-        'test/conformance/delta_zero_copy_arrow.json',
-      ].firstWhere((p) => File(p).existsSync(),
-          orElse: () => throw StateError('fixture not found'));
-      final fixture =
-          attributeFixture(jsonDecode(File(path).specReadAsStringSync()))
-              as Map<String, dynamic>;
+      // Resolution lives in `conformance_manifest.dart`
+      // (#lzoverrideallrunners).
+      final fixture = attributeFixture(
+              jsonDecode(specReadFixture('delta_zero_copy_arrow.json')))
+          as Map<String, dynamic>;
       final wire = fixture['wire'] as Map<String, dynamic>;
       final msg = IpcMessage.fromWire(wire);
 

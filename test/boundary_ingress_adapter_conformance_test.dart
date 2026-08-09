@@ -209,7 +209,11 @@ class _Model {
 
 void main() {
   test('boundary ingress adapter replays the canonical contract', () {
-    final file = File('../lazily-spec/conformance/$_fixture');
+    // Corpus-relative fixture id. Root resolution — the
+    // `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+    // ordering, and the fail-closed behaviour when an explicit override cannot
+    // be read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+    final file = File(specFixturePath(_fixture));
     final fixture =
         (attributeFixture(jsonDecode(file.specReadAsStringSync())) as Map)
             .cast<String, dynamic>();

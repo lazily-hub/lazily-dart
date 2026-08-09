@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:test/test.dart';
 import 'package:lazily/lazily.dart';
 
@@ -15,20 +14,15 @@ import 'conformance_manifest.dart';
 /// Prefers the sibling `../lazily-spec/conformance/collections/` checkout,
 /// falling back to the mirrored `test/conformance/collections/` copies.
 
-Map<String, dynamic> _loadFixture(String name) {
-  final candidates = [
-    '../lazily-spec/conformance/collections/$name',
-    'test/conformance/collections/$name',
-  ];
-  for (final path in candidates) {
-    final f = File(path);
-    if (f.existsSync()) {
-      return attributeFixture(jsonDecode(f.specReadAsStringSync()))
-          as Map<String, dynamic>;
-    }
-  }
-  throw StateError('fixture not found: $name');
-}
+/// Corpus-relative fixture ids. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+const _family = 'collections';
+
+Map<String, dynamic> _loadFixture(String name) =>
+    attributeFixture(jsonDecode(specReadFixture('$_family/$name')))
+        as Map<String, dynamic>;
 
 void main() {
   group('TextCrdt convergence', () {

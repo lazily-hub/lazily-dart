@@ -23,34 +23,17 @@ import 'conformance_manifest.dart';
 /// ([ReactiveMap.getOrInsertWith]). A single `ReactiveMap<K,V,H>` fixes one
 /// handle kind, so a mixed-kind fixture is modelled by a [SourceMap] over the cell
 /// entries and a [ComputedMap] over the slot entries, sharing one logical key space.
-final _localDir = Directory('test/conformance/materialization');
-
-/// The canonical corpus, overridable by `LAZILY_SPEC_CONFORMANCE_DIR`.
+/// This runner's slice of the shared corpus.
 ///
-/// The same variable `scripts/check-conformance-coverage.sh` reads, and CI sets
-/// for that step. The runners of this repo hardcoded the relative sibling, which
-/// means a corpus PERTURBATION — flip a fixture's field, prove the suite reddens
-/// — could not be pointed at a scratch copy, and the shared `../lazily-spec`
-/// checkout is the one thing a probe must not edit. Honouring the variable here
-/// makes the probe repeatable; the default is unchanged.
-Directory get _specDir => Directory(
-    '${Platform.environment['LAZILY_SPEC_CONFORMANCE_DIR'] ?? '../lazily-spec/conformance'}'
-    '/materialization');
+/// The `LAZILY_SPEC_CONFORMANCE_DIR` override landed HERE first and nowhere
+/// else, which left the suite and the coverage guard auditing it able to read
+/// two different corpora in one run. Root resolution — the override, the
+/// sibling-first-then-mirror ordering, and the fail-closed behaviour when an
+/// explicit override cannot be read — now lives in `conformance_manifest.dart`
+/// and every runner routes through it (#lzoverrideallrunners).
+const _family = 'materialization';
 
-// Fixture resolution is SIBLING-FIRST (`#lzspecconf`): the canonical
-// lazily-spec checkout wins whenever it is present, and the mirrored copy under
-// `test/conformance/` is a fallback for a checkout without the sibling — never
-// an authority. The reverse order silently shadowed the canonical fixture with
-// a stale mirror, so CI cloned lazily-spec and then tested the local copy and
-// still reported green. `conformance_fixture_drift_test.dart` byte-compares the
-// two whenever both exist, so a stale mirror fails loudly instead of hiding.
-String _fixturePath(String name) {
-  final sibling = '${_specDir.path}/$name';
-  if (File(sibling).existsSync()) return sibling;
-  final local = '${_localDir.path}/$name';
-  if (File(local).existsSync()) return local;
-  throw StateError('fixture not found: $name (looked in $local, $sibling)');
-}
+String _fixturePath(String name) => specFixturePath('$_family/$name');
 
 Map<String, dynamic> _load(String name) => attributeFixture(
         jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))

@@ -58,7 +58,11 @@ import 'conformance_manifest.dart';
 /// *exactly*. That asserts in both directions: a new divergence fails the
 /// build, and a fixed one fails it until its entry is deleted. Neither can pass
 /// unnoticed, and neither is ever addressed by relaxing a fixture.
-const specDir = '../lazily-spec/conformance/reactive-graph';
+/// Root resolution — the `LAZILY_SPEC_CONFORMANCE_DIR` override, the
+/// sibling-first-then-mirror ordering, and the fail-closed behaviour when an
+/// explicit override cannot be read — lives in `conformance_manifest.dart`
+/// (#lzoverrideallrunners).
+final specDir = specCorpusSubdir('reactive-graph').path;
 
 /// The canonical fixture set, asserted against the directory listing so a
 /// fixture added or renamed upstream fails loudly instead of going unrun.
@@ -1232,7 +1236,8 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
 }
 
 void main() {
-  if (!Directory(specDir).existsSync()) {
+  final skipReason = specFamilySkipReason('reactive-graph');
+  if (skipReason != null) {
     stderr.writeln('skipping: $specDir absent - run with the lazily-spec '
         'sibling checked out');
     test(

@@ -14,13 +14,11 @@ import 'conformance_manifest.dart';
 /// lazily-kt) but is never an authority: preferring it meant CI cloned
 /// lazily-spec and then tested the local copy anyway.
 /// `conformance_fixture_drift_test.dart` fails on any mirror that has drifted.
-String _fixturePath(String name) {
-  final sibling = '../lazily-spec/conformance/$name';
-  if (File(sibling).existsSync()) return sibling;
-  final local = 'test/conformance/$name';
-  if (File(local).existsSync()) return local;
-  throw StateError('conformance fixture not found: $name');
-}
+/// Corpus-relative fixture ids. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+String _fixturePath(String name) => specFixturePath(name);
 
 Map<String, Object?> _loadFixture(String name) {
   final fixture = attributeFixture(

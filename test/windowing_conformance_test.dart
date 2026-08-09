@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
@@ -17,13 +16,14 @@ import 'conformance_manifest.dart';
 /// harness also guards against fixture drift across the family. Aggregation is
 /// the Sum merge (`(a, b) => a + b`).
 
-final _specDir = Directory('../lazily-spec/conformance/windowing');
+/// This runner's slice of the shared corpus. The root itself — and the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, and the sibling-first-then-mirror
+/// ordering — lives in `conformance_manifest.dart` so every runner and the
+/// coverage guard auditing them resolve ONE corpus (#lzoverrideallrunners).
+const _family = 'windowing';
 
 Map<String, dynamic> _loadFixture(String name) {
-  final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name')
-          .specReadAsStringSync()
-      : File('test/conformance/windowing/$name').specReadAsStringSync();
+  final src = specReadFixture('$_family/$name');
   return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
 

@@ -63,9 +63,220 @@ String wireInputFnv1a64Hex(List<int> bytes) {
   return hash.toRadixString(16).padLeft(16, '0');
 }
 
-/// Everything after this marker in a resolved path is the fixture's id, so the
-/// manifest is keyed the same way the canonical corpus listing is.
-const _conformanceMarker = 'lazily-spec/conformance/';
+// ---------------------------------------------------------------------------
+// Corpus root (#lzoverrideallrunners)
+// ---------------------------------------------------------------------------
+
+/// The variable that repoints the WHOLE suite at another copy of the corpus.
+///
+/// `scripts/check-conformance-coverage.sh` already read it, and one runner
+/// (`materialization_conformance_test.dart`) honoured it privately; every other
+/// runner hardcoded the relative sibling. That split is worse than not
+/// supporting the override at all: a corpus-perturbation probe could set the
+/// variable, watch the coverage guard audit the scratch copy, and watch the
+/// suite replay the canonical corpus — two different corpora in one run, and
+/// the probe reports a green that proves nothing.
+///
+/// So the resolution lives HERE, once, and every runner routes through
+/// [specFixturePath] / [specCorpusDir] / [specCorpusSubdir]. No test file
+/// spells the sibling path itself.
+const specCorpusEnvVar = 'LAZILY_SPEC_CONFORMANCE_DIR';
+
+/// The canonical corpus when nothing overrides it. Unchanged default.
+const defaultSpecCorpusPath = '../lazily-spec/conformance';
+
+/// The vendored mirror, kept only so the suite runs in a checkout without the
+/// sibling. A FALLBACK, never an authority.
+const specMirrorRoot = 'test/conformance';
+
+/// The operator's explicit corpus, or null when the variable is unset/blank.
+String? get specCorpusOverride {
+  final raw = Platform.environment[specCorpusEnvVar];
+  if (raw == null || raw.trim().isEmpty) return null;
+  return raw.trim();
+}
+
+/// Whether the corpus was explicitly repointed. Fixture resolution FAILS CLOSED
+/// while this is true: no mirror fallback, no skip.
+bool get specCorpusIsOverridden => specCorpusOverride != null;
+
+/// Path of the corpus root every runner reads from.
+///
+/// An explicitly-set-but-unreadable override THROWS. It must never degrade to
+/// the sibling or to the vendored mirror: a probe that asked for a scratch
+/// corpus and silently got the canonical one reports the suite green against a
+/// corpus it never touched, which is the exact vacuity this seam exists to
+/// close.
+String get specCorpusPath {
+  final override = specCorpusOverride;
+  if (override == null) return defaultSpecCorpusPath;
+  if (!Directory(override).existsSync()) {
+    throw StateError(
+      '$specCorpusEnvVar is set to "$override", which is not a readable '
+      'directory. Refusing to fall back to $defaultSpecCorpusPath or to the '
+      'vendored mirror $specMirrorRoot: an explicit corpus override that '
+      'silently resolves somewhere else turns a corpus-perturbation probe into '
+      'a vacuous green.',
+    );
+  }
+  return override;
+}
+
+/// [specCorpusPath] as a [Directory].
+Directory get specCorpusDir => Directory(specCorpusPath);
+
+/// One family subdirectory of the corpus, e.g. `specCorpusSubdir('collections')`.
+Directory specCorpusSubdir(String relative) =>
+    Directory('$specCorpusPath/$relative');
+
+/// The mirror counterpart of a corpus-relative path.
+String specMirrorPath(String relative) => '$specMirrorRoot/$relative';
+
+/// Whether the corpus root is present.
+///
+/// True whenever an override is set, because [specCorpusPath] has already
+/// thrown for an unreadable one — an override can never present as "absent",
+/// which is what a `skip:` gate keys off.
+bool get specCorpusExists => Directory(specCorpusPath).existsSync();
+
+/// Resolve one corpus-relative fixture path, or null when it is nowhere.
+///
+/// SIBLING-FIRST: the corpus root wins whenever the fixture is present there,
+/// and [specMirrorRoot] is consulted only after. The reverse order silently
+/// shadowed the canonical fixture with a stale mirror, so CI cloned lazily-spec
+/// and then tested the local copy and still reported green.
+///
+/// Under an override the mirror is NOT consulted at all: the operator named the
+/// corpus, and quietly reading a different one is the failure mode above.
+String? specFixturePathOrNull(String relative) {
+  final corpus = '$specCorpusPath/$relative';
+  if (File(corpus).existsSync()) return corpus;
+  if (specCorpusIsOverridden) return null;
+  final mirror = specMirrorPath(relative);
+  if (File(mirror).existsSync()) return mirror;
+  return null;
+}
+
+/// [specFixturePathOrNull], but a missing fixture is a hard error.
+String specFixturePath(String relative) {
+  final path = specFixturePathOrNull(relative);
+  if (path != null) return path;
+  if (specCorpusIsOverridden) {
+    throw StateError(
+      'conformance fixture not found: $relative (looked in $specCorpusPath). '
+      '$specCorpusEnvVar is set, so the vendored mirror $specMirrorRoot was '
+      'deliberately NOT consulted.',
+    );
+  }
+  throw StateError(
+    'conformance fixture not found: $relative (looked in $specCorpusPath, '
+    '${specMirrorPath(relative)})',
+  );
+}
+
+/// Read one corpus-relative fixture, recording the open.
+String specReadFixture(String relative) =>
+    File(specFixturePath(relative)).specReadAsStringSync();
+
+/// The directory a whole family of fixtures is replayed from.
+///
+/// Same ordering as [specFixturePathOrNull], one level up: the corpus root
+/// wins, the mirror is a fallback, and under an override the mirror is not
+/// consulted. For runners that list a directory rather than name each file.
+Directory specFamilyDir(String relative) {
+  final corpus = specCorpusSubdir(relative);
+  if (corpus.existsSync()) return corpus;
+  if (!specCorpusIsOverridden) {
+    final mirror = Directory(specMirrorPath(relative));
+    if (mirror.existsSync()) return mirror;
+  }
+  throw StateError(
+    'conformance corpus slice "$relative" is absent (looked in '
+    '${corpus.path}${specCorpusIsOverridden ? '; $specCorpusEnvVar is set, so '
+        'the vendored mirror was deliberately NOT consulted' : ', '
+        '${specMirrorPath(relative)}'}). A skipped replay would report a false '
+    'green.',
+  );
+}
+
+/// The reason a runner may SKIP a family whose corpus slice is absent, or null
+/// when it is present and the replay must run.
+///
+/// Under an override there is no skip. The operator named the corpus, so a
+/// missing slice is a hard error: a skipped replay under an explicit override
+/// reports green for a corpus that was never read, which is the vacuity the
+/// override exists to expose.
+String? specFamilySkipReason(String relative) {
+  final dir = specCorpusSubdir(relative);
+  if (dir.existsSync()) return null;
+  if (specCorpusIsOverridden) {
+    throw StateError(
+      '$specCorpusEnvVar is set to "$specCorpusPath", but ${dir.path} does not '
+      'exist. Refusing to skip: a skipped replay under an explicit corpus '
+      'override reports green for a corpus that was never read.',
+    );
+  }
+  return '${dir.path} absent - clone the lazily-spec sibling';
+}
+
+/// Absolute, `..`/`.`-collapsed form of [path], with `\` normalised to `/`.
+String _normalizeAbsolute(String path) {
+  final entity = File(path);
+  final raw = (entity.isAbsolute ? path : '${Directory.current.path}/$path')
+      .replaceAll(r'\', '/');
+  final out = <String>[];
+  for (final segment in raw.split('/')) {
+    if (segment.isEmpty || segment == '.') continue;
+    if (segment == '..') {
+      if (out.isNotEmpty) out.removeLast();
+      continue;
+    }
+    out.add(segment);
+  }
+  return '/${out.join('/')}';
+}
+
+/// Absolute prefixes that mark a read as "inside the corpus".
+///
+/// Both the collapsed path and the symlink-resolved one, because runners reach
+/// the corpus by either spelling. This is what makes manifest attribution
+/// RELATIVE TO THE RESOLVED ROOT rather than to a hardcoded
+/// `lazily-spec/conformance/` literal: a scratch copy whose path carries no such
+/// substring used to stop recording opens entirely, so a probe pointed at it
+/// produced an EMPTY manifest and the coverage guard's verdict became noise.
+late final List<String> _corpusRoots = _computeCorpusRoots();
+
+List<String> _computeCorpusRoots() {
+  final roots = <String>[];
+  void add(String path) {
+    final normalized = path.replaceAll(r'\', '/');
+    final terminated = normalized.endsWith('/') ? normalized : '$normalized/';
+    if (!roots.contains(terminated)) roots.add(terminated);
+  }
+
+  String path;
+  try {
+    path = specCorpusPath;
+  } catch (_) {
+    // An unreadable override is reported by resolution, not by bookkeeping.
+    return roots;
+  }
+  add(_normalizeAbsolute(path));
+  try {
+    add(Directory(path).resolveSymbolicLinksSync());
+  } catch (_) {
+    // Absent or unresolvable: the collapsed form above still attributes reads.
+  }
+  return roots;
+}
+
+/// The corpus-relative id of [absolute], or null when it is outside the corpus.
+String? _corpusRelative(String absolute) {
+  for (final root in _corpusRoots) {
+    if (absolute.startsWith(root)) return absolute.substring(root.length);
+  }
+  return null;
+}
 
 /// Ids already appended by THIS process. Deduplication is per-process only; the
 /// manifest is a union across processes and the guard sorts and uniques it.
@@ -82,26 +293,36 @@ extension SpecConformanceRead on File {
 /// Path-taking form, for call sites that do not already hold a [File].
 String specReadFileSync(String path) => File(path).specReadAsStringSync();
 
-/// Record [path] if it names a file inside the canonical conformance corpus.
+/// Record [path] if it names a file inside the conformance corpus.
 ///
 /// The path is resolved to an absolute one first: test processes may run from a
 /// different working directory than the package root, and the ids must be
 /// comparable to the corpus listing regardless.
+///
+/// Attribution is RELATIVE TO THE RESOLVED CORPUS ROOT, not to a
+/// `lazily-spec/conformance/` literal. Keyed off the literal, a corpus copied to
+/// a scratch directory recorded NOTHING — the manifest came out empty and the
+/// coverage guard, reading the same scratch listing, reported every fixture
+/// unopened. A perturbation probe cannot tell that apart from a suite that
+/// genuinely skipped the corpus.
 void recordConformanceRead(String path) {
-  final absolute = File(path).absolute.path.replaceAll(r'\', '/');
-  // Name the fixture for the unconsumed-key guard's failure message. Recorded
-  // for the vendored mirrors too (`test/conformance/...`), which the manifest
-  // below deliberately ignores: the manifest measures the canonical corpus,
-  // this only labels an error.
+  final absolute = _normalizeAbsolute(path);
+  final id = _corpusRelative(absolute);
+  if (id != null) {
+    // Name the fixture for the unconsumed-key guard's failure message, using
+    // the same id the manifest is keyed by.
+    currentConformanceFixture = id;
+    if (!_recorded.add(id)) return;
+    _appendToManifest(id);
+    return;
+  }
+  // Outside the corpus: label the vendored mirrors (`test/conformance/...`) for
+  // the unconsumed-key guard's error message only. The manifest deliberately
+  // ignores them — it measures the corpus.
   final vendored = absolute.indexOf('/conformance/');
   if (vendored != -1) {
     currentConformanceFixture = absolute.substring(vendored + 13);
   }
-  final index = absolute.indexOf(_conformanceMarker);
-  if (index == -1) return;
-  final id = absolute.substring(index + _conformanceMarker.length);
-  if (!_recorded.add(id)) return;
-  _appendToManifest(id);
 }
 
 // ---------------------------------------------------------------------------

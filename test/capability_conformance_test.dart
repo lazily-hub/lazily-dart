@@ -25,12 +25,17 @@ void _assertHandshake(
 
 void main() {
   test('canonical CapabilityHandshake negotiation scenarios', () {
-    final file = File('../lazily-spec/conformance/$_fixtureId');
-    if (!file.existsSync()) {
+    // Corpus-relative fixture id. Root resolution — the
+    // `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+    // ordering, and the fail-closed behaviour when an explicit override cannot
+    // be read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+    final path = specFixturePathOrNull(_fixtureId);
+    if (path == null) {
       fail('canonical capability-handshake fixture is unavailable');
     }
-    final fixture = attributeFixture(jsonDecode(file.specReadAsStringSync()))
-        as Map<String, dynamic>;
+    final fixture =
+        attributeFixture(jsonDecode(File(path).specReadAsStringSync()))
+            as Map<String, dynamic>;
     final root = assertionsOf(fixture, _fixtureId);
     assertKey(root, 'protocol_version', 1);
     assertKey(root, 'kind', 'CapabilityHandshake');

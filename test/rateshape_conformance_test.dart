@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:lazily/lazily.dart';
 // rateshape is not yet re-exported from the barrel (coordinator owns that);
@@ -18,13 +17,14 @@ import 'conformance_manifest.dart';
 /// that source tree is reachable on disk (sibling repo) it is preferred so this
 /// harness also guards against fixture drift across the family.
 
-final _specDir = Directory('../lazily-spec/conformance/rateshape');
+/// This runner's slice of the shared corpus. The root itself — and the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, and the sibling-first-then-mirror
+/// ordering — lives in `conformance_manifest.dart` so every runner and the
+/// coverage guard auditing them resolve ONE corpus (#lzoverrideallrunners).
+const _family = 'rateshape';
 
 Map<String, dynamic> _loadFixture(String name) {
-  final src = _specDir.existsSync()
-      ? File(_specDir.resolveSymbolicLinksSync() + '/$name')
-          .specReadAsStringSync()
-      : File('test/conformance/rateshape/$name').specReadAsStringSync();
+  final src = specReadFixture('$_family/$name');
   return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
 

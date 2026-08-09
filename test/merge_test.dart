@@ -5,7 +5,6 @@
 // lazily-kt.
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
@@ -17,15 +16,7 @@ import 'conformance_manifest.dart';
 /// as a "CI baseline" — a fixture-backed test that quietly becomes a no-op is
 /// indistinguishable from a passing one, which is the same class of blind spot
 /// as the local-first shadowing.
-String _fixture(String name) {
-  for (final path in [
-    '../lazily-spec/conformance/collections/$name',
-    'test/conformance/collections/$name',
-  ]) {
-    if (File(path).existsSync()) return File(path).specReadAsStringSync();
-  }
-  throw StateError('fixture not found: $name');
-}
+String _fixture(String name) => specReadFixture('collections/$name');
 
 void main() {
   group('merge algebra', () {

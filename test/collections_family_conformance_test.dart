@@ -21,24 +21,16 @@ import 'conformance_manifest.dart';
 /// compute body, not by a cache flag: a counter the library has to move is the
 /// one probe that cannot be satisfied by runner bookkeeping.
 
-final _localDir = Directory('test/conformance/collections');
-final _specDir = Directory('../lazily-spec/conformance/collections');
+/// This runner's slice of the shared corpus. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart`, so every runner and the
+/// coverage guard auditing them resolve ONE corpus (#lzoverrideallrunners).
+const _family = 'collections';
 
 const _fixtures = ['cellmap_atomic_move.json', 'cellmap_independence.json'];
 
-// Sibling-first, as the sibling harness does: the canonical checkout wins
-// whenever present, and the mirror is a fallback, never an authority.
-String? _fixturePath(String name) {
-  if (_specDir.existsSync()) {
-    final sibling = '${_specDir.resolveSymbolicLinksSync()}/$name';
-    if (File(sibling).existsSync()) return sibling;
-  }
-  if (_localDir.existsSync()) {
-    final local = '${_localDir.resolveSymbolicLinksSync()}/$name';
-    if (File(local).existsSync()) return local;
-  }
-  return null;
-}
+String? _fixturePath(String name) => specFixturePathOrNull('$_family/$name');
 
 /// Order-sensitive, so an order reader's *value* changes on a reorder and not
 /// merely its cache state.

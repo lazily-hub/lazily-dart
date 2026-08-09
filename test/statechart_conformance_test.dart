@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
@@ -16,16 +15,14 @@ import 'conformance_manifest.dart';
 /// that source tree is reachable on disk (sibling repo), it is preferred so this
 /// harness also guards against fixture drift across the family.
 
-final _specDir = Directory('../lazily-spec/conformance/statechart');
+/// Corpus-relative fixture ids. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+const _family = 'statechart';
 
 Map<String, dynamic> _loadFixture(String name) {
-  final specPath = _specDir.resolveSymbolicLinksSync() + '/$name';
-  final src = File(specPath).existsSync()
-      ? File(specPath).specReadAsStringSync()
-      : (() {
-          final resource = 'test/conformance/statechart/$name';
-          return File(resource).specReadAsStringSync();
-        })();
+  final src = specReadFixture('$_family/$name');
   return attributeFixture(jsonDecode(src)) as Map<String, dynamic>;
 }
 

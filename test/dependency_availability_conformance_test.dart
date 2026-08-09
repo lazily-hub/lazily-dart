@@ -6,12 +6,12 @@ import 'package:test/test.dart';
 
 import 'conformance_manifest.dart';
 
-String _fixturePath() {
-  const name = 'dependency_reactive_availability.json';
-  final sibling = File('../lazily-spec/conformance/collections/$name');
-  if (sibling.existsSync()) return sibling.path;
-  return 'test/conformance/collections/$name';
-}
+/// Corpus-relative fixture id. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+String _fixturePath() =>
+    specFixturePath('collections/dependency_reactive_availability.json');
 
 Object _state(DependencyAvailability<int> state) =>
     state.isAvailable ? {'Available': state.value} : 'Unavailable';

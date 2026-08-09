@@ -1,16 +1,19 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:lazily/stdlib.dart' as stdlib;
 import 'package:test/test.dart';
 
 import 'conformance_manifest.dart';
 
-final _specDir = Directory('../lazily-spec/conformance/stdlib');
+/// Corpus-relative fixture ids. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+const _family = 'stdlib';
 
 Map<String, dynamic> _fixture(String name) {
-  final source = File('${_specDir.path}/$name').specReadAsStringSync();
+  final source = specReadFixture('$_family/$name');
   return attributeFixture(jsonDecode(source)) as Map<String, dynamic>;
 }
 
@@ -156,11 +159,12 @@ Map<String, Object?> _barrierStep(
 }
 
 void main() {
-  if (!_specDir.existsSync()) {
+  final skipReason = specFamilySkipReason(_family);
+  if (skipReason != null) {
     test(
       'portable stdlib canonical fixtures',
       () {},
-      skip: '${_specDir.path} absent - clone the lazily-spec sibling',
+      skip: skipReason,
     );
     return;
   }

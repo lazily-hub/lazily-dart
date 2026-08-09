@@ -84,19 +84,13 @@ const _ledger = <({String primitive, _Flavor flavor, String marker})>[
   ),
 ];
 
-Directory _fixtureDir() {
-  for (final path in [
-    '../lazily-spec/conformance/collections',
-    'test/conformance/collections',
-  ]) {
-    final dir = Directory(path);
-    if (dir.existsSync()) return dir;
-  }
-  throw StateError(
-    'canonical queue-family corpus is absent; a skipped flavor replay would '
-    'report a false green',
-  );
-}
+/// Corpus slice this runner replays. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart` (#lzoverrideallrunners). An
+/// absent corpus still throws: a skipped flavor replay would report a false
+/// green.
+Directory _fixtureDir() => specFamilyDir('collections');
 
 Map<String, dynamic> _fixture(String name) {
   final file = File('${_fixtureDir().path}/$name');

@@ -1,27 +1,17 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:lazily/lazily.dart';
 import 'package:test/test.dart';
 
 import 'conformance_manifest.dart';
 
-/// Sibling-first (`#lzspecconf`) — this read the local mirror unconditionally,
-/// so the canonical fixture was never consulted even when checked out.
-Map<String, dynamic> _fixture() {
-  const name = 'crdt-tree/algebra.json';
-  for (final path in [
-    '../lazily-spec/conformance/$name',
-    'test/conformance/$name'
-  ]) {
-    final file = File(path);
-    if (file.existsSync()) {
-      return attributeFixture(jsonDecode(file.specReadAsStringSync()))
-          as Map<String, dynamic>;
-    }
-  }
-  throw StateError('fixture not found: $name');
-}
+/// Corpus-relative fixture ids. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+Map<String, dynamic> _fixture() =>
+    attributeFixture(jsonDecode(specReadFixture('crdt-tree/algebra.json')))
+        as Map<String, dynamic>;
 
 /// By-id lookup through the scenario ledger (`#lzscenariocoverage`), so
 /// reaching for three of this fixture's scenarios and forgetting the fourth is

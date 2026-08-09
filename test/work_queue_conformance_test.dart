@@ -6,11 +6,18 @@ import 'package:test/test.dart';
 
 import 'conformance_manifest.dart';
 
+/// Corpus-relative fixture ids. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+const _family = 'collections';
+
 Map<String, dynamic> workQueueInitial(String name) {
-  final file = File('../lazily-spec/conformance/collections/$name');
-  expect(file.existsSync(), isTrue, reason: '$name is declared but absent');
-  final fixture = attributeFixture(jsonDecode(file.specReadAsStringSync()))
-      as Map<String, dynamic>;
+  final path = specFixturePathOrNull('$_family/$name');
+  expect(path, isNotNull, reason: '$name is declared but absent');
+  final fixture =
+      attributeFixture(jsonDecode(File(path!).specReadAsStringSync()))
+          as Map<String, dynamic>;
   return fixture['initial'] as Map<String, dynamic>;
 }
 

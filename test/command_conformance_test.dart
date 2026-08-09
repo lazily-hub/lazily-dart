@@ -15,27 +15,14 @@ import 'conformance_manifest.dart';
 /// non-terminal progress; a command becomes terminal only when a terminal
 /// [CausalReceipt] folds in.
 
-final _localDir = Directory('test/conformance/message-passing');
-final _specDir = Directory('../lazily-spec/conformance/message-passing');
+/// This runner's slice of the shared corpus. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart`, so every runner and the
+/// coverage guard auditing them resolve ONE corpus (#lzoverrideallrunners).
+const _family = 'message-passing';
 
-// Fixture resolution is SIBLING-FIRST (`#lzspecconf`): the canonical
-// lazily-spec checkout wins whenever it is present, and the mirrored copy under
-// `test/conformance/` is a fallback for a checkout without the sibling — never
-// an authority. The reverse order silently shadowed the canonical fixture with
-// a stale mirror, so CI cloned lazily-spec and then tested the local copy and
-// still reported green. `conformance_fixture_drift_test.dart` byte-compares the
-// two whenever both exist, so a stale mirror fails loudly instead of hiding.
-String _fixturePath(String name) {
-  if (_specDir.existsSync()) {
-    final sibling = _specDir.resolveSymbolicLinksSync() + '/$name';
-    if (File(sibling).existsSync()) return sibling;
-  }
-  if (_localDir.existsSync()) {
-    final local = _localDir.resolveSymbolicLinksSync() + '/$name';
-    if (File(local).existsSync()) return local;
-  }
-  throw StateError('message-passing fixture not found: $name');
-}
+String _fixturePath(String name) => specFixturePath('$_family/$name');
 
 Map<String, dynamic> _load(String name) => attributeFixture(
         jsonDecode(File(_fixturePath(name)).specReadAsStringSync()))

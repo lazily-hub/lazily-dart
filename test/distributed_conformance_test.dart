@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:test/test.dart';
 import 'package:lazily/ipc.dart';
 
@@ -7,20 +6,13 @@ import 'conformance_manifest.dart';
 
 /// Replay the distributed + receipts + signaling conformance fixtures.
 
-Map<String, dynamic> _loadFixture(List<String> segments) {
-  final candidates = [
-    '../lazily-spec/conformance/${segments.join('/')}',
-    'test/conformance/${segments.join('/')}',
-  ];
-  for (final path in candidates) {
-    final f = File(path);
-    if (f.existsSync()) {
-      return attributeFixture(jsonDecode(f.specReadAsStringSync()))
-          as Map<String, dynamic>;
-    }
-  }
-  throw StateError('fixture not found: ${segments.join('/')}');
-}
+/// Corpus-relative fixture ids. Root resolution — the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override, the sibling-first-then-mirror
+/// ordering, and the fail-closed behaviour when an explicit override cannot be
+/// read — lives in `conformance_manifest.dart` (#lzoverrideallrunners).
+Map<String, dynamic> _loadFixture(List<String> segments) =>
+    attributeFixture(jsonDecode(specReadFixture(segments.join('/'))))
+        as Map<String, dynamic>;
 
 void main() {
   group('Distributed anti-entropy', () {

@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 
+import 'conformance_manifest.dart';
+
 /// Mirror-drift guard (`#lzspecconf`).
 ///
 /// Every conformance test in this package now resolves SIBLING-FIRST, so the
@@ -22,8 +24,12 @@ import 'package:test/test.dart';
 /// scenario, and failing CI over reformatting would be noise the team learns to
 /// suppress. Byte-level-only differences are reported on failure and listed by
 /// the `mirrors are byte-identical` diagnostic below, which is informational.
-const specRoot = '../lazily-spec/conformance';
-const mirrorRoot = 'test/conformance';
+/// The corpus this run tests against. Resolution — including the
+/// `LAZILY_SPEC_CONFORMANCE_DIR` override — lives in
+/// `conformance_manifest.dart`, so this guard and the runners it vouches for
+/// can never be pointed at two different corpora (#lzoverrideallrunners).
+final specRoot = specCorpusPath;
+const mirrorRoot = specMirrorRoot;
 
 /// One mirror file paired with its canonical counterpart.
 class _Pair {
@@ -48,8 +54,7 @@ List<_Pair> _pairs() {
 }
 
 void main() {
-  final spec = Directory(specRoot);
-  if (!spec.existsSync()) {
+  if (!specCorpusExists) {
     stderr.writeln(
         'skipping: $specRoot absent - run with the lazily-spec sibling');
     test(
