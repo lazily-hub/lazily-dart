@@ -24,7 +24,18 @@ import 'conformance_manifest.dart';
 /// handle kind, so a mixed-kind fixture is modelled by a [SourceMap] over the cell
 /// entries and a [ComputedMap] over the slot entries, sharing one logical key space.
 final _localDir = Directory('test/conformance/materialization');
-final _specDir = Directory('../lazily-spec/conformance/materialization');
+
+/// The canonical corpus, overridable by `LAZILY_SPEC_CONFORMANCE_DIR`.
+///
+/// The same variable `scripts/check-conformance-coverage.sh` reads, and CI sets
+/// for that step. The runners of this repo hardcoded the relative sibling, which
+/// means a corpus PERTURBATION — flip a fixture's field, prove the suite reddens
+/// — could not be pointed at a scratch copy, and the shared `../lazily-spec`
+/// checkout is the one thing a probe must not edit. Honouring the variable here
+/// makes the probe repeatable; the default is unchanged.
+Directory get _specDir => Directory(
+    '${Platform.environment['LAZILY_SPEC_CONFORMANCE_DIR'] ?? '../lazily-spec/conformance'}'
+    '/materialization');
 
 // Fixture resolution is SIBLING-FIRST (`#lzspecconf`): the canonical
 // lazily-spec checkout wins whenever it is present, and the mirrored copy under
@@ -98,17 +109,51 @@ Map<String, dynamic> _checkValFixture(String name) {
   final expected = assertionsOf(fixture['expected']);
   final lookup = (Compute cx, String k) => spec.values[k]!;
 
-  // default_mode_eager. Asserted against the fixture's own value rather than
-  // read-and-dropped: this runner models the eager default only, so a corpus
-  // that flips the field must redden here instead of replaying silently.
-  assertKey(expected, 'default_mode', 'eager',
-      'this runner models the eager default only');
-
   final ctx = Context();
 
+  // The map this fixture describes, built by one strategy: `eager` pre-mints the
+  // whole keyset, `lazy` mints on access and so holds nothing at build.
+  ComputedMap<String, int> build({required bool eager}) {
+    final map = ComputedMap<String, int>(ctx);
+    if (eager) map.materializeAll(spec.keys, lookup);
+    return map;
+  }
+
+  // default_mode, clause `default_mode_eager` (`#lzdefaultmodeuniform`).
+  //
+  // There is no mode flag to read back, so the fixture's word SELECTS THE BUILD
+  // and the fact asserted is behavioural: a map built the way the fixture names
+  // its default is fully materialized at build. Dispatch chooses the
+  // construction and nothing else; an unknown word is a hard failure, never a
+  // silent skip and never a default arm.
+  //
+  // The right-hand side is the TOTAL declared keyset, never "what this mode
+  // implies". Asserting the per-mode implication instead — eager ⇒ all, lazy ⇒
+  // none — is a TAUTOLOGY on the lazy arm: the library really does defer
+  // everything, so a corpus flipped to `lazy` would stay green and the
+  // perturbation would prove nothing. Only the eager build satisfies the form
+  // written here, so the flip reddens; and so does a pre-mint loop that stops
+  // materializing.
+  //
+  // This replaced `assertKey(expected, 'default_mode', 'eager', ...)`, which
+  // compared the fixture's value to a hardcoded literal and therefore asserted
+  // only that the fixture equals itself (`#lzconsumednotasserted`): a binding
+  // whose eager build materialized NOTHING passed it.
+  assertKeyWith(expected, 'default_mode', (v) {
+    final mode = v as String;
+    final byDefault = switch (mode) {
+      'eager' => build(eager: true),
+      'lazy' => build(eager: false),
+      _ => throw ArgumentError.value(
+          v, 'default_mode', 'unknown materialization default'),
+    };
+    expect(_asSet(byDefault.presentKeys()), _asSet(spec.keys),
+        reason: 'default_mode_eager: a map built the fixture default way '
+            '($mode) materializes every declared key at build');
+  });
+
   // eager: pre-mint the whole keyset.
-  final eager = ComputedMap<String, int>(ctx)
-    ..materializeAll(spec.keys, lookup);
+  final eager = build(eager: true);
   expect(eager.entryKind, EntryKind.computed);
   expect(eager.presentCount(), spec.keys.length,
       reason: 'eager_materializes_all');
@@ -119,7 +164,7 @@ Map<String, dynamic> _checkValFixture(String name) {
           _asSet(eager.presentKeys()), _asSet((v as List).cast<String>())));
 
   // lazy: empty, mint-on-access.
-  final lazy = ComputedMap<String, int>(ctx);
+  final lazy = build(eager: false);
   expect(lazy.presentCount(), 0, reason: 'lazy defers every derived slot');
 
   // observe_canonical / eager_lazy_observationally_equivalent.
@@ -210,8 +255,6 @@ void main() {
       final fixture = _load('entry_kind_orthogonal_to_mode.json');
       expect(_computedMapModels, contains(fixture['model']));
       final expected = assertionsOf(fixture['expected']);
-      assertKey(expected, 'default_mode', 'eager',
-          'this runner models the eager default only');
 
       final entries = (fixture['spec'] as Map<String, dynamic>)['entries']
           as Map<String, dynamic>;
@@ -234,26 +277,68 @@ void main() {
 
       final ctx = Context();
 
-      // Eager build: every entry present (cells + slots).
-      final eagerCells = SourceMap<String, int>(ctx);
-      for (final k in cellKeys) {
-        eagerCells.entry(k, lookup(k));
+      // One build of the fixture's mixed-kind map by one strategy. A single
+      // ReactiveMap fixes one handle kind, so the source half and the computed
+      // half are two maps over one logical key space. Source entries are
+      // materialized at build under EVERY strategy; the derived computeds are
+      // pre-minted only under eager.
+      ({SourceMap<String, int> cells, ComputedMap<String, int> slots}) build(
+          {required bool eager}) {
+        final cells = SourceMap<String, int>(ctx);
+        for (final k in cellKeys) {
+          cells.entry(k, lookup(k));
+        }
+        final slots = ComputedMap<String, int>(ctx);
+        if (eager) slots.materializeAll(slotKeys, (_, k) => lookup(k));
+        return (cells: cells, slots: slots);
       }
-      final eagerSlots = ComputedMap<String, int>(ctx)
-        ..materializeAll(slotKeys, (_, k) => lookup(k));
+
+      Set<String> presentAtBuild(
+              ({
+                SourceMap<String, int> cells,
+                ComputedMap<String, int> slots
+              }) m) =>
+          _asSet(m.cells.presentKeys())..addAll(m.slots.presentKeys());
+
+      // default_mode, clause `default_mode_eager` (`#lzdefaultmodeuniform`).
+      //
+      // Same behavioural shape as the `spec.val` fixtures above: the fixture's
+      // word selects the build, and the build is asserted to hold every DECLARED
+      // entry — sources and computeds alike — at build time. The entry-kind split
+      // belongs to the construction, not to the right-hand side: asserting
+      // "under lazy, exactly the source entries are present" is the tautology
+      // this fixture is most likely to hide behind, since that is precisely how
+      // the library behaves, and a corpus flipped to `lazy` would stay green.
+      // An unknown word is a hard failure. (Was a hardcoded-literal comparison,
+      // which asserted only that the fixture equals itself —
+      // `#lzconsumednotasserted`.)
+      assertKeyWith(expected, 'default_mode', (v) {
+        final mode = v as String;
+        final byDefault = switch (mode) {
+          'eager' => build(eager: true),
+          'lazy' => build(eager: false),
+          _ => throw ArgumentError.value(
+              v, 'default_mode', 'unknown materialization default'),
+        };
+        expect(presentAtBuild(byDefault), {...cellKeys, ...slotKeys},
+            reason: 'default_mode_eager: a map built the fixture default way '
+                '($mode) materializes every declared entry at build');
+      });
+
+      // Eager build: every entry present (cells + slots).
+      final eagerBuild = build(eager: true);
+      final eagerCells = eagerBuild.cells;
+      final eagerSlots = eagerBuild.slots;
       expect(eagerCells.entryKind, EntryKind.source);
       expect(eagerSlots.entryKind, EntryKind.computed);
-      final eagerPresent = _asSet(eagerCells.presentKeys())
-        ..addAll(eagerSlots.presentKeys());
+      final eagerPresent = presentAtBuild(eagerBuild);
       assertKeyWith(expected, 'eager_present',
           (v) => expect(eagerPresent, _asSet((v as List).cast<String>())));
 
       // Lazy build: cells present at build (always materialized), slots deferred.
-      final lazyCells = SourceMap<String, int>(ctx);
-      for (final k in cellKeys) {
-        lazyCells.entry(k, lookup(k));
-      }
-      final lazySlots = ComputedMap<String, int>(ctx);
+      final lazyBuild = build(eager: false);
+      final lazyCells = lazyBuild.cells;
+      final lazySlots = lazyBuild.slots;
       expect(lazySlots.presentKeys(), isEmpty,
           reason: 'slots deferred at build');
       assertKeyWith(expected, 'lazy_present_at_build', (v) {
