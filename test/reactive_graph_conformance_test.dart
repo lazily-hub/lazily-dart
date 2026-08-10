@@ -696,27 +696,80 @@ class _Report {
   final _Observation observation = _Observation();
 }
 
-List<Map<String, dynamic>> _stepsOf(Map<String, dynamic> node) =>
-    (node['steps'] as List).cast<Map<String, dynamic>>();
+/// Every helper below takes [fixture] — the corpus-relative FILE NAME — and
+/// names it in every failure it raises (`#lzledgeragreementaudit`).
+///
+/// This runner ENUMERATES `reactive-graph/`, so the next fixture the shared
+/// corpus grows arrives here whether or not this binding models it. Two ledgers
+/// then describe the same absence: `KNOWN_UNCOVERED` in
+/// `scripts/check-conformance-coverage.sh` names whole files this binding never
+/// opens, and [expectedFixtures] / [expectedSkips] name what this host replays.
+/// They can only be reconciled by a human who can see WHICH fixture failed. A
+/// bare `Bad state: unknown fixture shape X` — which is what [_opsOf] used to
+/// throw, from the op-set pre-pass that runs BEFORE the named dispatch below —
+/// identifies neither the file nor the ledger to edit. lazily-cs was red on
+/// exactly that shape of message (a `KeyNotFoundException` naming neither the
+/// fixture nor the reason) and was fixed the same way: fail closed, and say
+/// which fixture and why.
+List<Map<String, dynamic>> _stepsOf(Map<String, dynamic> node, String fixture) {
+  final steps = node['steps'];
+  if (steps is! List) {
+    throw StateError(
+        '$fixture: declares no `steps` list (got ${steps.runtimeType}) — a '
+        'fixture this runner cannot read its op stream from is a gap in this '
+        'host, never a fixture to relax');
+  }
+  return steps.cast<Map<String, dynamic>>();
+}
 
-List<Map<String, dynamic>> _scenariosOf(Map<String, dynamic> fx) =>
-    (fx['scenarios'] as List).cast<Map<String, dynamic>>();
+List<Map<String, dynamic>> _scenariosOf(
+    Map<String, dynamic> fx, String fixture) {
+  final scenarios = fx['scenarios'];
+  if (scenarios is! List) {
+    throw StateError(
+        '$fixture: shape is `scenarios` but it declares no `scenarios` list '
+        '(got ${scenarios.runtimeType})');
+  }
+  return scenarios.cast<Map<String, dynamic>>();
+}
 
-Set<String> _opsOf(Map<String, dynamic> fx) {
+String _opTypeOf(Map<String, dynamic> step, String fixture, int index) {
+  final op = step['op'];
+  if (op is! Map) {
+    throw StateError('$fixture: step $index declares no `op` object (got '
+        '${op.runtimeType})');
+  }
+  final type = op['type'];
+  if (type is! String) {
+    throw StateError(
+        '$fixture: step $index has an `op` with no string `type` (got '
+        '${type.runtimeType})');
+  }
+  return type;
+}
+
+Set<String> _opsOf(Map<String, dynamic> fx, String fixture) {
   final shape = fx['shape'];
   final out = <String>{};
   if (shape == 'steps') {
-    for (final step in _stepsOf(fx)) {
-      out.add((step['op'] as Map)['type'] as String);
+    final steps = _stepsOf(fx, fixture);
+    for (var i = 0; i < steps.length; i++) {
+      out.add(_opTypeOf(steps[i], fixture, i));
     }
   } else if (shape == 'scenarios') {
-    for (final sc in _scenariosOf(fx)) {
-      for (final step in _stepsOf(sc)) {
-        out.add((step['op'] as Map)['type'] as String);
+    for (final sc in _scenariosOf(fx, fixture)) {
+      final steps = _stepsOf(sc, fixture);
+      for (var i = 0; i < steps.length; i++) {
+        out.add(_opTypeOf(steps[i], fixture, i));
       }
     }
   } else {
-    throw StateError('unknown fixture shape $shape');
+    throw StateError(
+        '$fixture: unknown fixture shape $shape — this runner models `steps` '
+        'and `scenarios` only. Add the shape, or record the fixture in '
+        'expectedSkips/parkedFixtures with a reason (and in KNOWN_UNCOVERED in '
+        'scripts/check-conformance-coverage.sh if this binding stops opening '
+        'it at all)');
   }
   return out;
 }
@@ -1098,7 +1151,8 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
     final fx = (attributeFixture(
             jsonDecode(File('$specDir/$name').specReadAsStringSync())) as Map)
         .cast<String, dynamic>();
-    final unsupported = _opsOf(fx).difference(supportedOps).toList()..sort();
+    final unsupported = _opsOf(fx, name).difference(supportedOps).toList()
+      ..sort();
     // A parked fixture is skipped before the op filter (it uses only supported
     // ops but asserts an expectation key this runner does not model), and a
     // fixture using an unmodelled op is skipped by that op's name. Either way
@@ -1125,7 +1179,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
       if (shape == 'steps') {
         final model = create();
         models.add(model);
-        reports.add(await _replay(model, name, _stepsOf(fx), null));
+        reports.add(await _replay(model, name, _stepsOf(fx, name), null));
       } else if (shape == 'scenarios') {
         final tail = assertionsOfOrNull(fx['expected']);
         // `scenariosOf` — not the local `_scenariosOf` — because THIS is the
@@ -1137,7 +1191,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
           // claim about two independent worlds, not about one world twice.
           final model = create();
           models.add(model);
-          reports.add(await _replay(model, name, _stepsOf(sc), tail));
+          reports.add(await _replay(model, name, _stepsOf(sc, name), tail));
         }
       } else {
         throw StateError('$name: unknown fixture shape $shape');
@@ -1153,7 +1207,8 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
           : assertKeyWith(
               expectedTail, 'observationally_equal', (v) => _strs(v));
       if (pair.isNotEmpty) {
-        final names = _scenariosOf(fx).map((s) => s['name'] as String).toList();
+        final names =
+            _scenariosOf(fx, name).map((s) => s['name'] as String).toList();
         final idx = pair.map((p) {
           final at = names.indexOf(p);
           if (at < 0) throw StateError('$name: unknown scenario $p');
