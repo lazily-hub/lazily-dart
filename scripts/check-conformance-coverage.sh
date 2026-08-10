@@ -349,26 +349,24 @@ fi
 # is wrong" apart from "nothing was measured", so assert the MAGNITUDE before
 # printing OK.
 #
-# The constants are calibrated from a real green run of `make check` on this
-# binding (133 of 139 canonical fixtures opened, 132 scenarios replayed) and sit
-# slightly under it, so ordinary corpus churn does not trip them while a
-# collapse does. Do NOT lower them to make a red run green: a drop here means
-# the corpus shrank or the recorder detached mid-run, and that is the finding,
-# not the obstacle.
+# Each floor is EXACT: it equals what a green CI run on the current corpus
+# actually opens and replays, with no margin. Do NOT lower them to make a red
+# run green: a drop here means the corpus shrank or the recorder detached
+# mid-run, and that is the finding, not the obstacle.
 #
-# They RISE with coverage, and only ever upward:
+# When you add replays, set these to the number the gate REPORTS afterwards —
+# do not "raise by however many you added" (#lzscenariofloordrift). That older
+# convention added your delta on top of a floor that already sat under reality,
+# so the gap only ever widened: these sat at 130/131 against an actual 138/149,
+# meaning 8 fixtures and 18 scenarios could silently detach while the gate kept
+# printing OK. That is the exact failure these floors exist to prevent. A floor
+# carrying slack is a floor that is not doing its job.
 #
-#  * the blob-backend discriminator fixture first added one fixture and eight
-#    scenarios, taking MIN_SCENARIOS to 120;
-#  * its v2 hardening took the SAME fixture from 8 scenarios to 14 — seven wire
-#    shapes (omitted, shm, arrow, in_process, null, non_string, rdma) x two
-#    codecs — so the replayed total moved 126 -> 132 with no new file. The
-#    fixture floor is unchanged because no fixture was added; leaving the
-#    scenario floor at 120 would have left room to silently drop all six new
-#    shapes while the file kept being opened, which is precisely the gap
-#    #lzscenariocoverage exists to close.
-MIN_FIXTURES="${MIN_FIXTURES:-130}"
-MIN_SCENARIOS="${MIN_SCENARIOS:-131}"
+# Pinned from CI run 31347331685 (`conformance coverage OK: 138/150`,
+# `scenario replay OK: 149/149`), which matches a local green `make check`.
+# Verified exact: raising either by 1 fails the gate naming that floor.
+MIN_FIXTURES="${MIN_FIXTURES:-138}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-149}"
 
 if [ "$total" -eq 0 ]; then
   echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2
