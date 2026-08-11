@@ -362,11 +362,14 @@ fi
 # printing OK. That is the exact failure these floors exist to prevent. A floor
 # carrying slack is a floor that is not doing its job.
 #
-# Pinned from CI run 31347331685 (`conformance coverage OK: 138/150`,
-# `scenario replay OK: 149/149`), which matches a local green `make check`.
+# Re-pinned from a green local probe run after lazily-spec `39df4b3` landed
+# `lossless-tree/apply_update_advances_counter.json` and
+# `lossless-tree/out_of_order_delivery_buffers.json`, which this runner now
+# replays (`conformance coverage OK: 140/152`, `scenario replay OK: 151/151`).
+# Read off what the gate REPORTED, not old-floor-plus-delta.
 # Verified exact: raising either by 1 fails the gate naming that floor.
-MIN_FIXTURES="${MIN_FIXTURES:-138}"
-MIN_SCENARIOS="${MIN_SCENARIOS:-149}"
+MIN_FIXTURES="${MIN_FIXTURES:-140}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-151}"
 
 if [ "$total" -eq 0 ]; then
   echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2

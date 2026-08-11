@@ -102,15 +102,70 @@ void _applyStep(_World world, Map<String, dynamic> step) {
   } else if (deliver != null) {
     final from = deliver['from'] as String;
     final to = deliver['to'] as String;
+    // The SAME diff a `sync` step computes — `deliver` differs from `sync` only
+    // in WHICH of its entries reach `applyUpdate`, and in what sequence.
     final full = world.replicas[from]!.diff(world.replicas[to]!.frontier());
-    final only = (deliver['only'] as List).cast<int>();
+    // ONE `applyUpdate` call, carrying the selection exactly as
+    // `deliverySequence` built it. Splitting it across calls would let each
+    // fragment drain the dependency buffer on its own, which is precisely the
+    // behaviour `order` exists to deny (#lzspecoutoforderfixtures).
     world.replicas[to]!
-        .applyUpdate(TreeUpdate(only.map((i) => full.ops[i]).toList()));
+        .applyUpdate(TreeUpdate(deliverySequence(full, deliver)));
   } else if (on != null) {
     _applyOp(world, on, step);
   } else {
     throw StateError('unrecognized step: $step');
   }
+}
+
+/// The ops one `deliver` step hands to `applyUpdate`, in the sequence the
+/// fixture asked for.
+///
+/// [full] is `from.diff(to.frontier())` — the same list a `sync` step delivers,
+/// and already in canonical dotted `(counter, peer)` order (pinned directly by
+/// `lossless_tree_diff_order_test.dart`, because the corpus addresses it
+/// POSITIONALLY and cannot police the order itself).
+///
+/// The step carries EXACTLY ONE of two selectors, and they mean different
+/// things:
+///
+/// * `only` — a SUBSET, delivered in canonical order. Which entries arrive is
+///   the variable; the order is not. Indexes are sorted before selection so the
+///   meaning does not quietly depend on how the fixture happened to list them.
+/// * `order` — a SEQUENCE. The listed indexes are delivered in the LISTED
+///   sequence, unsorted, and the list need not be a permutation of the diff.
+///   Re-sorting it destroys the fixture: measured in a sibling binding, a
+///   runner that sorted `order` went GREEN against a library with NO dependency
+///   buffer at all, because the ops then arrived parent-before-child and
+///   nothing ever needed buffering (#lzspecoutoforderfixtures).
+///
+/// An out-of-range index FAILS rather than clamping or being dropped: clamping
+/// would silently deliver a different batch than the fixture named, which is
+/// the same class of lie as re-sorting.
+List<TreeOp> deliverySequence(TreeUpdate full, Map<String, dynamic> deliver) {
+  final only = deliver['only'];
+  final order = deliver['order'];
+  if (only != null && order != null) {
+    throw StateError('deliver step carries BOTH `only` and `order`; they are '
+        'different contracts (subset-in-canonical-order vs exact sequence) '
+        'and one step cannot mean both: $deliver');
+  }
+  if (only == null && order == null) {
+    throw StateError(
+        'deliver step carries NEITHER `only` nor `order`: $deliver');
+  }
+  final indexes = ((only ?? order) as List).cast<int>();
+  for (final i in indexes) {
+    if (i < 0 || i >= full.ops.length) {
+      throw StateError('deliver index $i is out of range for a diff of '
+          '${full.ops.length} op(s): $deliver');
+    }
+  }
+  if (only != null) {
+    final canonical = List<int>.from(indexes)..sort();
+    return canonical.map((i) => full.ops[i]).toList();
+  }
+  return indexes.map((i) => full.ops[i]).toList();
 }
 
 void _applyOp(_World world, String on, Map<String, dynamic> op) {
@@ -201,6 +256,52 @@ void _runFixture(String name) {
   }
 }
 
+/// A replica that records what reaches [applyUpdate], and how many times.
+///
+/// The recording sits ON the `applyUpdate` boundary rather than beside it: a
+/// spy the RUNNER writes to would prove only what the runner reported, and a
+/// runner that recorded the listed sequence and then sorted it before calling
+/// the library would satisfy it.
+class _RecordingTree extends LosslessTreeCrdt {
+  _RecordingTree(int peer) : super(peer);
+
+  final List<List<TreeOpId>> batches = [];
+
+  @override
+  void applyUpdate(TreeUpdate update) {
+    batches.add(update.ops.map((op) => op.id).toList());
+    super.applyUpdate(update);
+  }
+}
+
+/// A world shaped like `out_of_order_delivery_buffers.json`: replica `a` holds
+/// exactly three ops, and [b] holds none, so `a.diff(b.frontier())` returns all
+/// three and index `i` addresses a known op.
+_World _deliverWorld(_RecordingTree b) {
+  final world = _World();
+  world.replicas['a'] = LosslessTreeCrdt(1);
+  world.buildChildren({
+    'children': [
+      {'label': 'para', 'element': 'para', 'children': <dynamic>[]}
+    ],
+  }, TreeNodeId.root);
+  final a = world.replicas['a']!;
+  world.ids['outer'] =
+      a.createNode(world.id('para'), null, const NodeSeedElement('wrap'));
+  world.ids['inner'] = a.createNode(
+      world.id('outer'), null, const NodeSeedLeaf(LeafKind.raw, 'deep'));
+  world.replicas['b'] = b;
+  return world;
+}
+
+/// The canonical dotted order of the diff `_deliverWorld` sets up — the list
+/// `deliver` indexes address.
+List<TreeOpId> _canonicalIds(_World world) => world.replicas['a']!
+    .diff(world.replicas['b']!.frontier())
+    .ops
+    .map((op) => op.id)
+    .toList();
+
 void main() {
   test(
       'conformance exact roundtrip', () => _runFixture('exact_roundtrip.json'));
@@ -227,6 +328,170 @@ void main() {
 
   test('conformance concurrent conflict preserves text',
       () => _runFixture('concurrent_conflict_preserves_text.json'));
+
+  // `apply_update` advances the Lamport counter past every observed op —
+  // unconditionally, and BEFORE the idempotence skip — so a write minted AFTER
+  // a sync outranks the stamps that sync delivered. The failure is SYMMETRIC
+  // (both replicas converge on the wrong text), so `render_on` is the
+  // load-bearing assertion here, not `converged` (#lzspecoutoforderfixtures).
+  test('conformance apply update advances counter',
+      () => _runFixture('apply_update_advances_counter.json'));
+
+  // `apply_update` BUFFERS an op whose dependency has not arrived and retries
+  // it as later ops in the SAME batch land. Needs `deliver.order`
+  // (#lzspecoutoforderfixtures).
+  test('conformance out of order delivery buffers',
+      () => _runFixture('out_of_order_delivery_buffers.json'));
+
+  // The `deliver` step's CONTRACT, asserted directly.
+  //
+  // A fixture cannot assert on how its own step was interpreted: an
+  // `out_of_order_delivery_buffers.json` whose runner sorts `order` back into
+  // canonical order still replays, still renders `deepX`, and still reports
+  // green — against a library with no dependency buffer at all. Only a test
+  // that watches the `applyUpdate` boundary can see the difference, so these
+  // tests watch it.
+  group('deliver step contract', () {
+    test('`order` reaches applyUpdate in the LISTED sequence, in ONE call', () {
+      final b = _RecordingTree(2);
+      final world = _deliverWorld(b);
+      final canonical = _canonicalIds(world);
+
+      // Non-vacuity, asserted before the check it protects: the requested
+      // sequence must genuinely differ from canonical order, or an
+      // `order`-sorting runner would satisfy the assertion below.
+      final wanted = [canonical[2], canonical[1], canonical[0]];
+      expect(wanted, isNot(equals(canonical)),
+          reason: 'the reversed sequence must differ from canonical order');
+
+      _applyStep(world, {
+        'deliver': {
+          'from': 'a',
+          'to': 'b',
+          'order': [2, 1, 0],
+        },
+      });
+
+      expect(b.batches.length, 1,
+          reason: 'the whole selection must reach `applyUpdate` as ONE batch; '
+              'splitting it would let each fragment drain the dependency '
+              'buffer on its own');
+      expect(b.batches.single, equals(wanted),
+          reason: 'the ops must reach `applyUpdate` in the sequence `order` '
+              'listed, UNSORTED');
+    });
+
+    test('`order` need not be a permutation of the diff', () {
+      final b = _RecordingTree(2);
+      final world = _deliverWorld(b);
+      final canonical = _canonicalIds(world);
+
+      _applyStep(world, {
+        'deliver': {
+          'from': 'a',
+          'to': 'b',
+          'order': [2, 0],
+        },
+      });
+
+      expect(b.batches.single, equals([canonical[2], canonical[0]]));
+    });
+
+    test('an out-of-range `order` index FAILS rather than clamping', () {
+      final b = _RecordingTree(2);
+      final world = _deliverWorld(b);
+      expect(_canonicalIds(world).length, 3,
+          reason: 'index 3 is out of range only while the diff holds 3 ops');
+
+      expect(
+          () => _applyStep(world, {
+                'deliver': {
+                  'from': 'a',
+                  'to': 'b',
+                  'order': [0, 3],
+                },
+              }),
+          throwsA(isA<StateError>()));
+      expect(b.batches, isEmpty,
+          reason: 'a rejected step must deliver NOTHING — not a clamped or '
+              'truncated batch');
+    });
+
+    test('a negative `order` index FAILS rather than wrapping', () {
+      final b = _RecordingTree(2);
+      final world = _deliverWorld(b);
+      expect(
+          () => _applyStep(world, {
+                'deliver': {
+                  'from': 'a',
+                  'to': 'b',
+                  'order': [-1],
+                },
+              }),
+          throwsA(isA<StateError>()));
+      expect(b.batches, isEmpty);
+    });
+
+    test('an out-of-range `only` index FAILS rather than clamping', () {
+      final b = _RecordingTree(2);
+      final world = _deliverWorld(b);
+      expect(
+          () => _applyStep(world, {
+                'deliver': {
+                  'from': 'a',
+                  'to': 'b',
+                  'only': [0, 9],
+                },
+              }),
+          throwsA(isA<StateError>()));
+      expect(b.batches, isEmpty);
+    });
+
+    test('carrying BOTH `only` and `order` is rejected', () {
+      final b = _RecordingTree(2);
+      final world = _deliverWorld(b);
+      expect(
+          () => _applyStep(world, {
+                'deliver': {
+                  'from': 'a',
+                  'to': 'b',
+                  'only': [0],
+                  'order': [0],
+                },
+              }),
+          throwsA(isA<StateError>()));
+      expect(b.batches, isEmpty);
+    });
+
+    test('carrying NEITHER `only` nor `order` is rejected', () {
+      final b = _RecordingTree(2);
+      final world = _deliverWorld(b);
+      expect(
+          () => _applyStep(world, {
+                'deliver': {'from': 'a', 'to': 'b'},
+              }),
+          throwsA(isA<StateError>()));
+      expect(b.batches, isEmpty);
+    });
+
+    test('`only` still delivers its subset in CANONICAL order', () {
+      final b = _RecordingTree(2);
+      final world = _deliverWorld(b);
+      final canonical = _canonicalIds(world);
+
+      _applyStep(world, {
+        'deliver': {
+          'from': 'a',
+          'to': 'b',
+          'only': [2, 0],
+        },
+      });
+
+      expect(b.batches.single, equals([canonical[0], canonical[2]]),
+          reason: '`only` selects a SUBSET; the order stays canonical however '
+              'the fixture listed the indexes');
+    });
+  });
 
   group('wire round-trip parity', () {
     test('TreeUpdate toWire/fromWire is byte-stable', () {
