@@ -175,10 +175,14 @@ void main() {
       final holder = <stdlib.Timer?>[null];
       for (final step
           in (scenario['steps'] as List).cast<Map<String, dynamic>>()) {
-        expect(
+        // Whole-block deep equality, routed through the tracker so the
+        // block enters the bound-block ledger (`#lzunboundblockguard`). The
+        // comparison is unchanged; what was missing is evidence that anything
+        // ever looked at this block.
+        assertBlock(
+          step['expect'],
           _timerStep(step, holder),
-          equals(step['expect']),
-          reason: scenario['id'] as String,
+          '${scenario['id']} step',
         );
       }
     }
@@ -190,10 +194,14 @@ void main() {
       final holder = <stdlib.Timeout<String>?>[null];
       for (final step
           in (scenario['steps'] as List).cast<Map<String, dynamic>>()) {
-        expect(
+        // Whole-block deep equality, routed through the tracker so the
+        // block enters the bound-block ledger (`#lzunboundblockguard`). The
+        // comparison is unchanged; what was missing is evidence that anything
+        // ever looked at this block.
+        assertBlock(
+          step['expect'],
           _timeoutStep(step, holder),
-          equals(step['expect']),
-          reason: scenario['id'] as String,
+          '${scenario['id']} step',
         );
       }
     }
@@ -205,10 +213,14 @@ void main() {
       final holder = <stdlib.RevisionBarrier?>[null];
       for (final step
           in (scenario['steps'] as List).cast<Map<String, dynamic>>()) {
-        expect(
+        // Whole-block deep equality, routed through the tracker so the
+        // block enters the bound-block ledger (`#lzunboundblockguard`). The
+        // comparison is unchanged; what was missing is evidence that anything
+        // ever looked at this block.
+        assertBlock(
+          step['expect'],
           _barrierStep(step, holder),
-          equals(step['expect']),
-          reason: scenario['id'] as String,
+          '${scenario['id']} step',
         );
       }
     }

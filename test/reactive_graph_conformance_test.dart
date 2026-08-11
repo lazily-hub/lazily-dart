@@ -916,8 +916,16 @@ Future<_Report> _replay(
     await model.settle();
     final observed = model.runLog.sublist(runsBefore);
 
-    final expect_ = (step['expect'] as Map?)?.cast<String, dynamic>();
-    if (expect_ == null) continue;
+    // Bound through the tracker rather than read raw (`#lzunboundblockguard`).
+    // The switch below already refuses an unrecognised key, but nothing
+    // recorded that this block was ever REACHED, so a step whose `expect`
+    // stopped being evaluated left no trace anywhere. Object-valued keys are
+    // DESCENDED into with subKey (`#lzsubblockkeyset`) for the same reason the
+    // `scenarios` tail already does: a node id planted beside the ones a step
+    // names would otherwise be compared by nothing.
+    final rawExpect = (step['expect'] as Map?)?.cast<String, dynamic>();
+    if (rawExpect == null) continue;
+    final expect_ = assertionsOf(step['expect'], '#$i expect');
 
     final unknown = expect_.keys.toSet().difference(knownExpectKeys);
     if (unknown.isNotEmpty) {
@@ -931,19 +939,27 @@ Future<_Report> _replay(
     // `read`, and a lazy binding re-registers edges when it recomputes, so
     // reading first would change the degree the same step then asserts.
     for (final key in expect_.keys.toList()..sort()) {
-      final want = expect_[key];
       switch (key) {
         case 'note':
+          // An annotation, exempt by name: there is nothing here to compare.
           break;
         case 'dependents_of':
-          final m = (want as Map).cast<String, dynamic>();
+          final m = subKey(expect_, key, '#$i $key');
           for (final id in m.keys.toList()..sort()) {
-            check('dependents_of.$id', model.dependentsOf(id), m[id]);
+            assertKeyWith<void>(
+                m,
+                id,
+                (want) =>
+                    check('dependents_of.$id', model.dependentsOf(id), want));
           }
         case 'dependencies_of':
-          final m = (want as Map).cast<String, dynamic>();
+          final m = subKey(expect_, key, '#$i $key');
           for (final id in m.keys.toList()..sort()) {
-            check('dependencies_of.$id', model.dependenciesOf(id), m[id]);
+            assertKeyWith<void>(
+                m,
+                id,
+                (want) => check(
+                    'dependencies_of.$id', model.dependenciesOf(id), want));
           }
         case 'computes_of':
           // Sorts before `read`/`readable`/`value`, and that is load-bearing
@@ -953,55 +969,86 @@ Future<_Report> _replay(
           // asserts `readable` and `computes_of` in the same step precisely to
           // catch a puller that survived disposal, and it only discriminates
           // if the count is taken before the read.
-          final m = (want as Map).cast<String, dynamic>();
+          final m = subKey(expect_, key, '#$i $key');
           for (final id in m.keys.toList()..sort()) {
-            check('computes_of.$id', model.computes[id] ?? 0, m[id]);
+            assertKeyWith<void>(
+                m,
+                id,
+                (want) =>
+                    check('computes_of.$id', model.computes[id] ?? 0, want));
           }
         case 'error':
           // Any non-null error code means "this op must fail"; null means "must
           // not". The runner does not model error identity — the fixtures carry
           // the code so the contract is legible, and each binding's own tests
           // pin which error type it throws.
-          check('error', opError, want != null);
+          assertKeyWith<void>(
+              expect_, key, (want) => check('error', opError, want != null));
         case 'value':
-          if (expect_['error'] == null) {
-            if (type == 'read') {
-              check('value', opError ? 'read_after_dispose' : opValue, want);
-            } else {
-              // `value` on a non-read op asserts the value of the node the op
-              // names, observed after the op ran. The signal fixtures use it
-              // on the creation step. It sorts after `computes_of`, so the
-              // read this performs cannot inflate the count that step asserts.
-              final (v, err) = await readId(op['id'] as String);
-              check('value', err ? 'read_after_dispose' : v, want);
-            }
+          if (rawExpect['error'] != null) {
+            excuseKey(
+                expect_,
+                key,
+                'the same step asserts a non-null `error`, so the op must FAIL '
+                'and there is no value it could have produced; the `error` key '
+                'above carries this step\'s obligation');
+            break;
+          }
+          if (type == 'read') {
+            assertKeyWith<void>(
+                expect_,
+                key,
+                (want) => check(
+                    'value', opError ? 'read_after_dispose' : opValue, want));
+          } else {
+            // `value` on a non-read op asserts the value of the node the op
+            // names, observed after the op ran. The signal fixtures use it
+            // on the creation step. It sorts after `computes_of`, so the
+            // read this performs cannot inflate the count that step asserts.
+            final (v, err) = await readId(op['id'] as String);
+            assertKeyWith<void>(expect_, key,
+                (want) => check('value', err ? 'read_after_dispose' : v, want));
           }
         case 'read':
-          final m = (want as Map).cast<String, dynamic>();
+          final m = subKey(expect_, key, '#$i $key');
           for (final id in m.keys.toList()..sort()) {
             final (value, err) = await readId(id);
-            check('read.$id', err ? 'read_after_dispose' : value, m[id]);
+            assertKeyWith<void>(
+                m,
+                id,
+                (want) => check(
+                    'read.$id', err ? 'read_after_dispose' : value, want));
           }
         case 'readable':
-          final m = (want as Map).cast<String, dynamic>();
+          final m = subKey(expect_, key, '#$i $key');
           for (final id in m.keys.toList()..sort()) {
-            check('readable.$id', await alive(id), m[id]);
+            final ok = await alive(id);
+            assertKeyWith<void>(
+                m, id, (want) => check('readable.$id', ok, want));
           }
         case 'observed_by':
-          check('observed_by', observed, _strs(want));
+          assertKeyWith<void>(expect_, key,
+              (want) => check('observed_by', observed, _strs(want)));
         case 'observed_count':
-          check('observed_count', observed.length, want);
+          assertKeyWith<void>(expect_, key,
+              (want) => check('observed_count', observed.length, want));
         case 'cleanup_order':
           // Only effects run a cleanup callback, so the expected order is
           // projected onto its effect entries.
-          final wanted = _strs(want)
-              .where((id) => model.kindOf(id) == _Kind.effect)
-              .toList();
-          check('cleanup_order', model.cleanupLog, wanted);
+          assertKeyWith<void>(expect_, key, (want) {
+            final wanted = _strs(want)
+                .where((id) => model.kindOf(id) == _Kind.effect)
+                .toList();
+            check('cleanup_order', model.cleanupLog, wanted);
+          });
         case 'scope_owned_count':
-          final m = (want as Map).cast<String, dynamic>();
+          final m = subKey(expect_, key, '#$i $key');
           for (final n in m.keys.toList()..sort()) {
-            check('scope_owned_count.$n', model.scopeOwned(n), m[n]);
+            assertKeyWith<void>(
+                m,
+                n,
+                (want) =>
+                    check('scope_owned_count.$n', model.scopeOwned(n), want));
           }
         default:
           throw StateError('$fixture#$i: unhandled assertion key $key');

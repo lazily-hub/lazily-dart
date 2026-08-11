@@ -100,7 +100,12 @@ void _runStepsFixture(String name) {
 
     // Build readers from the CURRENT key set so each step's invalidation is
     // measured in isolation (matches lazily-rs).
-    final currentKeys = map.keys()..clear();
+    // `map.keys()` returns a COPY (`List<K>.of(_order)`), and this line used to
+    // read `map.keys()..clear()` — which emptied that copy and left
+    // `valueReaders` empty for every step, so the per-key loop below never ran
+    // and `invalidates.value` was compared against nothing. Found by the
+    // recording view of `#lzunboundblockguard`, not by any assertion here.
+    final currentKeys = map.keys();
     final valueReaders = <String, Slot<int?>>{};
     for (final k in currentKeys) {
       final slot = Slot<int?>(ctx, (cx) => map.read(k, cx));

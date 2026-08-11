@@ -1,4 +1,4 @@
-.PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage assertion-ordering-check formal-check ci-reach
+.PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach
 
 # lazily-dart had no Makefile; verification was ad-hoc `dart analyze` + `dart test`.
 # The conformance-coverage guard needs somewhere to hang, and a named `check` makes
@@ -7,7 +7,7 @@
 # `conformance-coverage` runs AFTER `test`, not before: the guard now reads the
 # runtime manifest the suite writes, so ordering it first would only ever see the
 # previous run's evidence, or none at all.
-check: fmt analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage assertion-ordering-check formal-check ci-reach
+check: fmt analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach
 	@echo "lazily-dart: check OK"
 
 assertion-ordering-check:
@@ -40,6 +40,11 @@ fmt-fix:
 analyze:
 	dart analyze --fatal-infos
 
+# A third channel rides alongside (`#lzunboundblockguard`): the manifest says a
+# FIXTURE was opened, the scenario ledger says which of its SCENARIOS ran, and
+# the block ledger says which of its assertion BLOCKS were bound to the tracker
+# at all. Same truncate-once, same absolute path, same reason.
+#
 # The manifest is truncated ONCE here, and the path handed to the suite is
 # ABSOLUTE: `dart test` runs each test file in its own process, and a relative path
 # would scatter partial manifests across whatever working directory each process
@@ -52,9 +57,12 @@ test:
 	@mkdir -p build && : > build/conformance-fixtures-loaded.txt \
 		&& rm -f build/conformance-fixtures-loaded.txt.lock \
 		&& : > build/conformance-scenarios-replayed.txt \
-		&& rm -f build/conformance-scenarios-replayed.txt.lock
+		&& rm -f build/conformance-scenarios-replayed.txt.lock \
+		&& : > build/conformance-blocks-bound.txt \
+		&& rm -f build/conformance-blocks-bound.txt.lock
 	LAZILY_CONFORMANCE_MANIFEST=$(CURDIR)/build/conformance-fixtures-loaded.txt \
 		LAZILY_CONFORMANCE_SCENARIOS=$(CURDIR)/build/conformance-scenarios-replayed.txt \
+		LAZILY_CONFORMANCE_BLOCKS=$(CURDIR)/build/conformance-blocks-bound.txt \
 		dart test
 
 test-interop-peer:
@@ -88,6 +96,15 @@ ipc-browser-check:
 # the script header.
 conformance-coverage:
 	./scripts/check-conformance-coverage.sh
+
+# Unbound-assertion-block guard (#lzunboundblockguard). Runtime: fails when a
+# fixture the suite OPENED carries an assertion block no runner ever bound to
+# the tracker. Everything the key guards prove is about a block a runner
+# REACHED; a block nothing binds is invisible to all of them. Runs AFTER `test`
+# for the same reason `conformance-coverage` does — it reads the ledger the run
+# just wrote.
+unbound-block-check:
+	python3 scripts/check-unbound-blocks.py
 
 formal-check:
 	dart tool/formal_check.dart

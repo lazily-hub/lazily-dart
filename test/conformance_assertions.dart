@@ -121,6 +121,51 @@
 /// "object-valued key consumed without a key-set check". That is the whole
 /// point of the rung: the NEXT object-valued key the corpus grows fails loudly
 /// at the site that forgot, instead of opening a silent hole.
+///
+/// ## Rung 6: a block NO runner binds, and a callback that COMPARES nothing
+/// (`#lzunboundblockguard`)
+///
+/// Every rung above proves something about a block a runner REACHED. Both of
+/// its blind spots are one step outside that:
+///
+/// (a) A block no runner ever passes to [assertionsOf] is INVISIBLE. `_track`
+///     is the only registration point, so a block nothing binds contributes no
+///     tracker, no unread key, and no complaint — it simply is not there. This
+///     is not hypothetical: every per-frame `assertions` block of
+///     `signaling/frames.json` (17 frames, 9 keys) was dead for exactly this
+///     reason, and it was found by FLIPPING FIXTURE VALUES and watching the
+///     suite stay green (`#lzperturbaudit`), not by this guard. Commit d5ccebd
+///     bound them; nothing here stopped the next one.
+///
+///     So the block ledger is EVIDENCE, written at bind time: every block this
+///     process binds is appended to `LAZILY_CONFORMANCE_BLOCKS` as
+///     `fixture<TAB>path`, and `scripts/check-unbound-blocks.py` walks every
+///     fixture the runtime manifest says was OPENED, enumerates the
+///     assertion-bearing blocks it carries ([assertionBlockKeys], at any depth,
+///     including inside array elements), and fails on any the ledger does not
+///     name. The escape hatch is that script's `KNOWN_UNBOUND_BLOCKS`, checked
+///     in BOTH directions like every other ledger in this binding: an excuse
+///     for a block that IS bound fails as stale.
+///
+/// (b) A key handed to [assertKeyWith] whose callback never LOOKS at the
+///     fixture value was still marked satisfied. lazily-cs wrote the shape:
+///     `Assert.All(want, item => !ParseOutcome(item).IsTerminal())` asserts a
+///     property of an enum, never of the replay. So the value handed to a
+///     callback is now a RECORDING VIEW — a `Map`/`List` proxy that remembers
+///     whether its CONTENT was touched — and a key whose every callback ignored
+///     its argument is reported as "asserted nothing" at teardown, beside the
+///     unread and unasserted keys. [assertKey] compares by construction and is
+///     unaffected.
+///
+///     The check is deferred to teardown rather than taken when the callback
+///     returns, because the honest shape `final ids = assertKeyWith(b, 'ids',
+///     (e) => (e as List).cast<String>())` reads the value only later, when the
+///     returned projection reaches its comparison.
+///
+///     Scalars are the known gap: an `int` cannot be proxied in Dart, so a
+///     callback that ignores a scalar argument is invisible here. The shapes
+///     this rung exists for — a collection or an object handed to a predicate
+///     that never opens it — are covered.
 library;
 
 import 'dart:collection';
@@ -164,6 +209,110 @@ final Map<Object, String> _owners = LinkedHashMap<Object, String>(
   hashCode: identityHashCode,
 );
 
+/// Path of each decoded object WITHIN its fixture, by identity
+/// (`#lzunboundblockguard`).
+///
+/// `frames[2].assertions`, `scenarios[0].expect`, `assertions`. Recorded at the
+/// same moment ownership is, for the same reason: decode time is the one moment
+/// the location is unambiguous, and by the time a runner binds a block it holds
+/// a bare map with no idea where it came from.
+final Map<Object, String> _paths = LinkedHashMap<Object, String>(
+  equals: identical,
+  hashCode: identityHashCode,
+);
+
+/// A `Map` that is a VIEW over a decoded fixture map rather than the decoded
+/// map itself.
+///
+/// Identity is the key of every ledger in this file, so a wrapper has to be able
+/// to name the map it stands for — otherwise a block bound through a wrapper is
+/// attributed to nothing and the block ledger reports it unbound.
+abstract class ConformanceMapView {
+  /// The decoded fixture map underneath this view.
+  Map<String, dynamic> get rawFixtureMap;
+}
+
+/// Resolve [map] through any number of [ConformanceMapView] layers to the
+/// decoded map the ledgers are keyed by.
+Map<String, dynamic> rawFixtureMapOf(Map<String, dynamic> map) {
+  var current = map;
+  // Views wrap views (a tracker over a recording view over a booking scenario);
+  // the bound only stops a pathological self-referential wrapper.
+  for (var i = 0; i < 8; i++) {
+    if (current is! ConformanceMapView) return current;
+    final next = (current as ConformanceMapView).rawFixtureMap;
+    if (identical(next, current)) return current;
+    current = next;
+  }
+  return current;
+}
+
+/// Assertion-bearing block key names (`#lzunboundblockguard`).
+///
+/// The set of key names whose OBJECT value is an assertion block: the shapes
+/// every runner in this binding passes to [assertionsOf]. Kept beside the
+/// tracker rather than in the guard script because this is the definition the
+/// tracker itself works to; `scripts/check-unbound-blocks.py` reads the list
+/// out of this file so the two can never disagree.
+const assertionBlockKeys = <String>{
+  'assertions',
+  'expect',
+  'expect_after',
+  'expect_initial',
+  'expected',
+};
+
+/// Sink for the bound-block ledger, installed by `conformance_manifest.dart`
+/// the first time a conformance fixture is read.
+///
+/// This library stays free of `dart:io`; the manifest owns the locked append
+/// that every evidence channel in this binding shares. A block can only exist
+/// once a fixture has been read, so the sink is always installed before the
+/// first record.
+void Function(String line)? blockLedgerSink;
+
+/// Blocks already recorded as BOUND by this process, by identity.
+final Set<Object> _bound = LinkedHashSet<Object>(
+  equals: identical,
+  hashCode: identityHashCode,
+);
+
+/// Record that [raw] — a decoded fixture map — was bound by a runner.
+///
+/// "Bound" means the runner routed the block through a channel that owns it:
+/// [assertionsOf] / [subKey] (which register a tracker) or an asserting channel
+/// on the PARENT that compares the whole object ([assertKeyDeep],
+/// [assertKeySet]). A block reached by neither is what the guard script names.
+void recordBoundBlock(Object? raw) {
+  if (raw is! Map) return;
+  final inner = raw is Map<String, dynamic> ? rawFixtureMapOf(raw) : raw;
+  if (!_bound.add(inner)) return;
+  final fixture = _owners[inner];
+  final path = _paths[inner];
+  // A map the runner built itself, or one from a fixture decoded without
+  // `attributeFixture`, has no location to record. The ledger is evidence: an
+  // unattributable record is none.
+  if (fixture == null || path == null || path.isEmpty) return;
+  // Only ASSERTION blocks. Runners bind other maps too — a whole scenario, a
+  // step — and recording those would put entries in the ledger that the guard
+  // script's walk never enumerates, which reads there as a corrupted channel.
+  // The ledger and the walk must describe the same population.
+  if (!isAssertionBlockPath(path)) return;
+  blockLedgerSink?.call('$fixture\t$path');
+}
+
+/// Whether [path] names a value at an [assertionBlockKeys] key.
+///
+/// Paths are `assertions`, `frames[2].assertions`, `scenarios[0].expect`. An
+/// ARRAY element (`scenarios[0]`) is never a block, whatever it is nested
+/// under.
+bool isAssertionBlockPath(String path) {
+  if (path.endsWith(']')) return false;
+  final dot = path.lastIndexOf('.');
+  return assertionBlockKeys
+      .contains(dot == -1 ? path : path.substring(dot + 1));
+}
+
 /// Record [currentConformanceFixture] as the owner of every object in
 /// [decoded], and return [decoded] unchanged.
 ///
@@ -180,7 +329,7 @@ final Map<Object, String> _owners = LinkedHashMap<Object, String>(
 /// message name the fixture without any call site threading it through.
 T attributeFixture<T>(T decoded) {
   final id = currentConformanceFixture;
-  if (id != null) _attribute(decoded, id, 0);
+  if (id != null) _attribute(decoded, id, 0, '');
   return decoded;
 }
 
@@ -192,19 +341,32 @@ T attributeFixture<T>(T decoded) {
 /// Identity-keyed, so it answers for any object inside a decoded fixture.
 String? fixtureOwnerOf(Object node) => _owners[node];
 
-void _attribute(Object? node, String id, int depth) {
-  // Fixtures are shallow; the bound only stops a pathological one from
-  // recursing without end. JSON cannot cycle, so it is belt-and-braces.
-  if (depth > 32) return;
+/// The path [attributeFixture] recorded for [node] within its fixture, or null
+/// when it came from somewhere else (`#lzunboundblockguard`).
+String? blockPathOf(Object node) => _paths[node];
+
+/// Depth beyond which [attributeFixture] stops walking.
+///
+/// Fixtures are shallow; the bound only stops a pathological one from recursing
+/// without end. JSON cannot cycle, so it is belt-and-braces. The guard script
+/// mirrors this bound EXACTLY: a block deeper than this is never attributed, so
+/// enumerating it there while it can never be recorded here would manufacture a
+/// failure nothing could clear.
+const attributionDepthLimit = 32;
+
+void _attribute(Object? node, String id, int depth, String path) {
+  if (depth > attributionDepthLimit) return;
   if (node is Map) {
     if (_owners.containsKey(node)) return;
     _owners[node] = id;
-    for (final value in node.values) {
-      _attribute(value, id, depth + 1);
+    _paths[node] = path;
+    for (final entry in node.entries) {
+      _attribute(entry.value, id, depth + 1,
+          path.isEmpty ? '${entry.key}' : '$path.${entry.key}');
     }
   } else if (node is List) {
-    for (final value in node) {
-      _attribute(value, id, depth + 1);
+    for (var i = 0; i < node.length; i++) {
+      _attribute(node[i], id, depth + 1, '$path[$i]');
     }
   }
 }
@@ -254,12 +416,19 @@ Map<String, dynamic>? assertionsOfOrNull(Object? raw, [String where = '']) =>
 _TrackedAssertions? _track(Object? raw, String where) {
   if (raw is _TrackedAssertions) return raw;
   if (raw is! Map) return null;
+  // The block ledger is keyed by the DECODED map, which a wrapper (a booking
+  // scenario, a recording view) is not. Reads still go through the wrapper —
+  // unwrapping here would bypass a booking scenario's replay ledger — so only
+  // the ledger's own bookkeeping resolves through it (`#lzunboundblockguard`).
+  final decoded = raw is Map<String, dynamic> ? rawFixtureMapOf(raw) : raw;
+  recordBoundBlock(decoded);
   final existing = _trackers[raw];
   if (existing != null) return existing;
   final tracked = _TrackedAssertions(
     raw.cast<String, dynamic>(),
+    decoded is Map<String, dynamic> ? decoded : decoded.cast<String, dynamic>(),
     where,
-    _owners[raw] ?? currentConformanceFixture ?? '<unknown fixture>',
+    _owners[decoded] ?? currentConformanceFixture ?? '<unknown fixture>',
   );
   _trackers[raw] = tracked;
   _pending.add(tracked);
@@ -317,7 +486,8 @@ T assertKeyWith<T>(
   T Function(dynamic expected) check,
 ) {
   final expected = _readExpected(block, key);
-  final result = check(expected);
+  final probe = _probe(block, key, expected);
+  final result = check(probe.value);
   _recordAsserted(block, key);
   return result;
 }
@@ -336,8 +506,54 @@ void assertKeyIfPresent(
   final inner = block is _TrackedAssertions ? block._inner : block;
   if (!inner.containsKey(key)) return;
   final expected = _readExpected(block, key);
-  check(expected);
+  final probe = _probe(block, key, expected);
+  check(probe.value);
   _recordAsserted(block, key);
+}
+
+/// Consume an ENTIRE assertion block by deep-equalling it against [actual].
+///
+/// The whole-block counterpart of [assertKeyDeep], and the honest spelling for
+/// the runners that already compared a block as one object —
+/// `expect(actual, equals(step['expect']))`. That comparison is the STRONGEST
+/// this file offers: map equality checks every key in both directions, so a key
+/// planted in the fixture and a key the run invents each fail. What it did not
+/// do is BIND the block, so `scripts/check-unbound-blocks.py` had no evidence
+/// the block was ever looked at (`#lzunboundblockguard`).
+///
+/// Every key is marked read, asserted, and key-set-checked, because deep
+/// equality really does compare all of them. A block declaring `prose` is
+/// refused: deep-equalling an English paragraph pins WORDING, which is the
+/// failure `#lzprosekeyconvention` exists to remove.
+Map<String, dynamic> assertBlock(
+  Object? raw,
+  Object? actual, [
+  String where = '',
+  String? reason,
+]) {
+  final tracked = _track(raw, where);
+  if (tracked == null) {
+    throw StateError('assertBlock($where): expected a JSON object, got $raw');
+  }
+  if (tracked._inner.containsKey('prose')) {
+    throw StateError('assertBlock($where): the block declares `prose`, and '
+        'deep-equalling it would pin the WORDING of a paragraph. Bind the '
+        'block with assertionsOf() and discharge the prose key with '
+        'proseKey().');
+  }
+  final ledger = _ledgerFor(tracked.fixture);
+  for (final key in tracked._inner.keys) {
+    tracked._read.add(key);
+    tracked._asserted.add(key);
+    tracked._keySetChecked.add(key);
+    ledger.asserted.add(key);
+  }
+  expect(actual, equals(tracked._inner),
+      reason: reason ??
+          (where.isEmpty
+              ? 'the whole assertion block must deep-equal the replay'
+              : where));
+  return tracked;
 }
 
 /// Declare that [key] cannot be asserted at this call site, and say why.
@@ -564,6 +780,182 @@ void _recordAsserted(Map<String, dynamic> block, String key) {
   if (tracked == null) return;
   tracked._asserted.add(key);
   _ledgerFor(tracked.fixture).asserted.add(key);
+  // An object value compared as a WHOLE (assertKeyDeep, assertKeySet) is a
+  // block that was bound without ever becoming a tracker of its own. The block
+  // ledger has to know, or the guard script would demand a binding for a block
+  // that is already fully compared (`#lzunboundblockguard`).
+  final value = tracked._inner[key];
+  if (value is Map) recordBoundBlock(value);
+}
+
+// ---------------------------------------------------------------------------
+// Recording views: a callback that COMPARES nothing (`#lzunboundblockguard`)
+// ---------------------------------------------------------------------------
+
+/// One [assertKeyWith] / [assertKeyIfPresent] call, and whether its callback
+/// ever looked at the fixture value it was handed.
+class _ReadProbe {
+  _ReadProbe(this.value, this._view);
+
+  /// What the callback receives — a recording view, or the raw value when it
+  /// cannot be proxied.
+  final Object? value;
+
+  final _RecordingView? _view;
+
+  /// True when the callback touched the value's CONTENT, or when nothing here
+  /// could observe it (a scalar).
+  bool get read => _view == null || _view.read;
+}
+
+/// Common state of the two recording proxies.
+class _RecordingView {
+  bool read = false;
+}
+
+/// A [Map] view that remembers whether its CONTENT was read.
+///
+/// SHAPE is not content: `length`, `isEmpty` and asking for the `keys` iterable
+/// answer questions about the container. Reading an entry, or iterating what
+/// `keys` / `values` / `entries` hand back, reads the fixture.
+class _RecordingMap extends MapBase<String, dynamic>
+    implements ConformanceMapView {
+  _RecordingMap(this._inner, this._view);
+
+  final Map<String, dynamic> _inner;
+  final _RecordingView _view;
+
+  @override
+  Map<String, dynamic> get rawFixtureMap => _inner;
+
+  @override
+  dynamic operator [](Object? key) {
+    _view.read = true;
+    return _inner[key];
+  }
+
+  @override
+  void operator []=(String key, dynamic value) {
+    _view.read = true;
+    _inner[key] = value;
+  }
+
+  @override
+  bool containsKey(Object? key) {
+    _view.read = true;
+    return _inner.containsKey(key);
+  }
+
+  @override
+  dynamic remove(Object? key) {
+    _view.read = true;
+    return _inner.remove(key);
+  }
+
+  @override
+  Iterable<String> get keys => _RecordingIterable<String>(_inner.keys, _view);
+
+  @override
+  void clear() {
+    _view.read = true;
+    _inner.clear();
+  }
+}
+
+/// A [List] view that remembers whether its ELEMENTS were read.
+///
+/// Two shapes beyond a plain element access count, and each was forced by a
+/// real call site in this suite:
+///
+///  * asking for the ITERATOR, because a comparison walks the fixture value
+///    even when it turns out to be short;
+///  * asking for `length` of an EMPTY list. `(v as List).cast<String>()` hands
+///    the matcher a `CastList`, which iterates BY INDEX — so comparing an empty
+///    fixture list reads `length` twice and never touches an element or this
+///    object's iterator at all. An empty collection has nothing but its
+///    emptiness to observe, so observing that IS reading it; a non-empty one
+///    still has to give up an element.
+class _RecordingList extends ListBase<dynamic> {
+  _RecordingList(this._inner, this._view);
+
+  final List<dynamic> _inner;
+  final _RecordingView _view;
+
+  @override
+  Iterator<dynamic> get iterator {
+    _view.read = true;
+    return super.iterator;
+  }
+
+  @override
+  int get length {
+    if (_inner.isEmpty) _view.read = true;
+    return _inner.length;
+  }
+
+  @override
+  set length(int value) => _inner.length = value;
+
+  @override
+  dynamic operator [](int index) {
+    _view.read = true;
+    return _inner[index];
+  }
+
+  @override
+  void operator []=(int index, dynamic value) {
+    _view.read = true;
+    _inner[index] = value;
+  }
+}
+
+/// An iterable whose ITERATION counts as a read.
+///
+/// `map.keys` on its own is a question about shape; walking the answer is a
+/// question about the fixture.
+class _RecordingIterable<E> extends IterableBase<E> {
+  _RecordingIterable(this._inner, this._view);
+
+  final Iterable<E> _inner;
+  final _RecordingView _view;
+
+  @override
+  Iterator<E> get iterator {
+    _view.read = true;
+    return _inner.iterator;
+  }
+
+  @override
+  int get length {
+    // Same rule as [_RecordingList.length]: an EMPTY key set has nothing but
+    // its emptiness to observe.
+    if (_inner.isEmpty) _view.read = true;
+    return _inner.length;
+  }
+}
+
+/// Wrap [expected] in a recording view and register it against [key].
+///
+/// A scalar cannot be proxied in Dart, so it yields a probe that is satisfied by
+/// construction — see the library header. A block with no tracker (a runner that
+/// never wrapped it) has nowhere to register, so the probe is inert there too.
+_ReadProbe _probe(Map<String, dynamic> block, String key, Object? expected) {
+  final tracked = block is _TrackedAssertions ? block : _trackers[block];
+  if (tracked == null) return _ReadProbe(expected, null);
+  final view = _RecordingView();
+  final _ReadProbe probe;
+  if (expected is Map<String, dynamic>) {
+    probe = _ReadProbe(_RecordingMap(expected, view), view);
+  } else if (expected is Map) {
+    probe =
+        _ReadProbe(_RecordingMap(expected.cast<String, dynamic>(), view), view);
+  } else if (expected is List) {
+    probe = _ReadProbe(_RecordingList(expected, view), view);
+  } else {
+    return _ReadProbe(expected, null);
+  }
+  tracked._probes.putIfAbsent(key, () => <_ReadProbe>[]).add(probe);
+  return probe;
 }
 
 // ---------------------------------------------------------------------------
@@ -797,6 +1189,7 @@ void verifyAssertionsConsumed() {
   _ledgers.clear();
   final unread = <String>[];
   final unasserted = <String>[];
+  final unreadValues = <String>[];
   final stale = <String>[];
   final keySetUnchecked = <String>[];
   for (final block in blocks) {
@@ -805,6 +1198,9 @@ void verifyAssertionsConsumed() {
     }
     if (block.unassertedKeys.isNotEmpty) {
       unasserted.add('${block.label}: ${block.unassertedKeys}');
+    }
+    if (block.unreadValueKeys.isNotEmpty) {
+      unreadValues.add('${block.label}: ${block.unreadValueKeys}');
     }
     if (block.keySetUncheckedKeys.isNotEmpty) {
       keySetUnchecked.add('${block.label}: ${block.keySetUncheckedKeys}');
@@ -832,6 +1228,17 @@ void verifyAssertionsConsumed() {
         'assertKeyWith, or declare an excuseKey with a '
         'reason:\n  ${unasserted.join('\n  ')}');
   }
+  if (unreadValues.isNotEmpty) {
+    complaints.add('assertion key(s) that asserted NOTHING '
+        '(`#lzunboundblockguard`) — the runner handed these keys to '
+        'assertKeyWith / assertKeyIfPresent and the callback never looked at '
+        'the fixture value it was given, so the "assertion" is a claim about '
+        'something else entirely. lazily-cs wrote this shape: '
+        '`Assert.All(want, item => !ParseOutcome(item).IsTerminal())` asserts a '
+        'property of an enum, never of the replay, and is vacuously true over '
+        'an empty array. Compare the value you were handed, or declare an '
+        'excuseKey with a reason:\n  ${unreadValues.join('\n  ')}');
+  }
   if (keySetUnchecked.isNotEmpty) {
     complaints.add('object-valued key(s) consumed without a key-set check '
         '(`#lzsubblockkeyset`) — the fixture value is a JSON object and this '
@@ -858,15 +1265,27 @@ void verifyAssertionsConsumed() {
 /// switching on it with a fall-through default is the exact bug this guards
 /// against. Runners that iterate go on to read `block[key]`, which does count,
 /// and the ones with a throwing default were already fail-closed.
-class _TrackedAssertions extends MapBase<String, dynamic> {
-  _TrackedAssertions(this._inner, this.where, this.fixture);
+class _TrackedAssertions extends MapBase<String, dynamic>
+    implements ConformanceMapView {
+  _TrackedAssertions(this._inner, this._raw, this.where, this.fixture);
 
   final Map<String, dynamic> _inner;
+
+  /// The DECODED map, the identity every ledger in this file is keyed by.
+  /// [_inner] is a `cast` view over it and is therefore a different object.
+  final Map<String, dynamic> _raw;
   final String where;
   final String fixture;
   final Set<String> _read = <String>{};
   final Set<String> _asserted = <String>{};
   final Map<String, String> _excused = <String, String>{};
+
+  @override
+  Map<String, dynamic> get rawFixtureMap => _raw;
+
+  /// Recording views handed to [assertKeyWith] / [assertKeyIfPresent]
+  /// callbacks, per key (`#lzunboundblockguard`).
+  final Map<String, List<_ReadProbe>> _probes = <String, List<_ReadProbe>>{};
 
   /// Object-valued keys satisfied by a key-set check (`#lzsubblockkeyset`) —
   /// [subKey], [assertKeySet], or [assertKeyDeep].
@@ -961,6 +1380,19 @@ class _TrackedAssertions extends MapBase<String, dynamic> {
               !_keySetChecked.contains(key) &&
               !_exempt(key))
             key,
+      ]..sort();
+
+  /// Keys whose every [assertKeyWith] / [assertKeyIfPresent] callback IGNORED
+  /// the fixture value it was handed (`#lzunboundblockguard`).
+  ///
+  /// ANY callback that reads clears the key: a key asserted at four sites where
+  /// one of them opens the value did reach a comparison.
+  List<String> get unreadValueKeys => [
+        for (final entry in _probes.entries)
+          if (!entry.value.any((probe) => probe.read) &&
+              !_excused.containsKey(entry.key) &&
+              !_exempt(entry.key))
+            entry.key,
       ]..sort();
 
   /// Keys carrying an excuse the same run also asserted.

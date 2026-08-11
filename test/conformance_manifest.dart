@@ -306,6 +306,12 @@ String specReadFileSync(String path) => File(path).specReadAsStringSync();
 /// unopened. A perturbation probe cannot tell that apart from a suite that
 /// genuinely skipped the corpus.
 void recordConformanceRead(String path) {
+  // Install the bound-block ledger's sink (`#lzunboundblockguard`).
+  // `conformance_assertions.dart` stays free of `dart:io`, and a block cannot
+  // exist before its fixture has been read, so this is always in place before
+  // the first record.
+  blockLedgerSink ??=
+      (line) => _appendEvidence('LAZILY_CONFORMANCE_BLOCKS', line);
   final absolute = _normalizeAbsolute(path);
   final id = _corpusRelative(absolute);
   if (id != null) {
@@ -445,13 +451,21 @@ const scenarioLabelKeys = <String>{
 /// unchanged — `scenario['steps']` books, `scenario['id']` does not, and
 /// `keys`/`containsKey`/`length` stay silent because inspecting a scenario's
 /// SHAPE is not replaying it either.
-class _BookingScenario with MapMixin<String, dynamic> {
+class _BookingScenario
+    with MapMixin<String, dynamic>
+    implements ConformanceMapView {
   _BookingScenario(this._fixture, this._scenario, this._index);
 
   final Map<String, dynamic> _fixture;
   final Map<String, dynamic> _scenario;
   final int _index;
   bool _booked = false;
+
+  /// The decoded scenario map (`#lzunboundblockguard`). A runner that binds a
+  /// scenario through this wrapper must file the block under the map
+  /// `attributeFixture` actually walked, not under the wrapper.
+  @override
+  Map<String, dynamic> get rawFixtureMap => _scenario;
 
   @override
   dynamic operator [](Object? key) {

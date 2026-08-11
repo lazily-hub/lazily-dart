@@ -232,14 +232,24 @@ void main() {
         final step = (rawStep as Map).cast<String, Object?>();
         model.apply((step['op']! as Map).cast<String, Object?>());
         final actual = model.projection();
-        final expected = (step['expected']! as Map).cast<String, dynamic>();
-        for (final key in expected.keys.cast<String>()) {
-          assertKey(
-            expected,
-            key,
-            actual[key],
-            '${scenario['id']} step $index',
-          );
+        // Bound through the tracker, not read raw (`#lzunboundblockguard`).
+        // The loop below already asserts every key it carries, but nothing
+        // recorded that this block was ever looked at, so a step whose
+        // `expected` stopped being reached would have gone unnoticed.
+        final expected =
+            assertionsOf(step['expected'], '${scenario['id']} step $index');
+        final raw = (step['expected']! as Map).cast<String, Object?>();
+        for (final key in expected.keys.cast<String>().toList()) {
+          final where = '${scenario['id']} step $index';
+          // An object-valued key goes through the whole-object channel
+          // (`#lzsubblockkeyset`): `delivery` carries four sub-fields, and a
+          // fifth added upstream would be compared by nothing if this were a
+          // plain assertKey.
+          if (raw[key] is Map) {
+            assertKeyDeep(expected, key, actual[key], where);
+          } else {
+            assertKey(expected, key, actual[key], where);
+          }
         }
         replayed++;
         index++;

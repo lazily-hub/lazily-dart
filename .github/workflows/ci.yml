@@ -137,6 +137,8 @@ jobs:
           rm -f build/conformance-fixtures-loaded.txt.lock
           : > build/conformance-scenarios-replayed.txt
           rm -f build/conformance-scenarios-replayed.txt.lock
+          : > build/conformance-blocks-bound.txt
+          rm -f build/conformance-blocks-bound.txt.lock
 
       - name: dart test (with lazily-formal proof verification)
         env:
@@ -149,6 +151,7 @@ jobs:
           # never written is the vacuous green this whole ladder exists to reject.
           LAZILY_CONFORMANCE_MANIFEST: ${{ github.workspace }}/lazily-dart/build/conformance-fixtures-loaded.txt
           LAZILY_CONFORMANCE_SCENARIOS: ${{ github.workspace }}/lazily-dart/build/conformance-scenarios-replayed.txt
+          LAZILY_CONFORMANCE_BLOCKS: ${{ github.workspace }}/lazily-dart/build/conformance-blocks-bound.txt
         run: dart test
 
       # Two gates `make check` runs that CI never reached (#lzinteroppeerci). The
@@ -201,6 +204,18 @@ jobs:
           # problem. Say which it is, up front.
           command -v jq >/dev/null 2>&1 || { echo "::error::jq is not installed on this runner — the scenario replay guard cannot read the corpus's scenario ids"; exit 1; }
           ./scripts/check-conformance-coverage.sh
+
+      # Rung 6: the blocks inside the fixtures that were opened. The guards in
+      # test/conformance_assertions.dart all reason about a block a runner
+      # REACHED; this one names a block no runner ever bound, which every one of
+      # them is blind to. It reads the ledger the suite just wrote, so it runs
+      # after `dart test` for the same reason the coverage guard does.
+      - name: Unbound assertion-block guard (#lzunboundblockguard)
+        env:
+          LAZILY_SPEC_CONFORMANCE_DIR: ${{ github.workspace }}/lazily-spec/conformance
+          LAZILY_CONFORMANCE_MANIFEST: ${{ github.workspace }}/lazily-dart/build/conformance-fixtures-loaded.txt
+          LAZILY_CONFORMANCE_BLOCKS: ${{ github.workspace }}/lazily-dart/build/conformance-blocks-bound.txt
+        run: python3 scripts/check-unbound-blocks.py
 
       - name: Assertion observation ordering (#lzassertordering)
         run: python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding dart --root .

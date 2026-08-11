@@ -64,16 +64,26 @@ const allOpKinds = {
 /// silent drift between `wire` and `assertions` is caught. An unknown assertion
 /// key throws, mirroring the lazily-js/lazily-kt conformance harness.
 void assertFixtureAssertions(IpcMessage message, Map<String, Object?> fixture) {
-  final a = fixture['assertions']
-      as Map<String, Object?>?; // ignore: unnecessary_cast
-  expect(a, isNotNull,
+  final raw = fixture['assertions'];
+  expect(raw, isNotNull,
       reason: 'fixture missing assertions: ${fixture['description']}');
+  // Bind the block so it enters the bound-block ledger
+  // (`#lzunboundblockguard`). The switch below already refuses an unknown key,
+  // but nothing recorded that this block was ever reached, so a fixture whose
+  // `assertions` stopped being cross-checked would have stayed green.
+  //
+  // Only a block that really came out of the corpus is bound. The drift
+  // self-test below hands this function HAND-BUILT copies to prove the switch
+  // rejects drift, and those deliberately throw part-way through the block —
+  // tracking them would leave the keys after the throw unread and turn an
+  // expected failure into a teardown complaint.
+  final Map<String, dynamic>? a = (raw is Map && fixtureOwnerOf(raw) != null)
+      ? assertionsOf(raw, 'assertions')
+      : (raw as Map?)?.cast<String, dynamic>();
 
   if (message.isSnapshot) {
     final snap = message.snapshot!;
-    for (final entry in a!.entries) {
-      final key = entry.key;
-      final expected = entry.value;
+    for (final key in a!.keys.toList()) {
       Object? actual;
       switch (key) {
         case 'epoch':
@@ -116,13 +126,11 @@ void assertFixtureAssertions(IpcMessage message, Map<String, Object?> fixture) {
         default:
           throw StateError('unknown snapshot assertion key: $key');
       }
-      expect(actual, expected, reason: 'snapshot assertion "$key"');
+      assertKey(a, key, actual, 'snapshot assertion "$key"');
     }
   } else if (message.isDelta) {
     final delta = message.delta!;
-    for (final entry in a!.entries) {
-      final key = entry.key;
-      final expected = entry.value;
+    for (final key in a!.keys.toList()) {
       Object? actual;
       switch (key) {
         case 'base_epoch':
@@ -157,7 +165,7 @@ void assertFixtureAssertions(IpcMessage message, Map<String, Object?> fixture) {
         default:
           throw StateError('unknown delta assertion key: $key');
       }
-      expect(actual, expected, reason: 'delta assertion "$key"');
+      assertKey(a, key, actual, 'delta assertion "$key"');
     }
   } else {
     fail('unknown message kind for fixture ${fixture['description']}');
