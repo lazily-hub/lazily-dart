@@ -57,6 +57,35 @@ void main() {
           final other => fail('unknown signaling direction `$other`'),
         };
         expect(actual, wire, reason: entry['label'] as String);
+
+        // Bind the per-frame `assertions` block (#lzdartvacuousfixtures).
+        // Until now this runner read only `wire`/`direction`/`label`, so the
+        // block never reached the tracker — and a block no runner binds cannot
+        // be reported "unconsumed", because the guard only sees blocks that
+        // were passed in. Every key here is read off `actual`, the DECODED
+        // message re-serialized, not off the fixture's input map, so a decoder
+        // that dropped a field would fail these rather than echo them back.
+        final label = entry['label'] as String;
+        final meta = assertionsOfOrNull(entry['assertions'], label);
+        if (meta != null) {
+          assertKeyIfPresent(meta, 'peer', (v) => expect(actual['peer'], v));
+          assertKeyIfPresent(meta, 'to', (v) => expect(actual['to'], v));
+          assertKeyIfPresent(meta, 'from', (v) => expect(actual['from'], v));
+          assertKeyIfPresent(meta, 'code', (v) => expect(actual['code'], v));
+          assertKeyIfPresent(meta, 'peers', (v) => expect(actual['peers'], v));
+          assertKeyIfPresent(
+              meta, 'capabilities', (v) => expect(actual['capabilities'], v));
+          assertKeyIfPresent(meta, 'has_capabilities',
+              (v) => expect(actual.containsKey('capabilities'), v));
+          // A welcome roster never names the recipient back to itself.
+          assertKeyIfPresent(meta, 'roster_excludes_self', (v) {
+            final peers = (actual['peers'] as List).cast<int>();
+            expect(!peers.contains(actual['peer']), v);
+          });
+          // The server stamps `from` on relayed frames; the client sends `to`.
+          assertKeyIfPresent(meta, 'server_stamped_from',
+              (v) => expect(actual.containsKey('from'), v));
+        }
       }
       for (final entry
           in (frames['rejects'] as List).cast<Map<String, dynamic>>()) {

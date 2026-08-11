@@ -42,6 +42,8 @@ void main() {
 
     String? expectedText;
     Map<int, int>? expectedFrontier;
+    var textsEqual = true;
+    var frontiersEqual = true;
     final orders =
         (scenario['merge_orders'] as List<dynamic>).cast<List<dynamic>>();
     for (var index = 0; index < orders.length; index++) {
@@ -52,10 +54,18 @@ void main() {
       }
       expectedText ??= merged.text();
       expectedFrontier ??= merged.versionVector();
-      expect(merged.text(), expectedText);
-      expect(_mapsEqual(merged.versionVector(), expectedFrontier), isTrue);
+      // Accumulate rather than assert, so the fixture's own claim is what
+      // fails — not a bare `expect` that would be true no matter what the
+      // fixture said (#lzdartvacuousfixtures).
+      textsEqual = textsEqual && merged.text() == expectedText;
+      frontiersEqual = frontiersEqual &&
+          _mapsEqual(merged.versionVector(), expectedFrontier);
       expect(merged.value(), merged.text());
     }
+
+    final expect_ = assertionsOf(scenario['expect'], 'merge algebra');
+    assertKey(expect_, 'texts_equal', textsEqual);
+    assertKey(expect_, 'version_vectors_equal', frontiersEqual);
   });
 
   test('empty-frontier snapshot preserves operation lineage', () {
@@ -65,8 +75,8 @@ void main() {
         TextCrdt.fromStr(seed['peer'] as int, seed['text'] as String);
     final restored = TextCrdt(scenario['restore_peer'] as int);
     expect(restored.applyDelta(source.deltaSince({})), isTrue);
-    expect(restored.text(), source.text());
-    expect(_opIdentities(restored), _opIdentities(source));
+    final restoredTextEqual = restored.text() == source.text();
+    final opIdsEqual = _opIdentities(restored) == _opIdentities(source);
 
     source.insert(source.len(), 'a');
     restored.insert(restored.len(), 'b');
@@ -74,7 +84,12 @@ void main() {
     restored.mergeFrom(source);
     expect(restored.text(), source.text());
     final ops = source.deltaSince({});
-    expect(ops.map((op) => op.id).toSet().length, ops.length);
+    final duplicates = ops.length - ops.map((op) => op.id).toSet().length;
+
+    final expect_ = assertionsOf(scenario['expect'], 'snapshot lineage');
+    assertKey(expect_, 'restored_text_equal', restoredTextEqual);
+    assertKey(expect_, 'op_ids_equal', opIdsEqual);
+    assertKey(expect_, 'later_merge_duplicates', duplicates);
   });
 
   test('own frontier emits an idempotent empty delta', () {
@@ -82,7 +97,12 @@ void main() {
     final seed = scenario['seed'] as Map<String, dynamic>;
     final tree = TextCrdt.fromStr(seed['peer'] as int, seed['text'] as String);
     final delta = tree.deltaSince(tree.versionVector());
-    expect(delta, isEmpty);
-    expect(tree.applyDelta(delta), isFalse);
+    final applyChanged = tree.applyDelta(delta);
+
+    final expect_ = assertionsOf(scenario['expect'], 'own frontier');
+    // The fixture writes the delta out in full, so compare the wire form rather
+    // than merely asserting emptiness — `delta: [{...}]` must fail too.
+    assertKey(expect_, 'delta', delta.map((op) => op.toWire()).toList());
+    assertKey(expect_, 'apply_changed', applyChanged);
   });
 }
