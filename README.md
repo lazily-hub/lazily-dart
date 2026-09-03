@@ -100,6 +100,33 @@ final delivery = work.claim('worker-a', 100)!;
 assert(work.ack('worker-a', delivery.deliveryId));
 ```
 
+## Latest durable projection
+
+`LatestDurableProjectionCore<K, T>` is the graph-independent command authority
+for a latest-value durable sink. Each key retains the newest desired epoch,
+allows at most one claimed envelope, advances `durableThrough` only when that
+exact envelope succeeds, and returns failures to retryable pending state unless
+a newer desired epoch already superseded them. `reconnect` advances a generation
+fence, requeues abandoned in-flight work, and makes acknowledgements from the
+old actor inert.
+
+```dart
+final saves = LatestDurableProjection<String, String>(ctx, 1);
+saves.upsertDesired('document', 1, markdown);
+final envelope = saves.claim('document', 1).envelope;
+if (envelope != null) {
+  await storage.write(envelope.value);
+  saves.ackApplied(envelope.key, envelope.generation, envelope.epoch);
+}
+```
+
+`LatestDurableProjection`, `ThreadSafeLatestDurableProjection`, and
+`AsyncLatestDurableProjection` expose matching `entryHandle`,
+`generationHandle`, and `snapshotHandle` readers while keeping transitions
+synchronous. All four surfaces replay lazily-spec v0.38.0's canonical
+`egress/latest_durable_projection.json` fixture and correspond to
+`LazilyFormal.LatestDurableProjectionCore` in lazily-formal v0.38.1.
+
 ## Context
 
 All reactives that react to each other must share a `Context`. The context
@@ -356,6 +383,7 @@ multi-isolate workloads (`test/shm_isolate_test.dart`).
 | Async reactive context | `package:lazily/async_context.dart` |
 | Queue family across sync / thread-safe / async (`QueueCell` / `TopicCell` / `WorkQueueCell`) | `package:lazily/lazily.dart` |
 | Transport-agnostic reactive ingress across sync / thread-safe / async (`IngressCore` + `IngressCell` / `ThreadSafeIngressCell` / `AsyncIngressCell`, `#designimplementtransport`) | `package:lazily/lazily.dart` |
+| Latest-value durable egress across core / sync / thread-safe / async (`LatestDurableProjectionCore` + reactive shells, `#lzlatestdurableprojection`) | `package:lazily/latest_durable_projection.dart` |
 | Keyed reactive map materialization (`ComputedMap` lazy `getOrInsertWith` / eager `materializeAll`, `#reactivemap`) | `package:lazily/lazily.dart` |
 | Thread-safe context + reactive map (`ThreadSafeContext` / `ThreadSafeReactiveMap` / `ThreadSafeSourceMap` / `ThreadSafeComputedMap`) | `package:lazily/lazily.dart` |
 | Async reactive map (`AsyncReactiveMap` / `AsyncSourceMap` / `AsyncComputedMap`) | `package:lazily/lazily.dart` |

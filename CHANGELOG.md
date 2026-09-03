@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
-## Unreleased
+## 0.30.0 - 2026-09-03
 
 ### Fixed
 
@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
   the rewrite.
 
 ### Added
+
+- **Latest-value durable egress** (`#lzlatestdurableprojection`).
+  `LatestDurableProjectionCore<K, T>` and its sync, thread-safe, and async
+  reactive shells keep one claimed effect per key, conflate only pending
+  desired values, retry failures, advance a monotone durable frontier, and
+  fence stale actor acknowledgements across reconnects. All flavors replay the
+  canonical lazily-spec v0.38.0 egress fixture and correspond to lazily-formal
+  v0.38.1.
 
 - **`tool/ipc_browser_check.dart` and the `ipc-browser-check` gate**
   (`#lzdartwebcompile`). Compiles the IPC surface with `dart compile js` and runs

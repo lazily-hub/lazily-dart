@@ -36,6 +36,8 @@ export 'src/fnv1a64.dart';
 export 'src/ingress_core.dart';
 export 'src/int_width.dart';
 export 'src/lossless_tree_crdt.dart';
+export 'src/latest_durable_projection.dart';
+export 'src/latest_durable_projection_core.dart';
 export 'src/membership.dart';
 export 'src/merge.dart';
 export 'src/presence.dart';
