@@ -70,6 +70,13 @@ fi
 # half fiction is one nobody can read the real gaps out of. The stale-entry check
 # at the bottom of this file now fails on that direction too.
 KNOWN_UNCOVERED=(
+  # Replay-equivalence proof (`lazily-spec/docs/replay-equivalence.md`) is an
+  # optional (MAY) coverage row and lazily-py is the reference implementation;
+  # this binding has no harness yet, so it opens none of the three. Building one
+  # is what removes these entries — they are not permanent carve-outs.
+  "replay/canonical_encoding_equality.json"
+  "replay/divergence_localization.json"
+  "replay/fingerprint_log_binding.json"
   # Register CRDTs (LWW / MV / PnCounter + the CellCrdt projection bit) are
   # implemented here, but this binding has no canonical replay for the new
   # registers corpus yet; the Registers coverage row is `~` until it does.
