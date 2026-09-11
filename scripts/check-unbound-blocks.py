@@ -112,14 +112,14 @@ KNOWN_UNBOUND_BLOCKS = [
 # EXACT, with no margin, and pinned from a green local `make check`. Do NOT
 # lower them to make a red run green: a drop means the corpus shrank or the
 # ledger detached mid-run, and that is the finding.
-# Re-pinned from a green local probe run after lazily-spec `39df4b3` landed
-# `lossless-tree/apply_update_advances_counter.json` and
-# `lossless-tree/out_of_order_delivery_buffers.json`, which this runner now
-# replays: `649/674 assertion blocks across 140 opened fixtures were BOUND`.
+# Re-pinned from a green local run after `replay_conformance_test.dart` began
+# binding the 26 per-step `expected` blocks of the three `replay/*.json`
+# fixtures (`#lzreplaydart`), on a corpus that had also grown since the previous
+# pin: `697/722 assertion blocks across 144 opened fixtures were BOUND`.
 # Read off what the gate REPORTED, not old-floor-plus-delta.
-MIN_FIXTURES = int(os.environ.get("MIN_BLOCK_FIXTURES", "140"))
-MIN_BLOCKS = int(os.environ.get("MIN_BLOCKS", "674"))
-MIN_BOUND = int(os.environ.get("MIN_BOUND_BLOCKS", "649"))
+MIN_FIXTURES = int(os.environ.get("MIN_BLOCK_FIXTURES", "144"))
+MIN_BLOCKS = int(os.environ.get("MIN_BLOCKS", "722"))
+MIN_BOUND = int(os.environ.get("MIN_BOUND_BLOCKS", "697"))
 
 
 def die(*lines: str) -> None:

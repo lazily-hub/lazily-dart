@@ -70,13 +70,6 @@ fi
 # half fiction is one nobody can read the real gaps out of. The stale-entry check
 # at the bottom of this file now fails on that direction too.
 KNOWN_UNCOVERED=(
-  # Replay-equivalence proof (`lazily-spec/docs/replay-equivalence.md`) is an
-  # optional (MAY) coverage row and lazily-py is the reference implementation;
-  # this binding has no harness yet, so it opens none of the three. Building one
-  # is what removes these entries — they are not permanent carve-outs.
-  "replay/canonical_encoding_equality.json"
-  "replay/divergence_localization.json"
-  "replay/fingerprint_log_binding.json"
   # Register CRDTs (LWW / MV / PnCounter + the CellCrdt projection bit) are
   # implemented here, but this binding has no canonical replay for the new
   # registers corpus yet; the Registers coverage row is `~` until it does.
@@ -369,14 +362,14 @@ fi
 # printing OK. That is the exact failure these floors exist to prevent. A floor
 # carrying slack is a floor that is not doing its job.
 #
-# Re-pinned from a green local probe run after lazily-spec `39df4b3` landed
-# `lossless-tree/apply_update_advances_counter.json` and
-# `lossless-tree/out_of_order_delivery_buffers.json`, which this runner now
-# replays (`conformance coverage OK: 140/152`, `scenario replay OK: 151/151`).
+# Re-pinned from a green local run after `replay_conformance_test.dart` began
+# opening the three `replay/*.json` fixtures of the replay-equivalence proof
+# (`#lzreplaydart`), on a corpus that had also grown since the previous pin
+# (`conformance coverage OK: 144/156`, `scenario replay OK: 153/153`).
 # Read off what the gate REPORTED, not old-floor-plus-delta.
 # Verified exact: raising either by 1 fails the gate naming that floor.
-MIN_FIXTURES="${MIN_FIXTURES:-140}"
-MIN_SCENARIOS="${MIN_SCENARIOS:-151}"
+MIN_FIXTURES="${MIN_FIXTURES:-144}"
+MIN_SCENARIOS="${MIN_SCENARIOS:-153}"
 
 if [ "$total" -eq 0 ]; then
   echo "ERROR: the corpus at $SPEC_DIR listed ZERO fixtures." >&2

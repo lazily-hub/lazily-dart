@@ -7,7 +7,9 @@
 /// `package:lazily/src/text_crdt.dart` and `package:lazily/src/seq_crdt.dart`.
 /// `SemTree` is in `package:lazily/src/sem_tree.dart`, and stable-id alignment
 /// is in `package:lazily/src/stable_id.dart`. The reactive queue (`QueueCell`)
-/// is in `package:lazily/src/queue.dart`. The lossless full-document tree
+/// is in `package:lazily/src/queue.dart`. The replay-equivalence proof harness
+/// (`ReplayHarness`, `#lzreplaydart`) is in
+/// `package:lazily/src/replay.dart`. The lossless full-document tree
 /// CRDT (`LosslessTreeCrdt`, `#lzlosstree`) is in
 /// `package:lazily/src/lossless_tree_crdt.dart`, with UTF-8 offset helpers in
 /// `package:lazily/src/utf8_offsets.dart`.
@@ -46,6 +48,7 @@ export 'src/work_queue.dart';
 export 'src/rateshape.dart';
 export 'src/registers.dart';
 export 'src/relay.dart';
+export 'src/replay.dart';
 export 'src/resilience.dart';
 export 'src/sem_tree.dart';
 export 'src/seq_crdt.dart';

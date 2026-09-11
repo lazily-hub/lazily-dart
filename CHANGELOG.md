@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.31.0 - 2026-09-11
+
+### Added
+
+- **Replay-equivalence proof harness** (`#lzreplaydart`,
+  `package:lazily/replay.dart`). `ReplayHarness` / `ReplayLog` /
+  `ReplayFingerprint` rebuild a graph from an ordered event log and prove it
+  observes the same values at every checkpoint, per
+  `lazily-spec/docs/replay-equivalence.md` — the facility a durable-execution
+  host (Temporal.io workflow replay, an event-sourced aggregate, a deterministic
+  simulation) needs before it is handed a reactive graph.
+
+  All three obligations of the contract are distinct exception types, so a
+  driver routes on the type and never on a message string: `ReplayLog` carries a
+  digest over its canonical bytes and `verify` revalidates that binding BEFORE
+  comparing any observed value (`ReplayLogMismatchError`) — two different logs
+  can settle to the same final values, so a value-only comparison would pass and
+  certify nothing about the log in front of it; a divergence is reported at its
+  FIRST checkpoint naming the diverging cell's label (`ReplayDivergenceError`),
+  with the sampling `stride` part of the fingerprint so a coarser recording is
+  refused by a finer harness (`ReplayStrideMismatchError`); and `canonicalBytes`
+  is type-tagged and length-framed, refusing a value it does not define
+  (`ReplayEncodingError`) rather than falling back on `toString()`, which
+  renders every instance of a class alike and would fold two different
+  observations into one value.
+
+  Digests are the base64 of the EXACT canonical bytes rather than a hash. The
+  spec leaves both the hash and the byte layout binding-chosen — fingerprints
+  are pinned next to a test in one language and never exchanged between
+  bindings — so this keeps `package:lazily`'s zero runtime dependencies instead
+  of buying `package:crypto` for collision resistance that identity already has
+  unconditionally.
+
+- `test/replay_conformance_test.dart` replays the three canonical
+  `conformance/replay/` fixtures, which leave `KNOWN_UNCOVERED` in
+  `scripts/check-conformance-coverage.sh`. On every `record` step it also
+  cross-checks that the recorded final checkpoint really is a digest of the
+  subject's own final observation, driven outside the harness — without it the
+  fixture would accept a harness that fingerprinted some other value entirely.
+  The positive-evidence floors in both coverage guards are re-pinned from what
+  the gates report (144 fixtures, 153 scenarios, 697/722 bound blocks).
+
 ## 0.30.0 - 2026-09-03
 
 ### Fixed

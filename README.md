@@ -127,6 +127,51 @@ synchronous. All four surfaces replay lazily-spec v0.38.0's canonical
 `egress/latest_durable_projection.json` fixture and correspond to
 `LazilyFormal.LatestDurableProjectionCore` in lazily-formal v0.38.1.
 
+## Replay-equivalence proof
+
+A durable-execution host — a Temporal.io workflow replay, an event-sourced
+aggregate, a deterministic simulation — re-runs your code from an ordered event
+log and expects the same decisions. `ReplayHarness` makes that **provable**
+rather than assumed (`#lzreplaydart`,
+[`lazily-spec/docs/replay-equivalence.md`][replay-spec]):
+
+```dart
+final log = ReplayLog.fromRecords([('add', 1), ('add', 2), ('add', 3)]);
+final harness = ReplayHarness(() => Accumulator());
+
+final fingerprint = harness.record(log); // pin it, or commit `toWire()`
+harness.verify(log, fingerprint); // throws at the FIRST diverging checkpoint
+harness.prove(log); // record + re-replay, no pinned artifact needed
+```
+
+Three obligations, and each is a distinct exception type so a driver routes on
+the type rather than on a message:
+
+- **The fingerprint is bound to its log.** `ReplayLog` carries a digest over its
+  canonical bytes and `verify` revalidates that binding *before* comparing any
+  observed value, throwing `ReplayLogMismatchError`. Two different logs can
+  settle to the same final values — `[+1,+2,+3]` and `[+3,+2,+1]` both sum to
+  6 — so a value-only comparison would pass and certify nothing. `check`, the
+  non-raising reporting form, refuses a stale fingerprint too.
+- **Divergence is localized.** Every event is checkpointed by default, and
+  `ReplayDivergenceError.first` names the first diverging checkpoint's `seq` and
+  the label of the cell that differed. A coarser `stride` is available for long
+  logs and is itself part of the fingerprint, so a fingerprint sampled at one
+  stride is refused against a harness sampling at another
+  (`ReplayStrideMismatchError`).
+- **The observation encoding is canonical, or it fails.** `canonicalBytes` is
+  type-tagged and length-framed — `{a:1, b:2}` equals `{b:2, a:1}`, `[1,2]` does
+  not equal `[2,1]`, and `['a','bc']` does not equal `['ab','c']` — and a value
+  with no defined encoding throws `ReplayEncodingError` rather than falling back
+  on `toString()`, which renders every instance of a class alike and would fold
+  two different observations into one value.
+
+Digests are the base64 of the exact canonical bytes, not a hash: the spec leaves
+both the hash and the byte layout binding-chosen because fingerprints are pinned
+next to a test and never exchanged between bindings, and `package:lazily` keeps
+its **zero runtime dependencies** rather than buying `package:crypto` for
+collision resistance that identity already has.
+
 ## Context
 
 All reactives that react to each other must share a `Context`. The context
@@ -215,6 +260,14 @@ lazily-dart replays the shared [`lazily-spec`][spec] conformance fixtures:
   returns, the projected reader value, and per-step reader invalidation
   (`invalidates`) — a reader recomputes only when its projected value actually
   changes.
+- The replay-equivalence fixtures (`replay/fingerprint_log_binding.json`,
+  `replay/divergence_localization.json`,
+  `replay/canonical_encoding_equality.json`) are replayed by
+  `test/replay_conformance_test.dart` against `ReplayHarness`. They assert the
+  log binding is revalidated before any value compare, that a divergence is
+  reported at its first checkpoint with the diverging cell's label, and the
+  encoding's equality classes — never a hex digest, so each binding's choice of
+  hash stays free.
 
 ### Formal model (`lazily-formal`)
 
@@ -562,4 +615,5 @@ language and held to the same behaviour by a shared conformance corpus.
 [zig]: https://github.com/lazily-hub/lazily-zig
 [react]: https://github.com/lazily-hub/lazily-react
 [spec]: https://github.com/lazily-hub/lazily-spec
+[replay-spec]: https://github.com/lazily-hub/lazily-spec/blob/main/docs/replay-equivalence.md
 [formal]: https://github.com/lazily-hub/lazily-formal

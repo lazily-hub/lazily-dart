@@ -1,0 +1,402 @@
+/// Replay the canonical replay-equivalence corpus against `package:lazily`'s
+/// `ReplayHarness` (`#lzreplaydart`).
+///
+/// Three fixtures, one obligation each
+/// (`lazily-spec/docs/replay-equivalence.md`): the fingerprint is bound to its
+/// log and that binding is revalidated before any value compare; a divergence
+/// is reported at the first checkpoint where the values parted; the observation
+/// encoding agrees with the family on which differences are differences.
+///
+/// The corpus declares its subjects in prose because a JSON fixture cannot
+/// carry a reactive graph, so [_Accumulator] below is this binding's copy of
+/// that declaration — kept to the letter, including that `observe` exposes
+/// `sum` and `names` under exactly those labels.
+library;
+
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'package:lazily/lazily.dart';
+import 'package:test/test.dart';
+
+import 'conformance_manifest.dart';
+
+const _family = 'replay';
+
+Map<String, dynamic> _fixture(String name) =>
+    attributeFixture(jsonDecode(specReadFixture('$_family/$name')))
+        as Map<String, dynamic>;
+
+// ---------------------------------------------------------------------------
+// The corpus's canonical subjects
+// ---------------------------------------------------------------------------
+
+/// `accumulator`, and `drifting_accumulator` when a drift is configured.
+///
+/// `apply`: `sum += event.payload`, then append `event.name` to `names`; when
+/// the event's `seq` equals [driftAt], `sum += drift` afterwards. `observe`:
+/// `{"sum": sum, "names": names}`.
+///
+/// `observe` hands out a COPY of `names`. A live view of the growing list would
+/// leave every checkpoint holding the same object, so each one would digest the
+/// final state and a divergence in the middle of the log could not be seen.
+final class _Accumulator implements ReplayGraph {
+  _Accumulator({this.driftAt, this.drift = 0});
+
+  final int? driftAt;
+  final int drift;
+
+  int sum = 0;
+  final List<String> names = <String>[];
+
+  @override
+  void apply(ReplayEvent event) {
+    sum += event.payload! as int;
+    names.add(event.name);
+    if (driftAt != null && event.seq == driftAt) sum += drift;
+  }
+
+  @override
+  Map<String, Object?> observe() => <String, Object?>{
+        'sum': sum,
+        'names': List<String>.of(names),
+      };
+}
+
+ReplayEvent _event(Map<String, dynamic> entry) => ReplayEvent(
+      seq: entry['seq'] as int,
+      name: entry['name'] as String,
+      payload: entry['payload'],
+    );
+
+ReplayLog _log(List<Object?> entries) => ReplayLog([
+      for (final raw in entries) _event(raw! as Map<String, dynamic>),
+    ]);
+
+ReplayGraph Function() _build(
+  Map<String, dynamic> config,
+  Map<String, dynamic> op,
+) {
+  final subject = config['subject'] as String;
+  switch (subject) {
+    case 'accumulator':
+      return _Accumulator.new;
+    case 'drifting_accumulator':
+      final driftAt = config['drift_at'] as int;
+      final drift = (op['drift'] ?? 0) as int;
+      return () => _Accumulator(driftAt: driftAt, drift: drift);
+    default:
+      throw StateError('unknown canonical replay subject "$subject"');
+  }
+}
+
+/// What the subject itself observes after the whole log, driven by hand.
+///
+/// This is the independent half of the `record` cross-check: the fingerprint is
+/// a digest of what the HARNESS saw, and comparing it against a subject driven
+/// outside the harness is what stops the fixture from accepting a harness that
+/// observed some other value entirely.
+Map<String, Object?> _finalObservation(
+  ReplayGraph Function() build,
+  ReplayLog log,
+) {
+  final subject = build();
+  for (final event in log.events) {
+    subject.apply(event);
+  }
+  return subject.observe();
+}
+
+// ---------------------------------------------------------------------------
+// Obligations 1 and 2
+// ---------------------------------------------------------------------------
+
+void _driveHarnessFixture(String name, {required int minimumSteps}) {
+  final fixture = _fixture(name);
+  expect(fixture['kind'], equals('Replay'), reason: '$name: kind');
+  expect(fixture['model'], equals('ReplayHarness'), reason: '$name: model');
+  final config = fixture['config'] as Map<String, dynamic>;
+  final logs = <String, ReplayLog>{
+    for (final entry in (config['logs'] as Map<String, dynamic>).entries)
+      entry.key: _log(entry.value as List<Object?>),
+  };
+  final fingerprints = <String, ReplayFingerprint>{};
+  final steps = fixture['steps'] as List<Object?>;
+  expect(steps.length, greaterThanOrEqualTo(minimumSteps),
+      reason: '$name: step count');
+
+  for (var index = 0; index < steps.length; index++) {
+    final step = steps[index]! as Map<String, dynamic>;
+    final op = step['op'] as Map<String, dynamic>;
+    final type = op['type'] as String;
+    final where = '$name step $index ($type)';
+    // Bind the block whatever the op turns out to be: an `expected` block no
+    // runner passes to the tracker is invisible to every guard in this repo.
+    final expected = assertionsOf(step['expected'], where);
+
+    if (type == 'log_digest_equal') {
+      final equal = logs[op['left']]!.digest == logs[op['right']]!.digest;
+      expect(step['returns'], equals(equal), reason: '$where: returns');
+      continue;
+    }
+
+    final build = _build(config, op);
+    final stride = (op['stride'] ?? config['stride'] ?? 1) as int;
+    final harness = ReplayHarness(build, stride: stride);
+    final log = logs[op['log']]!;
+
+    if (type == 'record') {
+      final fingerprint = harness.record(log);
+      fingerprints[op['into'] as String] = fingerprint;
+      assertKey(expected, 'outcome', 'recorded', where);
+      assertKey(
+        expected,
+        'checkpoint_seqs',
+        [for (final checkpoint in fingerprint.checkpoints) checkpoint.seq],
+        where,
+      );
+      assertKey(expected, 'stride', fingerprint.stride, where);
+
+      final observed = _finalObservation(build, log);
+      assertKey(expected, 'final_sum', observed['sum'], where);
+      // The fingerprint must have observed the state the subject ends on, not
+      // merely SOME state: this is the one place the digests and the declared
+      // subject meet, and without it the fixture would accept a harness that
+      // fingerprinted something else entirely.
+      expect(
+        fingerprint.finalCheckpoint.cells,
+        equals(ReplayCheckpoint.of(log.events.last.seq, observed).cells),
+        reason: '$where: the recorded final checkpoint is not a digest of the '
+            "subject's own final observation",
+      );
+      continue;
+    }
+
+    if (type == 'prove') {
+      harness.prove(log, replays: op['replays'] as int);
+      assertKey(expected, 'outcome', 'ok', where);
+      assertKey(expected, 'divergences', 0, where);
+      continue;
+    }
+
+    final fingerprint = fingerprints[op['fingerprint'] as String]!;
+
+    if (type == 'verify') {
+      var outcome = 'ok';
+      ReplayDivergence? first;
+      try {
+        harness.verify(log, fingerprint);
+      } on ReplayLogMismatchError {
+        outcome = 'log_mismatch';
+      } on ReplayStrideMismatchError {
+        outcome = 'stride_mismatch';
+      } on ReplayDivergenceError catch (error) {
+        outcome = 'divergent';
+        first = error.first;
+      }
+      assertKey(expected, 'outcome', outcome, where);
+      if (first == null) {
+        assertKey(expected, 'divergences', 0, where);
+      } else {
+        assertKey(expected, 'first_divergent_seq', first.seq, where);
+        assertKey(expected, 'first_divergent_label', first.label, where);
+        assertKey(expected, 'first_divergent_kind', first.kind.wireName, where);
+      }
+      continue;
+    }
+
+    if (type == 'check') {
+      try {
+        final divergences = harness.check(log, fingerprint).length;
+        assertKey(expected, 'outcome', 'ok', where);
+        assertKey(expected, 'divergences', divergences, where);
+      } on ReplayLogMismatchError {
+        assertKey(expected, 'outcome', 'log_mismatch', where);
+        assertKey(expected, 'divergences', 0, where);
+      }
+      continue;
+    }
+
+    throw StateError('unknown canonical replay operation "$type"');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Obligation 3
+// ---------------------------------------------------------------------------
+
+/// A value the encoding does not define, as the corpus's `opaque` tag.
+final class _Opaque {}
+
+Object? _value(Map<String, dynamic> tagged) {
+  final tag = tagged['t'] as String;
+  switch (tag) {
+    case 'int':
+      return int.parse(tagged['v'] as String);
+    case 'str':
+      return tagged['v'] as String;
+    case 'float':
+      return double.parse(tagged['v'] as String);
+    case 'bool':
+      return tagged['v'] as bool;
+    case 'bytes':
+      final hex = tagged['v'] as String;
+      return Uint8List.fromList([
+        for (var i = 0; i < hex.length; i += 2)
+          int.parse(hex.substring(i, i + 2), radix: 16),
+      ]);
+    case 'seq':
+      return <Object?>[
+        for (final item in tagged['v'] as List<Object?>)
+          _value(item! as Map<String, dynamic>),
+      ];
+    case 'set':
+      return <Object?>{
+        for (final item in tagged['v'] as List<Object?>)
+          _value(item! as Map<String, dynamic>),
+      };
+    case 'map':
+      return <String, Object?>{
+        for (final pair in (tagged['v'] as List<Object?>)
+            .map((raw) => raw! as List<Object?>))
+          pair[0]! as String: _value(pair[1]! as Map<String, dynamic>),
+      };
+    case 'opaque':
+      return _Opaque();
+    default:
+      throw StateError('unknown canonical value tag "$tag"');
+  }
+}
+
+void _driveEncodingFixture(String name, {required int minimumSteps}) {
+  final fixture = _fixture(name);
+  expect(fixture['kind'], equals('Replay'), reason: '$name: kind');
+  expect(fixture['model'], equals('CanonicalEncoding'), reason: '$name: model');
+  final values = (fixture['config'] as Map<String, dynamic>)['values']
+      as Map<String, dynamic>;
+  final steps = fixture['steps'] as List<Object?>;
+  expect(steps.length, greaterThanOrEqualTo(minimumSteps),
+      reason: '$name: step count');
+  final outcomes = <bool>{};
+
+  for (var index = 0; index < steps.length; index++) {
+    final step = steps[index]! as Map<String, dynamic>;
+    final op = step['op'] as Map<String, dynamic>;
+    final type = op['type'] as String;
+    final where = '$name step $index ($type)';
+    final expected = assertionsOf(step['expected'], where);
+
+    if (type == 'digest_equal') {
+      final equal = canonicalDigest(
+            _value(values[op['left']]! as Map<String, dynamic>),
+          ) ==
+          canonicalDigest(_value(values[op['right']]! as Map<String, dynamic>));
+      expect(step['returns'], equals(equal), reason: '$where: returns');
+      outcomes.add(equal);
+      continue;
+    }
+
+    if (type == 'digest_defined') {
+      var defined = true;
+      try {
+        canonicalDigest(_value(values[op['value']]! as Map<String, dynamic>));
+      } on ReplayEncodingError {
+        defined = false;
+      }
+      expect(step['returns'], equals(defined), reason: '$where: returns');
+      assertKey(expected, 'outcome', 'encoding_error', where);
+      continue;
+    }
+
+    throw StateError('unknown canonical encoding operation "$type"');
+  }
+
+  // Both outcomes really occurred: a runner that only ever saw `false` would
+  // pass every inequality claim with a broken encoding.
+  expect(outcomes, equals(<bool>{true, false}),
+      reason: '$name: the fixture must exercise BOTH equality outcomes');
+}
+
+void main() {
+  final skipReason = specFamilySkipReason(_family);
+
+  test('a fingerprint is bound to the log that produced it', () {
+    _driveHarnessFixture('fingerprint_log_binding.json', minimumSteps: 8);
+  }, skip: skipReason);
+
+  test('a divergence is localized to its first checkpoint', () {
+    _driveHarnessFixture('divergence_localization.json', minimumSteps: 7);
+  }, skip: skipReason);
+
+  test('the observation encoding agrees on the equality classes', () {
+    _driveEncodingFixture('canonical_encoding_equality.json', minimumSteps: 11);
+  }, skip: skipReason);
+
+  // ---- Library-level obligations the corpus states but cannot carry --------
+
+  test('a log refuses non-increasing sequence numbers but allows gaps', () {
+    expect(
+      () => ReplayLog([
+        ReplayEvent(seq: 1, name: 'add', payload: 1),
+        ReplayEvent(seq: 1, name: 'add', payload: 2),
+      ]),
+      throwsArgumentError,
+    );
+    // Non-contiguous is legal: an ack-truncated durable outbox replays real
+    // epochs, and renumbering them would hide the truncated prefix.
+    final sparse = ReplayLog([
+      ReplayEvent(seq: 7, name: 'add', payload: 1),
+      ReplayEvent(seq: 41, name: 'add', payload: 2),
+    ]);
+    expect(sparse.length, 2);
+    expect(
+      sparse.digest,
+      isNot(equals(ReplayLog.fromRecords([('add', 1), ('add', 2)]).digest)),
+      reason: 'the seqs are part of the log digest',
+    );
+  });
+
+  test('a fingerprint round-trips through its wire form', () {
+    final log = ReplayLog.fromRecords([('add', 1), ('add', 2)]);
+    final harness = ReplayHarness(_Accumulator.new);
+    final recorded = harness.record(log);
+    final wire =
+        jsonDecode(jsonEncode(recorded.toWire())) as Map<String, Object?>;
+    final restored = ReplayFingerprint.fromWire(wire);
+    expect(restored.digest, equals(recorded.digest));
+    expect(harness.verify(log, restored).digest, equals(recorded.digest));
+    expect(
+      () => ReplayFingerprint.fromWire({...wire, 'schema_version': 99}),
+      throwsA(isA<ReplayEncodingError>()),
+    );
+  });
+
+  test('a graph that is not a function of its log fails prove()', () {
+    var salt = 0;
+    final harness =
+        ReplayHarness(() => _Accumulator(driftAt: 0, drift: salt++));
+    expect(
+      () => harness.prove(ReplayLog.fromRecords([('add', 1)])),
+      throwsA(isA<ReplayDivergenceError>()),
+    );
+  });
+
+  test('an observation label the fingerprint does not carry is reported', () {
+    final log = ReplayLog.fromRecords([('add', 1)]);
+    final recorded = ReplayHarness(_Accumulator.new).record(log);
+    final trimmed = ReplayFingerprint(
+      logDigest: recorded.logDigest,
+      stride: recorded.stride,
+      checkpoints: [
+        for (final checkpoint in recorded.checkpoints)
+          ReplayCheckpoint.ofDigests(checkpoint.seq, <String, String>{
+            'sum': checkpoint.cells['sum']!,
+          }),
+      ],
+    );
+    final divergences = ReplayHarness(_Accumulator.new).check(log, trimmed);
+    expect(divergences, isNotEmpty);
+    expect(divergences.first.kind, ReplayDivergenceKind.unexpected);
+    expect(divergences.first.label, 'names');
+  });
+}
