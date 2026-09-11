@@ -374,6 +374,8 @@ void main() {
   test('every declared mutation is observed by the independent interpreter',
       () {
     var pairs = 0;
+    var declaredPairs = 0;
+    var appliedPairs = 0;
     for (final name in _fixtureNames) {
       final fixture = _plainFixture(name);
       final baseline = _independentFailures(fixture, null).failed;
@@ -420,6 +422,10 @@ void main() {
               'fail with the operator applied AND without it, so the mutation '
               'proves nothing',
         );
+        // Counted from what the run really OBSERVED failing, not from the
+        // ledger it is compared against (#lzcorpusfloorguard).
+        appliedPairs += mustFail.intersection(run.failed).length;
+        declaredPairs += mustFail.length;
         fixturePairs += mustFail.length;
       }
       // Every entry contributes at least one (operator, scenario) pair, so the
@@ -430,11 +436,27 @@ void main() {
               'mutation_floor ${fixture['mutation_floor']}');
       pairs += fixturePairs;
     }
-    // timer 4 + timeout 5 + revision_barrier 6. A floor, not an equality: the
-    // corpus may grow pairs, and this run must never apply fewer than it does
-    // today (#lzstdlibmutantsallbindings).
-    expect(pairs, greaterThanOrEqualTo(15),
-        reason: 'applied only $pairs (operator, scenario) pairs');
+    // The hard-coded `>= 15` that used to stand here (timer 4 + timeout 5 +
+    // revision_barrier 6) is gone (#lzcorpusfloorguard). A floor is slack: it
+    // passes when the corpus grows pairs this run never applies, which is the
+    // exact shape of the `#lzreplayframing` miss. The constant-free replacement
+    // is an equality between what the ledgers DECLARE and what this run was
+    // OBSERVED to break — it needs no number and cannot drift as the corpus
+    // grows.
+    //
+    // Caveat worth naming: lazily-spec's `corpus-counts.json` pins per-fixture
+    // STEP and SCENARIO counts, not mutation-ledger entries, so a shrinking
+    // stdlib mutation ledger is not yet caught corpus-side the way a shrinking
+    // step list is.
+    expect(declaredPairs, greaterThan(0),
+        reason: 'the stdlib mutation ledgers declare no (operator, scenario) '
+            'pairs at all');
+    expect(appliedPairs, equals(declaredPairs),
+        reason: 'the ledgers declare $declaredPairs (operator, scenario) pairs '
+            'but only $appliedPairs were observed to fail');
+    expect(pairs, equals(declaredPairs),
+        reason: 'per-fixture pair accounting ($pairs) disagrees with the '
+            'ledger total ($declaredPairs)');
   });
 
   test('the complement is not asserted because the corpus does not support it',

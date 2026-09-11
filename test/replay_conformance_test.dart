@@ -111,7 +111,140 @@ Map<String, Object?> _finalObservation(
 // Obligations 1 and 2
 // ---------------------------------------------------------------------------
 
-void _driveHarnessFixture(String name, {required int minimumSteps}) {
+// Why there is no `minimumSteps` here any more (#lzcorpusfloorguard)
+// -----------------------------------------------------------------
+// `#lzreplayframing` grew `replay/canonical_encoding_equality.json` from 11
+// steps to 14. Every binding kept a per-fixture minimum-steps floor hard-coded
+// in its own runner, eight of nine were still pinned at 11, and the three new
+// rows sat inside that slack — they would have reported green WITHOUT
+// EXECUTING. Re-pinning the number by hand only restarts the same drift clock.
+//
+// What replaces the floor needs no number and cannot drift:
+//   1. every step this runner LOADED is EXECUTED — counted in the dispatch
+//      loop below and compared to the loaded length at the end;
+//   2. an op type this runner does not implement is a HARD FAILURE, never a
+//      silent skip, so "executed" cannot be inflated by a no-op arm.
+//
+// Those two close corpus GROWTH permanently. The one thing a floor did do —
+// notice the corpus SHRINKING — now lives at the single place a shrink can
+// happen, checked against a committed manifest rather than nine copies of a
+// number: lazily-spec's `corpus-counts.json` + `scripts/check-corpus-floors.mjs`.
+
+/// Dispatches exactly one step of a `ReplayHarness` fixture.
+///
+/// Returns normally only when the step was really handled. An unrecognized op
+/// type throws: a permissive fall-through would let a corpus op this binding
+/// never implemented count as executed, which is the executed-vs-loaded
+/// assertion's only blind spot.
+void _dispatchHarnessStep(
+  String name,
+  int index,
+  Map<String, dynamic> step,
+  Map<String, dynamic> config,
+  Map<String, ReplayLog> logs,
+  Map<String, ReplayFingerprint> fingerprints,
+) {
+  final op = step['op'] as Map<String, dynamic>;
+  final type = op['type'] as String;
+  final where = '$name step $index ($type)';
+  // Bind the block whatever the op turns out to be: an `expected` block no
+  // runner passes to the tracker is invisible to every guard in this repo.
+  final expected = assertionsOf(step['expected'], where);
+
+  if (type == 'log_digest_equal') {
+    final equal = logs[op['left']]!.digest == logs[op['right']]!.digest;
+    expect(step['returns'], equals(equal), reason: '$where: returns');
+    return;
+  }
+
+  // `late` on purpose: these are evaluated on FIRST USE, so an op type no
+  // branch below claims falls through to the throw at the end and is named
+  // there. Evaluating them eagerly made an unknown op die on whichever cast
+  // happened to run first ("type 'Null' is not a subtype of type 'String'"),
+  // which is still fail-closed but tells the next reader nothing.
+  late final build = _build(config, op);
+  late final harness = ReplayHarness(
+    build,
+    stride: (op['stride'] ?? config['stride'] ?? 1) as int,
+  );
+  late final log = logs[op['log']]!;
+  late final fingerprint = fingerprints[op['fingerprint'] as String]!;
+
+  if (type == 'record') {
+    final fingerprint = harness.record(log);
+    fingerprints[op['into'] as String] = fingerprint;
+    assertKey(expected, 'outcome', 'recorded', where);
+    assertKey(
+      expected,
+      'checkpoint_seqs',
+      [for (final checkpoint in fingerprint.checkpoints) checkpoint.seq],
+      where,
+    );
+    assertKey(expected, 'stride', fingerprint.stride, where);
+
+    final observed = _finalObservation(build, log);
+    assertKey(expected, 'final_sum', observed['sum'], where);
+    // The fingerprint must have observed the state the subject ends on, not
+    // merely SOME state: this is the one place the digests and the declared
+    // subject meet, and without it the fixture would accept a harness that
+    // fingerprinted something else entirely.
+    expect(
+      fingerprint.finalCheckpoint.cells,
+      equals(ReplayCheckpoint.of(log.events.last.seq, observed).cells),
+      reason: '$where: the recorded final checkpoint is not a digest of the '
+          "subject's own final observation",
+    );
+    return;
+  }
+
+  if (type == 'prove') {
+    harness.prove(log, replays: op['replays'] as int);
+    assertKey(expected, 'outcome', 'ok', where);
+    assertKey(expected, 'divergences', 0, where);
+    return;
+  }
+
+  if (type == 'verify') {
+    var outcome = 'ok';
+    ReplayDivergence? first;
+    try {
+      harness.verify(log, fingerprint);
+    } on ReplayLogMismatchError {
+      outcome = 'log_mismatch';
+    } on ReplayStrideMismatchError {
+      outcome = 'stride_mismatch';
+    } on ReplayDivergenceError catch (error) {
+      outcome = 'divergent';
+      first = error.first;
+    }
+    assertKey(expected, 'outcome', outcome, where);
+    if (first == null) {
+      assertKey(expected, 'divergences', 0, where);
+    } else {
+      assertKey(expected, 'first_divergent_seq', first.seq, where);
+      assertKey(expected, 'first_divergent_label', first.label, where);
+      assertKey(expected, 'first_divergent_kind', first.kind.wireName, where);
+    }
+    return;
+  }
+
+  if (type == 'check') {
+    try {
+      final divergences = harness.check(log, fingerprint).length;
+      assertKey(expected, 'outcome', 'ok', where);
+      assertKey(expected, 'divergences', divergences, where);
+    } on ReplayLogMismatchError {
+      assertKey(expected, 'outcome', 'log_mismatch', where);
+      assertKey(expected, 'divergences', 0, where);
+    }
+    return;
+  }
+
+  throw StateError('unknown canonical replay operation "$type" at $where; '
+      'an op this runner cannot dispatch is a failure, never a skip');
+}
+
+void _driveHarnessFixture(String name) {
   final fixture = _fixture(name);
   expect(fixture['kind'], equals('Replay'), reason: '$name: kind');
   expect(fixture['model'], equals('ReplayHarness'), reason: '$name: model');
@@ -122,103 +255,27 @@ void _driveHarnessFixture(String name, {required int minimumSteps}) {
   };
   final fingerprints = <String, ReplayFingerprint>{};
   final steps = fixture['steps'] as List<Object?>;
-  expect(steps.length, greaterThanOrEqualTo(minimumSteps),
-      reason: '$name: step count');
+  expect(steps, isNotEmpty, reason: '$name: the fixture carries no steps');
 
+  var executed = 0;
   for (var index = 0; index < steps.length; index++) {
-    final step = steps[index]! as Map<String, dynamic>;
-    final op = step['op'] as Map<String, dynamic>;
-    final type = op['type'] as String;
-    final where = '$name step $index ($type)';
-    // Bind the block whatever the op turns out to be: an `expected` block no
-    // runner passes to the tracker is invisible to every guard in this repo.
-    final expected = assertionsOf(step['expected'], where);
-
-    if (type == 'log_digest_equal') {
-      final equal = logs[op['left']]!.digest == logs[op['right']]!.digest;
-      expect(step['returns'], equals(equal), reason: '$where: returns');
-      continue;
-    }
-
-    final build = _build(config, op);
-    final stride = (op['stride'] ?? config['stride'] ?? 1) as int;
-    final harness = ReplayHarness(build, stride: stride);
-    final log = logs[op['log']]!;
-
-    if (type == 'record') {
-      final fingerprint = harness.record(log);
-      fingerprints[op['into'] as String] = fingerprint;
-      assertKey(expected, 'outcome', 'recorded', where);
-      assertKey(
-        expected,
-        'checkpoint_seqs',
-        [for (final checkpoint in fingerprint.checkpoints) checkpoint.seq],
-        where,
-      );
-      assertKey(expected, 'stride', fingerprint.stride, where);
-
-      final observed = _finalObservation(build, log);
-      assertKey(expected, 'final_sum', observed['sum'], where);
-      // The fingerprint must have observed the state the subject ends on, not
-      // merely SOME state: this is the one place the digests and the declared
-      // subject meet, and without it the fixture would accept a harness that
-      // fingerprinted something else entirely.
-      expect(
-        fingerprint.finalCheckpoint.cells,
-        equals(ReplayCheckpoint.of(log.events.last.seq, observed).cells),
-        reason: '$where: the recorded final checkpoint is not a digest of the '
-            "subject's own final observation",
-      );
-      continue;
-    }
-
-    if (type == 'prove') {
-      harness.prove(log, replays: op['replays'] as int);
-      assertKey(expected, 'outcome', 'ok', where);
-      assertKey(expected, 'divergences', 0, where);
-      continue;
-    }
-
-    final fingerprint = fingerprints[op['fingerprint'] as String]!;
-
-    if (type == 'verify') {
-      var outcome = 'ok';
-      ReplayDivergence? first;
-      try {
-        harness.verify(log, fingerprint);
-      } on ReplayLogMismatchError {
-        outcome = 'log_mismatch';
-      } on ReplayStrideMismatchError {
-        outcome = 'stride_mismatch';
-      } on ReplayDivergenceError catch (error) {
-        outcome = 'divergent';
-        first = error.first;
-      }
-      assertKey(expected, 'outcome', outcome, where);
-      if (first == null) {
-        assertKey(expected, 'divergences', 0, where);
-      } else {
-        assertKey(expected, 'first_divergent_seq', first.seq, where);
-        assertKey(expected, 'first_divergent_label', first.label, where);
-        assertKey(expected, 'first_divergent_kind', first.kind.wireName, where);
-      }
-      continue;
-    }
-
-    if (type == 'check') {
-      try {
-        final divergences = harness.check(log, fingerprint).length;
-        assertKey(expected, 'outcome', 'ok', where);
-        assertKey(expected, 'divergences', divergences, where);
-      } on ReplayLogMismatchError {
-        assertKey(expected, 'outcome', 'log_mismatch', where);
-        assertKey(expected, 'divergences', 0, where);
-      }
-      continue;
-    }
-
-    throw StateError('unknown canonical replay operation "$type"');
+    _dispatchHarnessStep(
+      name,
+      index,
+      steps[index]! as Map<String, dynamic>,
+      config,
+      logs,
+      fingerprints,
+    );
+    executed++;
   }
+
+  expect(
+    executed,
+    equals(steps.length),
+    reason: '$name: loaded ${steps.length} steps but executed $executed — the '
+        'dispatch loop skipped ${steps.length - executed} of them',
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -268,48 +325,80 @@ Object? _value(Map<String, dynamic> tagged) {
   }
 }
 
-void _driveEncodingFixture(String name, {required int minimumSteps}) {
+/// Dispatches exactly one step of a `CanonicalEncoding` fixture.
+///
+/// As with [_dispatchHarnessStep], an unrecognized op type throws rather than
+/// falling through, so a step can never be counted as executed without having
+/// been interpreted.
+void _dispatchEncodingStep(
+  String name,
+  int index,
+  Map<String, dynamic> step,
+  Map<String, dynamic> values,
+  Set<bool> outcomes,
+) {
+  final op = step['op'] as Map<String, dynamic>;
+  final type = op['type'] as String;
+  final where = '$name step $index ($type)';
+  final expected = assertionsOf(step['expected'], where);
+
+  if (type == 'digest_equal') {
+    final equal = canonicalDigest(
+          _value(values[op['left']]! as Map<String, dynamic>),
+        ) ==
+        canonicalDigest(_value(values[op['right']]! as Map<String, dynamic>));
+    expect(step['returns'], equals(equal), reason: '$where: returns');
+    outcomes.add(equal);
+    return;
+  }
+
+  if (type == 'digest_defined') {
+    var defined = true;
+    try {
+      canonicalDigest(_value(values[op['value']]! as Map<String, dynamic>));
+    } on ReplayEncodingError {
+      defined = false;
+    }
+    expect(step['returns'], equals(defined), reason: '$where: returns');
+    assertKey(expected, 'outcome', 'encoding_error', where);
+    return;
+  }
+
+  throw StateError('unknown canonical encoding operation "$type" at $where; '
+      'an op this runner cannot dispatch is a failure, never a skip');
+}
+
+/// See the `#lzcorpusfloorguard` note above [_dispatchHarnessStep] for why this
+/// takes no `minimumSteps`. This is the fixture the incident was found on: it
+/// went 11 -> 14 steps and the floor did not notice.
+void _driveEncodingFixture(String name) {
   final fixture = _fixture(name);
   expect(fixture['kind'], equals('Replay'), reason: '$name: kind');
   expect(fixture['model'], equals('CanonicalEncoding'), reason: '$name: model');
   final values = (fixture['config'] as Map<String, dynamic>)['values']
       as Map<String, dynamic>;
   final steps = fixture['steps'] as List<Object?>;
-  expect(steps.length, greaterThanOrEqualTo(minimumSteps),
-      reason: '$name: step count');
+  expect(steps, isNotEmpty, reason: '$name: the fixture carries no steps');
   final outcomes = <bool>{};
 
+  var executed = 0;
   for (var index = 0; index < steps.length; index++) {
-    final step = steps[index]! as Map<String, dynamic>;
-    final op = step['op'] as Map<String, dynamic>;
-    final type = op['type'] as String;
-    final where = '$name step $index ($type)';
-    final expected = assertionsOf(step['expected'], where);
-
-    if (type == 'digest_equal') {
-      final equal = canonicalDigest(
-            _value(values[op['left']]! as Map<String, dynamic>),
-          ) ==
-          canonicalDigest(_value(values[op['right']]! as Map<String, dynamic>));
-      expect(step['returns'], equals(equal), reason: '$where: returns');
-      outcomes.add(equal);
-      continue;
-    }
-
-    if (type == 'digest_defined') {
-      var defined = true;
-      try {
-        canonicalDigest(_value(values[op['value']]! as Map<String, dynamic>));
-      } on ReplayEncodingError {
-        defined = false;
-      }
-      expect(step['returns'], equals(defined), reason: '$where: returns');
-      assertKey(expected, 'outcome', 'encoding_error', where);
-      continue;
-    }
-
-    throw StateError('unknown canonical encoding operation "$type"');
+    _dispatchEncodingStep(
+      name,
+      index,
+      steps[index]! as Map<String, dynamic>,
+      values,
+      outcomes,
+    );
+    executed++;
   }
+
+  expect(
+    executed,
+    equals(steps.length),
+    reason: '$name: loaded ${steps.length} steps but executed $executed — the '
+        'dispatch loop skipped ${steps.length - executed} of them',
+  );
 
   // Both outcomes really occurred: a runner that only ever saw `false` would
   // pass every inequality claim with a broken encoding.
@@ -321,15 +410,15 @@ void main() {
   final skipReason = specFamilySkipReason(_family);
 
   test('a fingerprint is bound to the log that produced it', () {
-    _driveHarnessFixture('fingerprint_log_binding.json', minimumSteps: 8);
+    _driveHarnessFixture('fingerprint_log_binding.json');
   }, skip: skipReason);
 
   test('a divergence is localized to its first checkpoint', () {
-    _driveHarnessFixture('divergence_localization.json', minimumSteps: 7);
+    _driveHarnessFixture('divergence_localization.json');
   }, skip: skipReason);
 
   test('the observation encoding agrees on the equality classes', () {
-    _driveEncodingFixture('canonical_encoding_equality.json', minimumSteps: 14);
+    _driveEncodingFixture('canonical_encoding_equality.json');
   }, skip: skipReason);
 
   // ---- Library-level obligations the corpus states but cannot carry --------

@@ -584,6 +584,11 @@ int _replay(_Flavor flavor, String name) {
   final keys = _keysOf(fixture);
   _materialize(model, keys);
 
+  // Counted INSIDE the loop, never returned as `steps.length`: the caller's
+  // "every corpus step ran against this flavor" check is only worth something
+  // if the number it compares came from executions, not from the same load it
+  // is being compared against (#lzcorpusfloorguard).
+  var executed = 0;
   for (var i = 0; i < steps.length; i++) {
     final step = steps[i];
     final op = step['op'] as Map<String, dynamic>;
@@ -649,9 +654,12 @@ int _replay(_Flavor flavor, String name) {
     _assertState(model, step, keys, where);
     _assertInvalidation(step, before, after, keys, where);
     _materialize(model, keys);
+    executed++;
   }
 
-  return steps.length;
+  expect(executed, equals(steps.length),
+      reason: '$name: loaded ${steps.length} steps but executed $executed');
+  return executed;
 }
 
 void _assertState(_IngressModel model, Map<String, dynamic> step,
@@ -781,10 +789,19 @@ void main() {
       expect(File('${_fixtureDir().path}/$name').existsSync(), isTrue,
           reason: '$name is declared but absent');
     }
+    // No hard-coded step total here any more (#lzcorpusfloorguard). A floor
+    // (`>= 30`) only ever caught the corpus shrinking below it, and tolerated
+    // it growing silently — the defect `#lzreplayframing` demonstrated when
+    // three new steps landed inside every binding's slack and ran nowhere.
+    // Growth is now closed exactly: `_replay` counts the steps it EXECUTED and
+    // the per-flavor tests below compare that total against what was LOADED,
+    // with an unknown op type throwing rather than skipping. Shrinkage is
+    // guarded corpus-side against a committed manifest, at the one place it can
+    // happen: lazily-spec's `corpus-counts.json` +
+    // `scripts/check-corpus-floors.mjs`.
     final total = _corpusStepTotal();
-    expect(total, greaterThanOrEqualTo(30),
-        reason: 'the ingress corpus replays only $total steps; that is not the '
-            'named schedule set');
+    expect(total, greaterThan(0),
+        reason: 'the ingress corpus carries no steps at all');
   });
 
   test('the ingress ledger names three shipped flavors, in both directions',
