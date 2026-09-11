@@ -329,7 +329,7 @@ void main() {
   }, skip: skipReason);
 
   test('the observation encoding agrees on the equality classes', () {
-    _driveEncodingFixture('canonical_encoding_equality.json', minimumSteps: 11);
+    _driveEncodingFixture('canonical_encoding_equality.json', minimumSteps: 14);
   }, skip: skipReason);
 
   // ---- Library-level obligations the corpus states but cannot carry --------
@@ -378,6 +378,68 @@ void main() {
     expect(
       () => harness.prove(ReplayLog.fromRecords([('add', 1)])),
       throwsA(isA<ReplayDivergenceError>()),
+    );
+  });
+
+  // The member-framing obligation the corpus cannot carry for this binding
+  // (`#lzreplayframing`). The corpus pins the equality CLASS and, with the
+  // nested pair, the container length in a layout-independent way; the pair
+  // that pins a member's OWN length has to spell the next member's tag, and a
+  // binding MAY choose its tags, so only the binding can build it.
+  //
+  // This binding's layout is `<tag><decimal body length>:<body>` with the
+  // string tag `s` — the reference layout of the spec table — so the corpus's
+  // pair IS this binding's pair, and it is repeated here rather than replaced:
+  //
+  //   ['a','sbc'] -> l10:s1:as3:sbc      ['as','bc'] -> l10:s2:ass2:bc
+  //
+  // Delete `<decimal body length>:` from `_frame` and both sides concatenate
+  // to `lsassbc`; the mapping analogue collapses to `msassb` and the nested
+  // pair to `llsasb`. The equality-class pair ['a','bc'] vs ['ab','c'] does NOT
+  // catch that mutation: unframed it is `lsasbc` against `lsabsc`, which still
+  // differ, which is exactly why one row was never enough.
+  //
+  // The LAST inequality pair below pins the same length against the other
+  // spelling of the mutation, where the digits go but the `:` delimiter stays:
+  // there ['a','s:bc'] and ['as:','bc'] both become `l:s:as:s:bc`.
+  test('a member length is pinned by a pair that spells the next tag', () {
+    // Length dropped entirely: both sides would be `lsassbc`.
+    expect(
+      canonicalDigest(<Object?>['a', 'sbc']),
+      isNot(equals(canonicalDigest(<Object?>['as', 'bc']))),
+      reason: 'a member whose content spells the next member tag still needs '
+          'its length',
+    );
+    expect(
+      canonicalDigest(<String, Object?>{'a': 'sb'}),
+      isNot(equals(canonicalDigest(<String, Object?>{'as': 'b'}))),
+      reason: 'a mapping key is framed apart from its value',
+    );
+    expect(
+      canonicalDigest(<Object?>[
+        <Object?>['a'],
+        'b',
+      ]),
+      isNot(equals(canonicalDigest(<Object?>[
+        <Object?>['a', 'b'],
+      ]))),
+      reason: 'a nested container boundary survives concatenation',
+    );
+
+    // Digits dropped, delimiter kept: both sides would be `l:s:as:s:bc`.
+    expect(
+      canonicalDigest(<Object?>['a', 's:bc']),
+      isNot(equals(canonicalDigest(<Object?>['as:', 'bc']))),
+      reason: 'the decimal length, not the delimiter, is what frames a member',
+    );
+
+    // Asserted LAST on purpose: it is the anchor that documents the layout the
+    // four pairs above are built against, and a first-line literal compare
+    // would short-circuit the test before any of them ran.
+    expect(
+      utf8.decode(canonicalBytes(<Object?>['a', 'sbc'])),
+      'l10:s1:as3:sbc',
+      reason: 'the layout these pairs are built against',
     );
   });
 
