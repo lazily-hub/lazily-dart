@@ -25,6 +25,28 @@
 #   sibling guards (conformance-coverage, assertion-keys, scenario-coverage) are
 #   what prove a run examined anything.
 #
+# WHAT IT PINS (#pinreachclosure)
+#
+#   Reach was the only thing audited, and the verdict was a COUNT, so the
+#   POPULATION was unpinned: a target that left the closure left no trace, and
+#   deleting one printed `OK — 10 target(s) reached` in place of 11 without ever
+#   naming it. Three rungs now pin the population, each measured necessary on
+#   this repo's real Makefile because the other two pass its attack with output
+#   byte-identical to healthy:
+#
+#     A. the make-derived ORACLE — `make -n <root>` really runs each member's
+#        commands. Load-bearing: the closure itself is awk-scanned from Makefile
+#        source and cannot see make conditionals.
+#     B. EXPECTED_CLOSURE_TARGETS — set equality on WHICH targets are members,
+#        plus EXPECTED_ROOT_TARGET so the root cannot be swapped underneath it.
+#     C. EXPECTED_NOGATE_TARGETS — set equality on which members legitimately
+#        carry no checkable command, so a name cannot be kept while its recipe
+#        is neutered.
+#
+#   Still not caught, and deliberately so: swapping a member's recipe for a
+#   DIFFERENT gate CI already runs. See the note on EXPECTED_ROOT_TARGET below
+#   for why closing it would cost more than it buys.
+#
 # HOW A TARGET IS MATCHED
 #
 #   Recipes are read through `make -n`, so make variables are already expanded and
@@ -68,14 +90,137 @@
 #   scripts/ci-reach.conf names the workflows that count and the targets that are
 #   deliberately local-only, each with a reason. It is the one place a reader can
 #   see what this binding does not enforce in CI, in the same spirit as
-#   KNOWN_UNCOVERED. Excuses are checked in BOTH directions: an excused target that
-#   CI turns out to reach fails too, so the list cannot rot into a list of things
-#   that used to be true.
+#   KNOWN_UNCOVERED. Excuses are checked in THREE directions, so the list cannot
+#   rot into a list of things that used to be true:
+#
+#     * an excused target CI turns out to REACH fails — the excuse is obsolete.
+#     * an excused target that is NOT IN THE CLOSURE fails — it excuses no gate,
+#       and this guard never consults it. That direction was missing: such an
+#       excuse was silently ignored (`0 excused`, no complaint, exit 0) while
+#       KNOWN_UNCOVERED has always refused its equivalent (`lists 'X', which is
+#       not in the canonical corpus`). The asymmetry is closed below.
+#     * an excuse with no reason fails, because it is not an excuse.
 set -euo pipefail
 
 MAKE_BIN="${MAKE:-make}"
 ROOT_TARGET="${CI_REACH_ROOT_TARGET:-check}"
 CONF="${CI_REACH_CONF:-scripts/ci-reach.conf}"
+
+# ------------------------------------------------------------- the closure PIN
+#
+# WHICH targets `check` must reach (#pinreachclosure).
+#
+# Everything below this line audits the closure the Makefile happens to have.
+# Nothing audited its MEMBERSHIP, and the verdict is a COUNT, so a target that
+# LEAVES the closure left no trace. Measured on this repo's real Makefile, on a
+# byte-verified scratch copy, with `analyze` deleted from `check:`'s prerequisite
+# list: `OK — 10 target(s) reached by CI, 0 excused, 1 carrying no gate`,
+# exit 0, down from 11 — never naming the gate that left, with
+# `dart analyze --fatal-infos` sitting in its recipe untouched. A gate stopped
+# being required and the guard approved.
+#
+# The mirror image was the same hole from the other side. An `excuse:` naming a
+# target that is not in the closure AT ALL was silently ignored. Also measured,
+# both with a name no rule defines (`excuse: typecheck ...`) and with a real
+# target that `check` does not reach (`excuse: fmt-fix ...`): `0 excused`, no
+# complaint, exit 0 — while the conformance guard has always checked that
+# direction (`KNOWN_UNCOVERED lists 'X', which is not in the canonical corpus`).
+# The conf header claims excuses "cannot rot into a list of things that used to
+# be true"; only one of its two directions was actually proven. Membership is now
+# pinned both ways, and an out-of-closure excuse is a hard failure below.
+#
+# This is NOT the `dry_run` false green (#lzgrepcpipefail) one rung up. That one
+# hid an UNREADABLE target; this one hides a REMOVED one, and removing one leaves
+# the `check:` line visibly changed in a diff — which is exactly why a pin
+# works here: it turns an invisible count change into a required, reviewable
+# edit.
+#
+# SET EQUALITY, not a count floor or ceiling. A floor passes a SWAP — drop one
+# gate, add another — and a ceiling self-disables: it starts at zero slack and
+# gains slack with every legitimate migration until the same deletion passes
+# again. The property that matters is fails-when-stale, never
+# passes-when-stale, which is the same reasoning that replaced
+# MAX_LEDGERED_BLOCKS with EXPECTED_LEDGERED_BLOCKS in this family.
+# `EXPECTED_` already means exact equality in these scripts, so the name carries
+# the semantics; MIN_, MAX_ and KNOWN_ would all read as slack.
+#
+# The ROOT is pinned too. ROOT_TARGET is env-overridable, so without this line
+# `CI_REACH_ROOT_TARGET=fmt-fix` — or renaming `check:` and pointing the
+# override at the new name — swaps in a closure of one, and a pin over a root
+# nobody fixed is a pin over nothing.
+#
+# The root target is itself a member: a closure includes the target it is rooted
+# at, and `check` is reported as `no gate` because its recipe only echoes.
+#
+# This pin is EDITABLE, and that is the whole point — but editing it
+# reflexively to quieten the guard is the one way to defeat it. So the
+# diagnostics distinguish "you broke a gate" from "you meant to change the
+# closure", and say which one is almost always true.
+#
+# A NAMES-ONLY PIN IS NOT SUFFICIENT ON ITS OWN, and it is not offered as one.
+# It is one of three rungs, and the weakest:
+#
+#   A. the make-derived ORACLE, below the closure walk. `prereqs_of` reads
+#      Makefile SOURCE TEXT and cannot see make conditionals, so the awk closure
+#      and the closure make executes are two different sets; a pin over the
+#      first is set-equal to a set that may describe nothing. Load-bearing.
+#   B. this membership pin.
+#   C. EXPECTED_NOGATE_TARGETS, at the foot of this file. Membership says a name
+#      is still a prerequisite; it says nothing about whether the name still
+#      carries a gate.
+#
+# Each rung was measured to be necessary on this repo's real Makefile: A and C
+# each have an attack that B alone passes with output BYTE-IDENTICAL to healthy.
+# The verdicts are in the comments on those two rungs.
+#
+# WHAT THE THREE TOGETHER STILL DO NOT CATCH, stated rather than implied:
+# swapping a target's recipe for a DIFFERENT gate CI already runs (`analyze:`
+# running `dart format --output=none --set-exit-if-changed .`) keeps the name, the
+# membership, the classification, every count and the make-derived oracle
+# satisfied, and the verdict byte-identical. Closing that needs a per-target
+# recipe anchor — a second spelling of every recipe inside this guard — which
+# the header above records as a mistake that already cost lazily-cpp a
+# hand-written equality assertion. It also bounds the honest case for this work:
+# the argument for a pin is that it turns an invisible drop into a REVIEWABLE
+# edit, and that swap is an equally reviewable edit that stays equally
+# undetected.
+EXPECTED_ROOT_TARGET="check"
+EXPECTED_CLOSURE_TARGETS=(
+	"analyze"
+	"assertion-ordering-check"
+	"check"
+	"ci-reach"
+	"conformance-coverage"
+	"fmt"
+	"formal-check"
+	"ipc-browser-check"
+	"stdlib-browser-check"
+	"test"
+	"test-interop-peer"
+	"unbound-block-check"
+)
+
+# Which closure members legitimately carry NO gate (#pinreachclosure, part C).
+#
+# `no gate` is the audit's escape hatch: a member whose recipe runs no checkable
+# command is dropped from the reach population and cannot fail the build. It is
+# therefore also the quietest place to park a gate. Membership pins the NAME; it
+# says nothing about whether the name still carries anything.
+#
+# Measured on this repo's real Makefile, keeping the name and neutering the
+# recipe to `analyze:` / `true`: pre-fix AND with the membership pin in place,
+# `OK — 10 target(s) reached by CI, 0 excused, 2 carrying no gate`, exit 0, with
+# `no gate analyze` sitting in the listing as though it had always been
+# decorative. The make-derived oracle does not catch it either — `make -n check`
+# genuinely does run `true` — so this is a third, independent rung, not a
+# restatement of the other two.
+#
+# Set equality, both directions, same as the closure pin. Today the only
+# legitimate member is the root itself, whose recipe only echoes, so the pin is
+# one line and every other `no gate` line is a regression.
+EXPECTED_NOGATE_TARGETS=(
+	"check"
+)
 
 if [ ! -f Makefile ]; then
 	echo "check-ci-reach: no Makefile in $(pwd)" >&2
@@ -337,6 +482,214 @@ own_commands() {
 	prefix="$(dry_run "${deps[@]}" | wc -l)"
 	dry_run "$target" | tail -n +"$((prefix + 1))"
 }
+
+# ------------------------------------------------ closure MEMBERSHIP (the pin)
+#
+# Set equality against EXPECTED_CLOSURE_TARGETS, reported in BOTH directions and
+# by NAME (#pinreachclosure). Ahead of the per-target reach audit, because a
+# reach verdict computed over the WRONG population is the laundering this pin
+# removes: with `analyze` gone the audit printed a wall of `reached` lines and an
+# OK verdict, and every one of those lines was true. Refused up front in the MAIN
+# shell, the way the root probe above is, so nothing downstream can swallow it.
+
+if [ "$ROOT_TARGET" != "$EXPECTED_ROOT_TARGET" ]; then
+	echo "check-ci-reach: root target is '$ROOT_TARGET', but EXPECTED_ROOT_TARGET pins '$EXPECTED_ROOT_TARGET'." >&2
+	echo "                The closure this guard audits is the one rooted at that name, so auditing some" >&2
+	echo "                other root pins nothing. Drop the CI_REACH_ROOT_TARGET override; or if" >&2
+	echo "                '$ROOT_TARGET' really is the new root, update EXPECTED_ROOT_TARGET and" >&2
+	echo "                EXPECTED_CLOSURE_TARGETS together in the same commit." >&2
+	exit 1
+fi
+
+# A pin that names nothing pins nothing, and it is set-equal to an empty closure
+# — which is the one closure this guard must never approve (#lzvacuousrun). This
+# also keeps `"${ARRAY[@]}"` off the `:-` form, whose expansion of an EMPTY array
+# is ONE EMPTY ELEMENT and has already been read as a ledger entry once in this
+# repo.
+pin_count=${#EXPECTED_CLOSURE_TARGETS[@]}
+if [ "$pin_count" -eq 0 ]; then
+	echo "check-ci-reach: EXPECTED_CLOSURE_TARGETS is empty — a pin that names no target pins nothing" >&2
+	exit 1
+fi
+
+# A blank or duplicated entry would make `pin_count` disagree with the SET the
+# comparison below actually uses, and the accounting rung at the foot of this
+# file reads that count. Refused rather than silently normalized: a count that
+# lies is how this whole class of defect starts.
+for pin_entry in "${EXPECTED_CLOSURE_TARGETS[@]}"; do
+	if [ -z "$pin_entry" ]; then
+		echo "check-ci-reach: EXPECTED_CLOSURE_TARGETS carries a BLANK entry — it names no target, and it" >&2
+		echo "                makes the pinned count disagree with the pinned set. Delete it." >&2
+		exit 1
+	fi
+done
+pin_dupes="$(printf '%s\n' "${EXPECTED_CLOSURE_TARGETS[@]}" | LC_ALL=C sort | uniq -d)"
+if [ -n "$pin_dupes" ]; then
+	echo "check-ci-reach: EXPECTED_CLOSURE_TARGETS names the same target more than once:" >&2
+	while IFS= read -r d; do
+		[ -n "$d" ] || continue
+		echo "  - $d" >&2
+	done <<<"$pin_dupes"
+	exit 1
+fi
+
+# `LC_ALL=C` on both sorts AND on `comm`: comm compares byte-wise against the
+# collation its inputs were sorted in, and a locale mismatch makes it report
+# differences that are not there. Both strings are non-empty by the refusals
+# above (the closure always contains its root), so `printf '%s\n'` cannot
+# contribute a phantom empty line here.
+pin_sorted="$(printf '%s\n' "${EXPECTED_CLOSURE_TARGETS[@]}" | LC_ALL=C sort)"
+closure_sorted="$(printf '%s\n' "$closure" | awk 'NF' | LC_ALL=C sort)"
+pin_orphans="$(LC_ALL=C comm -23 <(printf '%s\n' "$pin_sorted") <(printf '%s\n' "$closure_sorted"))"
+closure_unpinned="$(LC_ALL=C comm -13 <(printf '%s\n' "$pin_sorted") <(printf '%s\n' "$closure_sorted"))"
+
+membership_status=0
+
+# Direction 1: pinned, absent from the closure. A gate was dropped from the
+# root's prerequisites, or renamed. This is the attack in the header.
+if [ -n "$pin_orphans" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' is pinned in EXPECTED_CLOSURE_TARGETS but is NOT in '$ROOT_TARGET''s" >&2
+		echo "                prerequisite closure — a gate LEFT the set CI is required to reach." >&2
+	done <<<"$pin_orphans"
+	echo >&2
+	echo "Almost always the fix is in the Makefile: restore the prerequisite to '$ROOT_TARGET'." >&2
+	echo "If the target was genuinely renamed or retired, update EXPECTED_CLOSURE_TARGETS in" >&2
+	echo "$0 in the SAME commit and say why in the message — that edit is the review this pin" >&2
+	echo "exists to force, and it is not a way to make this message go away." >&2
+	membership_status=1
+fi
+
+# Direction 2: in the closure, absent from the pin. Nothing is wrong with the
+# Makefile — the pin is behind. Reported separately from direction 1 because the
+# remedies are in different files and confusing them is how a pin gets edited
+# reflexively.
+if [ -n "$closure_unpinned" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' is in '$ROOT_TARGET''s prerequisite closure but is NOT pinned in" >&2
+		echo "                EXPECTED_CLOSURE_TARGETS — a gate was added without being pinned." >&2
+	done <<<"$closure_unpinned"
+	echo >&2
+	echo "Add it to EXPECTED_CLOSURE_TARGETS in $0 (the list is sorted) so that DELETING it later" >&2
+	echo "cannot pass as a smaller count. The Makefile is fine; the pin is behind it." >&2
+	membership_status=1
+fi
+
+# --------------------------------- the make-derived ORACLE (part A, load-bearing)
+#
+# Everything above compares the awk-derived closure against a list of names.
+# This asks MAKE whether it actually runs each of those targets' commands for
+# the root.
+#
+# `prereqs_of` scans Makefile SOURCE TEXT for the FIRST line matching
+# `^<root>:`. It never asks make and it cannot see make conditionals, so the awk
+# closure and the closure make executes are two different sets, and a pin over
+# the first is set-equal to a set that may describe nothing. lazily-js measured
+# it first; re-measured here on this repo's real Makefile with a DEAD branch,
+# which needs no variable and no CI cooperation at all:
+#
+#   ifeq (0,1)
+#   check: fmt analyze test ...      <- the only ^check: line awk ever reads
+#   else
+#   check: fmt test ...              <- what make actually parses
+#   endif
+#
+# `make -n check` then runs `dart analyze --fatal-infos` ZERO times, and the
+# guard WITH the membership pin above printed output BYTE-IDENTICAL (compared as
+# bytes, not through a filter) to healthy, exit 0. The awk closure is constant
+# across both branches, so the pin is constant too and passes by construction.
+# This rung is what makes the pin above mean anything.
+#
+# `make -n` only, NEVER `make -p`: `make -p` builds the default goal and dumps
+# the entire environment to stdout, which would print every secret in the job's
+# env into the CI log.
+#
+# The root is skipped: its own commands are trivially in its own output. A member
+# with no commands at all is skipped too and is answered by
+# EXPECTED_NOGATE_TARGETS instead — an oracle over an empty command list is
+# vacuously true, which is exactly the laundering that pin exists to stop.
+root_cmds="$(dry_run "$ROOT_TARGET")"
+oracle_missing=""
+oracle_confirmed=0
+while IFS= read -r target; do
+	[ -n "$target" ] || continue
+	[ "$target" = "$ROOT_TARGET" ] && continue
+	oracle_cmds="$(dry_run "$target")"
+	[ -n "$oracle_cmds" ] || continue
+	oracle_hit=1
+	while IFS= read -r c; do
+		[ -n "$c" ] || continue
+		# A herestring, never a pipe into `grep -q`: a grep that exits on its
+		# first match can SIGPIPE its producer, and under `pipefail` that inverts
+		# the verdict ON A MATCH (#lzgrepcpipefail). `if !` also keeps grep's
+		# status out of `set -e`.
+		if ! grep -qxF -- "$c" <<<"$root_cmds"; then
+			oracle_hit=0
+			break
+		fi
+	done <<<"$oracle_cmds"
+	if [ "$oracle_hit" -eq 1 ]; then
+		oracle_confirmed=$((oracle_confirmed + 1))
+	else
+		oracle_missing="$oracle_missing$target"$'\n'
+	fi
+done <<<"$closure"
+
+if [ -n "$oracle_missing" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' is in the closure this guard derived from Makefile source, but" >&2
+		echo "                '$MAKE_BIN -n $ROOT_TARGET' does NOT run its commands — so it is not a gate" >&2
+		echo "                '$ROOT_TARGET' actually runs, whatever the prerequisite list says." >&2
+	done <<<"$oracle_missing"
+	echo >&2
+	echo "This is what a make CONDITIONAL around the '$ROOT_TARGET:' rule looks like: the closure is" >&2
+	echo "read from the first matching line of source text, make parses a different one, and every" >&2
+	echo "name-level check above still agrees. Remove the conditional, or move the target out of" >&2
+	echo "'$ROOT_TARGET''s prerequisites AND out of EXPECTED_CLOSURE_TARGETS together so the drop is" >&2
+	echo "visible. Do not satisfy this by editing the pin alone — the pin is not what failed." >&2
+	membership_status=1
+fi
+
+# The other half of the asymmetry (#pinreachclosure): an `excuse:` naming a
+# target OUTSIDE the discovered closure is an ERROR, not a silent no-op.
+#
+# The `is_excused` consultation in the audit loop only ever asks about targets IN
+# the closure, so an excuse for anything else was never read by anything — it
+# printed no `excused` line, did not raise `excused_ok`, and could not go stale,
+# because the stale check also only runs inside the loop. That is precisely the
+# residue a renamed or deleted target leaves behind, and it is the shape the conf
+# file's own header promises cannot survive. KNOWN_UNCOVERED has checked its
+# equivalent direction all along; this closes the asymmetry.
+#
+# An excuse is a claim about a gate `make $ROOT_TARGET` RUNS. Naming something it
+# does not run is not an excuse; it is a note about nothing.
+for i in "${!excused_targets[@]}"; do
+	excused_name="${excused_targets[$i]}"
+	# A herestring, never a pipe: a `grep -q` that exits on its first match can
+	# SIGPIPE its producer, and under `pipefail` that inverts the verdict ON A
+	# MATCH (#lzgrepcpipefail). `if !` also keeps grep's status out of `set -e`.
+	if ! grep -qxF -- "$excused_name" <<<"$closure_sorted"; then
+		echo >&2
+		echo "check-ci-reach: $CONF excuses '$excused_name', which is NOT in '$ROOT_TARGET''s prerequisite" >&2
+		echo "                closure — so the excuse covers no gate and this guard never consults it." >&2
+		echo "                Either '$excused_name' left the closure and took its gate with it (restore the" >&2
+		echo "                prerequisite in the Makefile), or the excuse is simply dead (delete the line" >&2
+		echo "                from $CONF). An excuse is a claim about a gate 'make $ROOT_TARGET' RUNS." >&2
+		membership_status=1
+	fi
+done
+
+if [ "$membership_status" -ne 0 ]; then
+	exit 1
+fi
+
+echo "check-ci-reach: closure pin OK — $pin_count target(s) set-equal to EXPECTED_CLOSURE_TARGETS, root '$EXPECTED_ROOT_TARGET'; '$MAKE_BIN -n $ROOT_TARGET' runs the recipe of all $oracle_confirmed member(s) carrying one"
 
 # ------------------------------------------------------------- workflow scraping
 
@@ -700,6 +1053,83 @@ if [ "$unreached_count" -gt 0 ]; then
 	done <<<"$unreached"
 	echo >&2
 	echo "Add a CI step that runs it, or add an excuse with a reason to $CONF." >&2
+	status=1
+fi
+
+# The pin's cardinality and the audit's buckets describe the SAME population
+# (#pinreachclosure). Every closure member leaves the loop above through
+# exactly one of six branches, so their sum must EQUAL the pinned count. Today:
+# 11 reached + 0 excused + 0 stale + 0 unreached + 0 unreadable + 1 no gate = 12,
+# which is `pin_count`. Without this, a future branch that `continue`s without
+# counting would shrink the audited population while both the pin and the verdict
+# stayed green — the same species of unaccounted member this pin exists to catch,
+# one level down. A mismatch is a bug in this script, not in the Makefile.
+# ------------------------------- the no-gate CLASSIFICATION pin (part C)
+#
+# Set equality against EXPECTED_NOGATE_TARGETS, both directions. Membership above
+# proves a NAME is still a prerequisite; this proves the name still carries
+# something. `no gate` is the audit's escape hatch — a member with no checkable
+# command is dropped from the reach population and cannot fail the build — so it
+# is the quietest place to park a gate, and neither of the two rungs above sees
+# it: membership is unchanged and `make -n $ROOT_TARGET` genuinely does run the
+# neutered recipe.
+#
+# Measured on this repo's real Makefile with `analyze:` reduced to `true`,
+# pre-fix and again with the membership pin and the oracle in place:
+# `OK — 10 target(s) reached by CI, 0 excused, 2 carrying no gate`, exit 0, with
+# `no gate analyze` in the listing as though it had always been decorative.
+nogate_sorted="$(printf '%s\n' "$nogate" | awk 'NF' | LC_ALL=C sort)"
+expected_nogate_count=${#EXPECTED_NOGATE_TARGETS[@]}
+expected_nogate_sorted=""
+if [ "$expected_nogate_count" -gt 0 ]; then
+	expected_nogate_sorted="$(printf '%s\n' "${EXPECTED_NOGATE_TARGETS[@]}" | awk 'NF' | LC_ALL=C sort)"
+fi
+# `awk 'NF'` inside each process substitution: either side can legitimately be
+# EMPTY, and `printf '%s\n' ""` contributes one BLANK line that comm would read
+# as a member named "" (#lzgrepcpipefail's sibling trap, already measured in the
+# conformance guard). LC_ALL=C on both sorts and on comm, so the collations agree.
+nogate_unpinned="$(LC_ALL=C comm -13 <(printf '%s\n' "$expected_nogate_sorted" | awk 'NF') <(printf '%s\n' "$nogate_sorted" | awk 'NF'))"
+nogate_regained="$(LC_ALL=C comm -23 <(printf '%s\n' "$expected_nogate_sorted" | awk 'NF') <(printf '%s\n' "$nogate_sorted" | awk 'NF'))"
+
+if [ -n "$nogate_unpinned" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' now carries NO checkable command and is NOT in" >&2
+		echo "                EXPECTED_NOGATE_TARGETS — it kept its place in '$ROOT_TARGET''s closure and" >&2
+		echo "                stopped being a gate. A member classified 'no gate' is excluded from the" >&2
+		echo "                reach audit entirely, so it can no longer fail this build." >&2
+	done <<<"$nogate_unpinned"
+	echo >&2
+	echo "Almost always the fix is in the Makefile: restore the recipe. If the target really is" >&2
+	echo "meant to run nothing checkable from now on, add it to EXPECTED_NOGATE_TARGETS in $0" >&2
+	echo "in the SAME commit and say why." >&2
+	status=1
+fi
+if [ -n "$nogate_regained" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' is pinned in EXPECTED_NOGATE_TARGETS but now carries a gate — the" >&2
+		echo "                pin is behind the Makefile, which is good news." >&2
+	done <<<"$nogate_regained"
+	echo >&2
+	echo "Delete it from EXPECTED_NOGATE_TARGETS in $0 so the list keeps naming only real" >&2
+	echo "exemptions, the same way a stale excuse is deleted from $CONF." >&2
+	status=1
+fi
+if [ "$status" -eq 0 ]; then
+	echo "check-ci-reach: no-gate pin OK — $nogate_count target(s) set-equal to EXPECTED_NOGATE_TARGETS"
+fi
+
+accounted=$((reached + excused_ok + stale_count + unreached_count + unreadable_count + nogate_count))
+if [ "$accounted" -ne "$pin_count" ]; then
+	echo >&2
+	echo "check-ci-reach: $accounted closure target(s) accounted for, but the closure pin holds $pin_count." >&2
+	echo "                Every member of '$ROOT_TARGET''s closure must land in exactly one bucket" >&2
+	echo "                (reached, excused, stale excuse, unreached, unreadable, no gate). One landed" >&2
+	echo "                in none, so part of the closure was audited by nothing. This is a bug in" >&2
+	echo "                $0 — not in the Makefile and not in the workflow." >&2
 	status=1
 fi
 
