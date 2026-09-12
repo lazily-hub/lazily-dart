@@ -35,6 +35,14 @@ SIZE of the population is asserted too, in two dimensions — SITES and distinct
 CONTENT DIGESTS — both DERIVED from the canonical corpus minus this binding's
 own ``KNOWN_UNCOVERED`` ledger, and both compared for EQUALITY rather than
 floored (``#lzblocksitepin``). See ``derive_expected``.
+
+The excused set carries a CEILING on top of its set equality
+(``#lzledgerceiling``). An equality only says the ledger and the run AGREE, and
+any consistent pair satisfies it — a commit that detaches binds and writes the
+matching entries passes both directions, and the magnitude rung above cannot
+see it either because a detached site is still declared. ``MAX_LEDGERED``
+bounds how much may be excused at all, so the ledger can only shrink without a
+deliberate edit.
 """
 
 from __future__ import annotations
@@ -138,6 +146,38 @@ KNOWN_UNBOUND_BLOCKS = [
         (1, 2, 3, 4, 5, 6),
     ),
 ]
+
+# A CEILING on the excused population (#lzledgerceiling).
+#
+# `KNOWN_UNBOUND_BLOCKS` is checked as a SET EQUALITY against the run, in both
+# directions: an unbound block nobody excused fails, and an excuse the suite
+# outlived fails as stale. That is the right shape, and it is still not enough,
+# because set equality is satisfied by ANY CONSISTENT PAIR. A commit that
+# detaches N binds AND writes the N matching entries passes both directions.
+# Nothing else here catches it either — the magnitude rung compares DECLARED
+# sites and digests against the canonical corpus, and a detached bind leaves the
+# site declared, merely no longer bound, so both dimensions stay equal.
+#
+# A typed COUNT of the ledger would not fix it. A number that mirrors the
+# current population is redundant with the equality above — equal sets have
+# equal counts — so it carries no information and only adds a second edit site
+# that drifts. That is the `MIN_BLOCKS` shape whose history is written out
+# below.
+#
+# What closes the hole is a ceiling on how much MAY be excused. A ceiling is a
+# POLICY, not a measurement: it does not move when the corpus moves, and it
+# never needs re-pinning except deliberately and upward, in review. What it buys
+# is that a regression and its excuse can no longer land in the same commit
+# unnoticed — raising this line is the explicit act.
+#
+# Raise it ONLY for a block this binding genuinely cannot bind, carrying a reason
+# that says what cannot be expressed, and expect to be asked why the capability
+# cannot exist. Never raise it to park a block that is merely unbound today: that
+# is the laundering this guard exists to refuse. The six entries above are here
+# because the replay model has no `merge_cell` or `drain_exhausted` op;
+# implementing those ops is what LOWERS this line, and it should only ever move
+# in that direction.
+MAX_LEDGERED = int(os.environ.get("MAX_LEDGERED_BLOCKS", "25"))
 
 # Positive-evidence floors (#lzvacuousrun). Every check below reasons about
 # blocks the run OPENED, so all of them are vacuously satisfied by an empty
@@ -484,6 +524,27 @@ def main() -> None:
     excuses = expand_excuses()
     excused = {(fixture, path) for fixture, path, _ in excuses}
 
+    # The ceiling, before anything else is read (#lzledgerceiling). It is the
+    # one check here that needs no evidence from the run at all — it is a policy
+    # about the committed ledger — so it reports first and on its own terms,
+    # rather than behind a manifest or a corpus derivation that could fail for
+    # unrelated reasons.
+    if len(excuses) > MAX_LEDGERED:
+        die(
+            "ERROR: {} assertion-block site(s) are ledgered as unbound; the "
+            "ceiling is {}.".format(len(excuses), MAX_LEDGERED),
+            "       The ledger may only SHRINK. It is checked as a set EQUALITY",
+            "       against the run, and an equality only says the ledger and the run",
+            "       AGREE — any consistent pair satisfies it, including a commit that",
+            "       detaches binds and writes the matching entries. The magnitude rung",
+            "       misses that too, because a detached site is still DECLARED. This",
+            "       ceiling is what makes enlarging the excused set an explicit act",
+            "       instead of a side effect.",
+            "       Bind the block. Raise MAX_LEDGERED_BLOCKS only for a block this",
+            "       binding genuinely cannot bind, with a reason saying what cannot be",
+            "       expressed.",
+        )
+
     carried = {}
     # The inventory's two dimensions, held as maps rather than counts so a
     # failure can name the blocks that differ instead of only the magnitude of
@@ -760,8 +821,10 @@ def main() -> None:
 
     print(
         "unbound-block guard OK: {}/{} assertion blocks across {} opened fixtures "
-        "were BOUND by the suite ({} excused; runtime ledger — these blocks were "
-        "really passed to a tracker). Population {} site(s) and {} distinct content "
+        "were BOUND by the suite ({} excused of at most {}; runtime ledger — these "
+        "blocks were really passed to a tracker; the ledger is an EQUALITY against "
+        "the run under a CEILING that makes enlarging it an explicit act). "
+        "Population {} site(s) and {} distinct content "
         "digest(s), BOTH DERIVED from the {} fixture(s) the canonical corpus carries "
         "minus KNOWN_UNCOVERED by the same walk the inventory uses, and BOTH asserted "
         "EQUAL, not floored — the site dimension sees a block detach while its "
@@ -772,6 +835,7 @@ def main() -> None:
             total,
             examined,
             len(excuses),
+            MAX_LEDGERED,
             len(expected_sites),
             len(expected_digests),
             expected_fixtures,
