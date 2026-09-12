@@ -27,10 +27,19 @@ the fixtures that were opened were bound to anything at all.
 
 Run it AFTER the suite. ``make check`` orders it that way, because it reads the
 evidence the run just wrote.
+
+Every check here reasons about a block the run INVENTORIED, so all of them are
+vacuously satisfied by an empty population: zero inventoried blocks means zero
+unbound blocks, reported OK having compared nothing (``#lzvacuousrun``). So the
+SIZE of the population is asserted too, in two dimensions — SITES and distinct
+CONTENT DIGESTS — both DERIVED from the canonical corpus minus this binding's
+own ``KNOWN_UNCOVERED`` ledger, and both compared for EQUALITY rather than
+floored (``#lzblocksitepin``). See ``derive_expected``.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -38,6 +47,32 @@ import sys
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TRACKER = os.path.join(REPO_ROOT, "test", "conformance_assertions.dart")
+
+# The ledger of fixtures this binding does NOT open, and the CANONICAL corpus.
+# Together they are the two on-disk inputs the block-population expectation is
+# derived from (see `derive_expected`). Both move on their own; neither is typed
+# here.
+COVERAGE_GUARD = os.path.join(REPO_ROOT, "scripts", "check-conformance-coverage.sh")
+COVERAGE_GUARD_NAME = "scripts/check-conformance-coverage.sh"
+
+
+def canonical_corpus_dir() -> str:
+    """The CANONICAL corpus — the ``lazily-spec`` sibling checkout.
+
+    Deliberately NOT ``LAZILY_SPEC_CONFORMANCE_DIR``. The override says which
+    bytes the run REPLAYED; this is the corpus the run is JUDGED AGAINST, and
+    the comparison in `main` is only worth making while the two come from
+    different places. An expectation that followed the override would shrink in
+    step with a doctored copy and agree with itself — the vacuous green this
+    rung exists to reject (#lzvacuousrun).
+    That asymmetry is also what makes a perturbation probe possible: doctoring a
+    scratch copy and pointing the override at it moves the INVENTORY alone.
+
+    Computed from this file's location, not the process's cwd: the repo and its
+    sibling sit side by side both locally and in CI
+    (``$GITHUB_WORKSPACE/lazily-dart`` beside ``$GITHUB_WORKSPACE/lazily-spec``).
+    """
+    return os.path.join(os.path.dirname(REPO_ROOT), "lazily-spec", "conformance")
 
 # Blocks deliberately not bound by this binding, as (fixture, path, reason).
 #
@@ -112,13 +147,18 @@ KNOWN_UNBOUND_BLOCKS = [
 # EXACT, with no margin, and pinned from a green local `make check`. Do NOT
 # lower them to make a red run green: a drop means the corpus shrank or the
 # ledger detached mid-run, and that is the finding.
-# Re-pinned from a green local run after `replay_conformance_test.dart` began
-# binding the 26 per-step `expected` blocks of the three `replay/*.json`
-# fixtures (`#lzreplaydart`), on a corpus that had also grown since the previous
-# pin: `697/722 assertion blocks across 144 opened fixtures were BOUND`.
-# Read off what the gate REPORTED, not old-floor-plus-delta.
+#
+# The BLOCK POPULATION is no longer one of these. `MIN_BLOCKS` used to be a
+# typed constant compared with `>=`, and its own history is the ledger of why
+# that shape does not work: 672 -> 674 -> 722, every step the same event — the
+# corpus moved, a gate went red, and someone copied the gate's own output back
+# into this file. The 722 pin was stale within 53 MINUTES of being written:
+# lazily-spec 4010d99 ("replay: pin member framing with three rows, not one")
+# landed three more blocks the same afternoon, and `>=` cannot notice the lag at
+# all — a floor three below reality tolerates three blocks silently detaching,
+# which is the failure the floor existed to catch. It is now DERIVED from the
+# corpus and asserted EQUAL, in two dimensions; see `derive_expected`.
 MIN_FIXTURES = int(os.environ.get("MIN_BLOCK_FIXTURES", "144"))
-MIN_BLOCKS = int(os.environ.get("MIN_BLOCKS", "722"))
 MIN_BOUND = int(os.environ.get("MIN_BOUND_BLOCKS", "697"))
 
 
@@ -176,17 +216,211 @@ def tracker_depth_limit(source: str) -> int:
 
 
 def walk(node, path, depth, limit, keys, out):
+    """Append every assertion block under [node] to [out] as (path, block).
+
+    ONE walk, TWO callers (#lzblocksitepin): the loader-side inventory over the
+    fixtures the run OPENED, and the expectation derived from the canonical
+    corpus in `derive_expected`. Both go through here, so the two sides cannot
+    disagree about what counts as a block or about how a SITE is spelled, and
+    their counts are comparable by construction. A derivation that walked the
+    corpus differently from the inventory it is compared against would be worse
+    than the typed constant it replaces, because the disagreement would then
+    read as a corpus problem.
+
+    The rule is this binding's own, read out of the tracker by the caller: the
+    `assertionBlockKeys` names, OBJECT values only (an array element is never a
+    block here — `isAssertionBlockPath` in the tracker says the same), at any
+    depth up to `attributionDepthLimit`.
+    """
     if depth > limit:
         return
     if isinstance(node, dict):
         for key, value in node.items():
             child = key if not path else "{}.{}".format(path, key)
             if isinstance(value, dict) and key in keys:
-                out.append(child)
+                out.append((child, value))
             walk(value, child, depth + 1, limit, keys, out)
     elif isinstance(node, list):
         for index, value in enumerate(node):
             walk(value, "{}[{}]".format(path, index), depth + 1, limit, keys, out)
+
+
+def block_digest(block) -> str:
+    """A content key for one block: what it SAYS, independent of where it sits.
+
+    Insertion order is preserved (json.load keeps it), so two blocks share a
+    digest only when they are spelled the same way, which is what "the same
+    claim" means here.
+    """
+    text = json.dumps(block, separators=(",", ":"), sort_keys=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def site(fixture: str, path: str) -> str:
+    """One assertion block OCCURRENCE. Unique per (fixture, path)."""
+    return "{}|{}".format(fixture, path)
+
+
+def known_uncovered_fixtures() -> set:
+    """The fixtures this binding does not open, parsed out of the coverage guard.
+
+    Restating them here would be a second copy to re-pin by hand — the defect
+    being removed — and the array has to stay over there anyway: lazily-spec's
+    check-corpus-floors.mjs classifies the ledger arrays declared in it and
+    fails on an unclassified one.
+
+    A missing or unparsable array is a HARD failure and never an empty set:
+    deriving over corpus-minus-nothing would build a larger expectation out of
+    fixtures this suite never opens, and report this guard's own blindness as a
+    corpus problem.
+    """
+    if not os.path.isfile(COVERAGE_GUARD):
+        die(
+            "ERROR: cannot read {}, which holds the KNOWN_UNCOVERED ledger the".format(
+                COVERAGE_GUARD_NAME
+            ),
+            "       assertion-block expectation is derived from.",
+        )
+    with open(COVERAGE_GUARD, encoding="utf-8") as handle:
+        text = handle.read()
+    marker = "\nKNOWN_UNCOVERED=(\n"
+    start = text.find(marker)
+    if start < 0:
+        die(
+            "ERROR: {} no longer declares a KNOWN_UNCOVERED=( array. The".format(
+                COVERAGE_GUARD_NAME
+            ),
+            "       assertion-block expectation is derived from it, so a rename has to",
+            "       be mirrored here rather than quietly deriving over a different set.",
+        )
+    body = text[start + len(marker) :]
+    end = body.find("\n)\n")
+    if end < 0:
+        die(
+            "ERROR: {}: the KNOWN_UNCOVERED=( array is never closed by a".format(
+                COVERAGE_GUARD_NAME
+            ),
+            "       line holding only ')'.",
+        )
+    entries = set()
+    for line in body[:end].split("\n"):
+        trimmed = line.strip()
+        if not trimmed or trimmed.startswith("#"):
+            continue
+        entries.update(re.findall(r'"([^"]+)"', trimmed))
+    if not entries:
+        die(
+            "ERROR: {}: KNOWN_UNCOVERED parsed as EMPTY. Shrinking that".format(
+                COVERAGE_GUARD_NAME
+            ),
+            "       list to nothing is the goal state, but so is a parser that has",
+            "       stopped matching its entries, and the two are indistinguishable from",
+            "       here. If the list is genuinely empty, relax this check deliberately.",
+        )
+    return entries
+
+
+def corpus_fixtures(root: str) -> list:
+    out = []
+    for directory, _, files in os.walk(root):
+        for name in files:
+            if name.endswith(".json"):
+                full = os.path.join(directory, name)
+                out.append(os.path.relpath(full, root))
+    return sorted(out)
+
+
+def derive_expected(limit: int, keys: set) -> tuple:
+    """``(fixtures, sites, digests)`` the fixtures this binding opens must carry.
+
+    TWO dimensions, both derived, both asserted EQUAL, because each is blind to
+    what the other sees (#lzblocksitepin):
+
+      * a DIGEST count deduplicates by content, so deleting a block whose bytes
+        recur at another site leaves it unmoved — the equality stays green over
+        a run that LOST a block. 109 of this corpus's sites carry a shape that
+        occurs somewhere else, and every one of them is individually invisible
+        to this dimension.
+      * a SITE count ('<fixture>|<where>', one per occurrence) cannot see a
+        content edit that collapses two distinct claims onto one shape: the same
+        blocks are still there, and they now say one thing where they said two.
+
+    Neither number is typed. The two inputs are the canonical corpus DIRECTORY
+    LISTING and this binding's own committed KNOWN_UNCOVERED ledger, and corpus
+    MINUS ledger is exactly the set this suite opens —
+    check-conformance-coverage.sh asserts that same identity from the other
+    side, failing both when a corpus fixture outside the ledger is not opened
+    and when one inside it is. So a fixture landing upstream moves these numbers
+    with no edit here, and a fixture this binding stops opening moves them only
+    through a committed ledger line.
+
+    What this deliberately does NOT read: the runtime manifest, the bound-block
+    ledger, or anything else the run produced. An expectation derived from what
+    the run read follows the actual count into the ditch — let the recorder
+    detach and both go to zero, green over nothing.
+
+    Compared as SETS rather than magnitudes: two blocks that moved cancel in a
+    count and cannot cancel in a set.
+    """
+    root = canonical_corpus_dir()
+    if not os.path.isdir(root):
+        die(
+            "ERROR: cannot derive the assertion-block expectation: the canonical",
+            "       corpus is not at {}.".format(root),
+            "       Clone the lazily-spec sibling. Pointing",
+            "       LAZILY_SPEC_CONFORMANCE_DIR somewhere else does not substitute for",
+            "       it — these numbers are what the run is judged AGAINST, not what it",
+            "       replayed.",
+        )
+    excused = known_uncovered_fixtures()
+    sites = {}
+    digests = {}
+    fixtures = 0
+    for fixture in corpus_fixtures(root):
+        if fixture in excused:
+            continue
+        fixtures += 1
+        try:
+            with open(os.path.join(root, fixture), encoding="utf-8") as handle:
+                decoded = json.load(handle)
+        except (OSError, ValueError) as error:
+            # NOT a `continue`, unlike the inventory walk in main(): there the
+            # fixture is one the run already parsed, here an unparsable file
+            # would silently subtract its blocks from the expectation and make
+            # the comparison agree with a corpus nobody can read.
+            die(
+                "ERROR: cannot derive the assertion-block expectation: '{}'".format(
+                    fixture
+                ),
+                "       under {} is unreadable or is not JSON ({}).".format(
+                    root, error
+                ),
+                "       A fixture that cannot be parsed is missing evidence, not a",
+                "       fixture carrying no blocks.",
+            )
+        blocks = []
+        walk(decoded, "", 0, limit, keys, blocks)
+        for path, block in blocks:
+            key = block_digest(block)
+            sites[site(fixture, path)] = key
+            digests.setdefault(key, site(fixture, path))
+    # Zero-guard on EVERY dimension. Zero compares equal to an inventory of
+    # zero, which is this rung reporting OK over nothing at all — reached from
+    # the expectation side instead of the inventory side.
+    if fixtures == 0 or not sites or not digests:
+        die(
+            "ERROR: deriving the assertion-block expectation over {} found".format(
+                root
+            ),
+            "       {} fixture(s), {} site(s) and {} distinct block(s).".format(
+                fixtures, len(sites), len(digests)
+            ),
+            "       An expectation of zero in EITHER dimension is satisfied by an",
+            "       inventory of zero, which is the vacuous green this rung exists to",
+            "       reject (#lzvacuousrun). The corpus path is wrong, or the ledger",
+            "       excused all of it.",
+        )
+    return fixtures, sites, digests
 
 
 def main() -> None:
@@ -251,6 +485,11 @@ def main() -> None:
     excused = {(fixture, path) for fixture, path, _ in excuses}
 
     carried = {}
+    # The inventory's two dimensions, held as maps rather than counts so a
+    # failure can name the blocks that differ instead of only the magnitude of
+    # the difference (#lzblocksitepin).
+    declared_sites = {}
+    declared_digests = {}
     examined = 0
     for fixture in opened:
         path = os.path.join(spec_dir, fixture)
@@ -262,7 +501,11 @@ def main() -> None:
         blocks = []
         with open(path, encoding="utf-8") as handle:
             walk(json.load(handle), "", 0, limit, keys, blocks)
-        carried[fixture] = blocks
+        carried[fixture] = [block_path for block_path, _ in blocks]
+        for block_path, block in blocks:
+            key = block_digest(block)
+            declared_sites[site(fixture, block_path)] = key
+            declared_digests.setdefault(key, site(fixture, block_path))
 
     # The vacuity floors come FIRST (#lzvacuousrun). Every check below reasons
     # about blocks the run OPENED, so all of them are vacuously satisfied by an
@@ -291,12 +534,129 @@ def main() -> None:
             "       A replay was removed or the recorder detached mid-run. Do not",
             "       lower MIN_BLOCK_FIXTURES to fix this.",
         )
-    if total < MIN_BLOCKS:
-        die(
-            "ERROR: only {} assertion blocks were found across {} fixtures, "
-            "expected >= {}.".format(total, examined, MIN_BLOCKS),
-            "       Do not lower MIN_BLOCKS to fix this.",
+    # The MAGNITUDE of what was inventoried, in two derived dimensions, both
+    # asserted EQUAL (#lzblocksitepin). Zero unbound blocks out of zero
+    # inventoried blocks reports OK having compared nothing, so the SIZE of the
+    # population is evidence in its own right — and it is derived from the
+    # canonical corpus plus this binding's own ledger, never typed here. See
+    # `derive_expected` for why both dimensions are needed and why neither is a
+    # floor.
+    #
+    # Both dimensions are reported TOGETHER rather than short-circuiting on the
+    # first, so a reader (and a perturbation probe) can see which one moved and
+    # which stayed silent.
+    expected_fixtures, expected_sites, expected_digests = derive_expected(limit, keys)
+    magnitude = []
+    missing_sites = sorted(set(expected_sites) - set(declared_sites))
+    extra_sites = sorted(set(declared_sites) - set(expected_sites))
+    if missing_sites or extra_sites:
+        magnitude.append(
+            "ERROR: the run inventoried {} assertion-block SITES, but the canonical "
+            "corpus".format(len(declared_sites))
         )
+        magnitude.append(
+            "       plus this binding's own ledger say {}.".format(len(expected_sites))
+        )
+        magnitude.append(
+            "       Expected: every assertion block carried by the {} fixture(s) under".format(
+                expected_fixtures
+            )
+        )
+        magnitude.append(
+            "       {} that are not in KNOWN_UNCOVERED ({}),".format(
+                canonical_corpus_dir(), COVERAGE_GUARD_NAME
+            )
+        )
+        magnitude.append(
+            "       counted by SITE — '<fixture>|<where>' — and NOT deduplicated by"
+        )
+        magnitude.append(
+            "       content. A site the corpus carries and the run does not is a block"
+        )
+        magnitude.append(
+            "       that detached; the digest dimension below cannot see it whenever"
+        )
+        magnitude.append("       that block's content recurs at another site.")
+        for label, listing in (
+            ("the corpus carries and the run does NOT", missing_sites),
+            ("the run carries and the corpus derivation does NOT", extra_sites),
+        ):
+            if not listing:
+                continue
+            magnitude.append("       {} site(s) {}:".format(len(listing), label))
+            for entry in listing[:20]:
+                magnitude.append("         {}".format(entry))
+            if len(listing) > 20:
+                magnitude.append(
+                    "         ... and {} more".format(len(listing) - 20)
+                )
+        magnitude.append(
+            "       There is nothing to re-pin: these numbers are derived, not typed."
+        )
+    missing_digests = sorted(set(expected_digests) - set(declared_digests))
+    extra_digests = sorted(set(declared_digests) - set(expected_digests))
+    if missing_digests or extra_digests:
+        magnitude.append(
+            "ERROR: the run inventoried {} DISTINCT assertion blocks, but the "
+            "canonical".format(len(declared_digests))
+        )
+        magnitude.append(
+            "       corpus plus this binding's own ledger say {}.".format(
+                len(expected_digests)
+            )
+        )
+        magnitude.append(
+            "       Blocks are counted by CONTENT DIGEST here, so this dimension sees a"
+        )
+        magnitude.append(
+            "       content edit that collapsed two distinct claims onto one shape — a"
+        )
+        magnitude.append(
+            "       change the site count above cannot see, because the sites are all"
+        )
+        magnitude.append("       still there.")
+        for label, listing, where in (
+            ("the corpus says and the run does NOT", missing_digests, expected_digests),
+            (
+                "the run says and the corpus derivation does NOT",
+                extra_digests,
+                declared_digests,
+            ),
+        ):
+            if not listing:
+                continue
+            magnitude.append(
+                "       {} distinct block(s) {} (one site each):".format(
+                    len(listing), label
+                )
+            )
+            for entry in listing[:20]:
+                magnitude.append("         {}".format(where[entry]))
+            if len(listing) > 20:
+                magnitude.append(
+                    "         ... and {} more".format(len(listing) - 20)
+                )
+        magnitude.append(
+            "       There is nothing to re-pin: these numbers are derived, not typed."
+        )
+    if magnitude:
+        magnitude.append(
+            "       Either the CORPUS MOVED under this checkout — re-pull the"
+        )
+        magnitude.append(
+            "       lazily-spec sibling, and say so in KNOWN_UNCOVERED if this binding"
+        )
+        magnitude.append(
+            "       now opens a different set — or the run's INVENTORY DETACHED and"
+        )
+        magnitude.append(
+            "       fixtures stopped being opened, or stopped being walked. Running"
+        )
+        magnitude.append(
+            "       against a doctored or older copy via LAZILY_SPEC_CONFORMANCE_DIR"
+        )
+        magnitude.append("       shows up here too, which is the point.")
+        die(*magnitude)
 
     problems = 0
     bound_count = 0
@@ -401,8 +761,20 @@ def main() -> None:
     print(
         "unbound-block guard OK: {}/{} assertion blocks across {} opened fixtures "
         "were BOUND by the suite ({} excused; runtime ledger — these blocks were "
-        "really passed to a tracker)".format(
-            bound_count, total, examined, len(excuses)
+        "really passed to a tracker). Population {} site(s) and {} distinct content "
+        "digest(s), BOTH DERIVED from the {} fixture(s) the canonical corpus carries "
+        "minus KNOWN_UNCOVERED by the same walk the inventory uses, and BOTH asserted "
+        "EQUAL, not floored — the site dimension sees a block detach while its "
+        "content survives at a twin site, which digest dedup hides, and the digest "
+        "dimension sees two claims collapse onto one shape, which the site count "
+        "hides".format(
+            bound_count,
+            total,
+            examined,
+            len(excuses),
+            len(expected_sites),
+            len(expected_digests),
+            expected_fixtures,
         )
     )
 
