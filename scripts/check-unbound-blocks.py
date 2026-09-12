@@ -190,15 +190,36 @@ KNOWN_UNBOUND_BLOCKS = [
 # The 25 sites above are here because the replay model has no `merge_cell` or
 # `drain_exhausted` op; implementing those ops is what LOWERS this number, and
 # it should only ever move in that direction.
-EXPECTED_LEDGERED = os.environ.get("EXPECTED_LEDGERED_BLOCKS", "25")
-if not re.fullmatch(r"\d+", EXPECTED_LEDGERED.strip()):
+EXPECTED_LEDGERED_RAW = os.environ.get("EXPECTED_LEDGERED_BLOCKS", "25")
+# ONE parse for the whole family (#lzpinparsestrict): a NON-EMPTY run of bare
+# ASCII digits `0`-`9`, and nothing else. Validated BEFORE any parse runs, and
+# deliberately stricter than `int()`, `str.isdigit()` AND `re.fullmatch(r"\d+")`,
+# because every one of those silently accepts a number nobody wrote:
+# `int("1_0")` is 10 (PEP 515 separators), `int(" 7 ")` is 7, and both
+# `"\u0663".isdigit()` and `re.fullmatch(r"\d+", "\u0663")` match the Arabic-Indic
+# three — Python's `\d` is UNICODE against a `str`, not ASCII, which is exactly
+# what this reader used to rely on. Refused now: whitespace around or inside
+# (this reader used to `.strip()` first, so `" 7 "` became 7), a leading `+` or
+# `-`, separators, a radix prefix, a float or an exponent, and any non-ASCII
+# digit. A negative falls out of the same check — no ledger size can equal it, so
+# it would make this rung unsatisfiable rather than exact. Leading zeros are fine
+# and `0` stays valid; this number goes to 0 when the `merge_cell` and
+# `drain_exhausted` ops land.
+#
+# An UNSET variable takes the committed literal above. An EXPLICITLY EMPTY one is
+# a REJECTION, not a fall-through to it: `os.environ.get(NAME, DEFAULT)`
+# distinguishes the two, and whoever exported the wrong thing is the one person
+# who cannot see that it was ignored.
+if not EXPECTED_LEDGERED_RAW or EXPECTED_LEDGERED_RAW.strip("0123456789"):
     # FAIL CLOSED, never fall back to the default. A pin that cannot be read is
     # an unknown policy, and silently substituting the committed default would
     # let an override typo report this rung as enforced while enforcing a number
     # nobody asked for.
     print(
         "ERROR: EXPECTED_LEDGERED_BLOCKS is {!r}, which is not a non-negative "
-        "integer.".format(EXPECTED_LEDGERED),
+        "integer in bare ASCII digits (#lzpinparsestrict).".format(
+            EXPECTED_LEDGERED_RAW
+        ),
         file=sys.stderr,
     )
     print(
@@ -215,7 +236,7 @@ if not re.fullmatch(r"\d+", EXPECTED_LEDGERED.strip()):
     )
     print("       in force.", file=sys.stderr)
     sys.exit(1)
-EXPECTED_LEDGERED = int(EXPECTED_LEDGERED)
+EXPECTED_LEDGERED = int(EXPECTED_LEDGERED_RAW)
 
 # Positive-evidence floors (#lzvacuousrun). Every check below reasons about
 # blocks the run OPENED, so all of them are vacuously satisfied by an empty
