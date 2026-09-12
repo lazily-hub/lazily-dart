@@ -20,6 +20,24 @@ jobs:
       fail-fast: false
       matrix:
         sdk: [stable, beta]
+    # One run id per job invocation (#lzstalemanifest). CI does NOT run `make
+    # check` — it reproduces the Makefile's steps — so the id the Makefile
+    # generates never reaches these steps and has to be supplied here. Job
+    # level, not step level: the `dart test` step must STAMP the same value the
+    # two guard steps below REQUIRE, and a per-step id would be a different
+    # value at every reference (the recursive-`=` mistake, in YAML).
+    #
+    # run_id + run_attempt + sdk is unique per invocation: a re-run of a failed
+    # job bumps run_attempt, and the two matrix legs share a checkout path but
+    # never a workspace.
+    #
+    # A runner cannot reach the state this guards against today — it starts from
+    # a fresh workspace, so there is no leftover build/ to inherit — but the
+    # stamp is what makes the CI steps and `make check` the SAME gate. Leaving
+    # CI unstamped would mean the two guards refuse locally and pass on the
+    # runner, which is the drift #lzcheckcireachguard exists to stop.
+    env:
+      LAZILY_CONFORMANCE_RUN_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.sdk }}
     steps:
       # Check out lazily-dart into a subdirectory so its sibling repos
       # (`../lazily-spec`, `../lazily-formal`) can live beside it in the

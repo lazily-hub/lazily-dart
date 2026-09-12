@@ -64,6 +64,28 @@ TRACKER = os.path.join(REPO_ROOT, "test", "conformance_assertions.dart")
 COVERAGE_GUARD = os.path.join(REPO_ROOT, "scripts", "check-conformance-coverage.sh")
 COVERAGE_GUARD_NAME = "scripts/check-conformance-coverage.sh"
 
+# ---------------------------------------------------------------------------
+# The evidence belongs to THIS invocation (#lzstalemanifest)
+# ---------------------------------------------------------------------------
+#
+# This guard reads two files — the fixture manifest and the bound-block ledger —
+# written by the 69 ``dart test`` child processes of an EARLIER make step, and
+# until now it had no way to tell this run's bytes from last week's. Measured
+# before the stamp existed: ``make unbound-block-check`` with no test run in the
+# invocation printed the full "712/737 assertion blocks ... these blocks were
+# really passed to a tracker" off the previous run's ledger, and a five-test
+# ``dart test test/topic_test.dart`` appending to those files printed the same.
+#
+# ``dart test`` caches nothing, so this is not Gradle's ``UP-TO-DATE``; it is the
+# leftover file. ``#lzsiblingrunnermasking`` ran each of 69 test files alone
+# against its own manifest, which is precisely how one gets left behind.
+#
+# The recorder in test/conformance_manifest.dart writes the stamp as the FIRST
+# line of each evidence file, under the same lock the records take, keyed off an
+# empty file so it lands once per truncation. Same prefix in every binding.
+RUN_ID_ENV = "LAZILY_CONFORMANCE_RUN_ID"
+RUN_ID_PREFIX = "# lazily-run-id "
+
 
 def canonical_corpus_dir() -> str:
     """The CANONICAL corpus — the ``lazily-spec`` sibling checkout.
@@ -286,6 +308,74 @@ def die(*lines: str) -> None:
     for line in lines:
         print(line, file=sys.stderr)
     sys.exit(1)
+
+
+def current_run_id() -> str:
+    """This invocation's run id, or a hard failure (`#lzstalemanifest`).
+
+    REFUSES when unset rather than skipping the stamp comparison. A guard that
+    accepts unstamped evidence whenever the variable happens to be absent is the
+    same stale-evidence hole with one extra step, and the absent variable is the
+    state a hand-run script is in.
+
+    There is no opt-out flag. The only callers are the Makefile and
+    .github/workflows/ci.yml and both supply the id; a hand-run
+    ``python3 scripts/check-unbound-blocks.py`` cannot know which run wrote
+    build/, so refusing is the correct answer for it too.
+    """
+    raw = (os.environ.get(RUN_ID_ENV) or "").strip()
+    if not raw:
+        die(
+            "FAIL: {} is not set (#lzstalemanifest).".format(RUN_ID_ENV),
+            "      This guard reads a manifest and a block ledger written by a",
+            "      SEPARATE process — the `dart test` children of an earlier make",
+            "      step — so the id both sides carry is the only thing separating",
+            "      this run's evidence from a leftover file. Refusing rather than",
+            "      skipping: accepting unstamped evidence when the variable is unset",
+            "      is the same hole with one extra step.",
+            "      Run `make check` (or `make unbound-block-check`), which generates",
+            "      one id per invocation and exports it.",
+        )
+    return raw
+
+
+def read_stamped_evidence(path: str, label: str, run_id: str) -> list:
+    """Lines of ``path`` with the run-id stamp verified and removed.
+
+    Fails by NAME — the file, the id found, the id wanted. A MISSING stamp fails
+    too: an evidence file predating this change carries none, and so does one
+    written by a suite run with no run id in its environment.
+
+    The stamp is stripped rather than skipped over because both consumers parse
+    every remaining line as evidence — a corpus-relative fixture id here, a
+    ``fixture<TAB>path`` site in the ledger — and a stray comment line would be
+    read as a corrupt record.
+    """
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    first = lines[0] if lines else ""
+    if not first.startswith(RUN_ID_PREFIX):
+        die(
+            "FAIL: {} at {} carries no run-id stamp (#lzstalemanifest).".format(
+                label, path
+            ),
+            "      wanted first line: {}{}".format(RUN_ID_PREFIX, run_id),
+            "      found first line:  {}".format(first),
+            "      It was written by a suite run with no {} in its".format(RUN_ID_ENV),
+            "      environment, or it predates the stamp. Either way it is not",
+            "      evidence about this run.",
+        )
+    found = first[len(RUN_ID_PREFIX) :]
+    if found != run_id:
+        die(
+            "FAIL: {} at {} is STALE (#lzstalemanifest).".format(label, path),
+            "      run id in the file:  {}".format(found),
+            "      run id of this gate: {}".format(run_id),
+            "      It was written by an earlier invocation — a previous `make check`,",
+            "      an aborted run, or a single-file `dart test`. Re-run the suite in",
+            "      this invocation (`make check`); do NOT read it as block coverage.",
+        )
+    return [line for line in lines[1:] if not line.startswith(RUN_ID_PREFIX)]
 
 
 def expand_excuses() -> list:
@@ -619,10 +709,27 @@ def main() -> None:
             "      evidence, not evidence of absence.",
         )
 
-    with open(manifest, encoding="utf-8") as handle:
-        opened = sorted({line.strip() for line in handle if line.strip()})
-    with open(ledger_path, encoding="utf-8") as handle:
-        bound = {line.rstrip("\n") for line in handle if line.strip()}
+    # The stamp rung (#lzstalemanifest), at the point each file is first read
+    # and BELOW the corpus skip above for the same reason the coverage guard's
+    # is: with no corpus the recorder attributes no read, the manifest comes out
+    # empty, and a contributor's honest local skip must not become a failure.
+    run_id = current_run_id()
+    opened = sorted(
+        {
+            line.strip()
+            for line in read_stamped_evidence(
+                manifest, "conformance manifest", run_id
+            )
+            if line.strip()
+        }
+    )
+    bound = {
+        line
+        for line in read_stamped_evidence(
+            ledger_path, "bound-block ledger", run_id
+        )
+        if line.strip()
+    }
 
     source = tracker_source()
     keys = tracker_block_keys(source)

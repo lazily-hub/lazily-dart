@@ -566,6 +566,47 @@ void _appendToManifest(String id) => _appendEvidence(
       id,
     );
 
+// ---------------------------------------------------------------------------
+// Run-id stamp (`#lzstalemanifest`)
+// ---------------------------------------------------------------------------
+
+/// The variable carrying ONE identifier per `make check` invocation.
+///
+/// Every evidence file in this repo used to assert "these bytes were really
+/// read" with no way to say WHEN. The Makefile truncates the three files at the
+/// top of the `test` target, so a full `make check` cannot read a leftover one —
+/// but the guards are also standalone targets (`make conformance-coverage`,
+/// `make unbound-block-check`) and standalone CI steps, and neither had any tie
+/// to the run whose evidence they were reading. `make conformance-coverage`
+/// with no test run at all printed 144/156 and 153/153 off the PREVIOUS run's
+/// files, and a five-test `dart test test/topic_test.dart` appending to those
+/// files printed the same, including the whole 712/737 block ledger. The
+/// #lzsiblingrunnermasking work ran each of 69 test files alone against its own
+/// manifest, which is exactly how such a file gets left behind.
+///
+/// So the id is generated once per invocation (Makefile, `:=`) and STAMPED into
+/// each evidence file by the processes that write it. Every guard then requires
+/// the stamp to equal the current invocation's id.
+const conformanceRunIdEnvVar = 'LAZILY_CONFORMANCE_RUN_ID';
+
+/// Fixed prefix of the stamp line, shared verbatim with every binding.
+const conformanceRunIdPrefix = '# lazily-run-id ';
+
+/// The current invocation's run id, or null when unset, blank, or multi-line.
+///
+/// A multi-line value cannot be stamped as ONE first line, and silently
+/// truncating it would let a guard compare a prefix and agree. Refusing to
+/// stamp it leaves the file unstamped, which every guard rejects — the
+/// fail-closed direction.
+String? get conformanceRunId {
+  final raw = Platform.environment[conformanceRunIdEnvVar];
+  if (raw == null) return null;
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return null;
+  if (trimmed.contains('\n') || trimmed.contains('\r')) return null;
+  return trimmed;
+}
+
 void _appendEvidence(String variable, String line) {
   final out = Platform.environment[variable];
   if (out == null || out.isEmpty) return;
@@ -585,7 +626,25 @@ void _appendEvidence(String variable, String line) {
   RandomAccessFile? handle;
   try {
     handle = File(out).openSync(mode: FileMode.append);
-    handle.setPositionSync(handle.lengthSync());
+    final length = handle.lengthSync();
+    handle.setPositionSync(length);
+    // The run-id stamp goes on the FIRST line, written by whichever process
+    // records first (`#lzstalemanifest`). Under the lock, so the 69 test
+    // processes cannot interleave it with a record, and keyed off an EMPTY file
+    // so it is written exactly once per truncation — the Makefile and the CI
+    // reset step truncate, the recorders stamp, and the guards compare.
+    //
+    // Stamping HERE rather than at truncation is the stronger claim: the id is
+    // read from the environment of a process that actually replayed the corpus,
+    // so the stamp says "the run that wrote these bytes carried this id" rather
+    // than "some make step created this file". An unset id writes no stamp, and
+    // every guard refuses unstamped evidence.
+    if (length == 0) {
+      final runId = conformanceRunId;
+      if (runId != null) {
+        handle.writeStringSync('$conformanceRunIdPrefix$runId\n');
+      }
+    }
     handle.writeStringSync('$line\n');
     handle.flushSync();
   } catch (_) {

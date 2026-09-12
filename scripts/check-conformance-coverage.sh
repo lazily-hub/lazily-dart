@@ -152,6 +152,86 @@ KNOWN_UNREPLAYED_SCENARIOS=()
 MANIFEST="${LAZILY_CONFORMANCE_MANIFEST:-build/conformance-fixtures-loaded.txt}"
 SCENARIOS="${LAZILY_CONFORMANCE_SCENARIOS:-build/conformance-scenarios-replayed.txt}"
 
+# ---------------------------------------------------------------------------
+# Rung 1: the evidence belongs to THIS invocation (#lzstalemanifest)
+# ---------------------------------------------------------------------------
+#
+# Every rung below says "these bytes were really read". None of them could say
+# WHEN. Measured on this repo before this rung existed: `make
+# conformance-coverage` with NO test run in the invocation printed
+# "conformance coverage OK: 144/156 ... these bytes were really read" and
+# "scenario replay OK: 153/153" off the previous run's files, and a five-test
+# `dart test test/topic_test.dart` appending to those same files printed the
+# identical verdict. `dart test` caches nothing, so the hole here is not kt's
+# `> Task :test UP-TO-DATE`; it is the LEFTOVER FILE — a finished or aborted
+# earlier run, or one of the 69 single-file runs #lzsiblingrunnermasking did,
+# read by a guard that believes it describes the whole suite.
+#
+# A truncated-then-PARTIAL file was already refused: `covered` is asserted EQUAL
+# to the corpus listing minus KNOWN_UNCOVERED (#lzdartcoveragefloors), and a
+# 5-line manifest fails that by 139. So the undetected shape was the stale
+# COMPLETE file, which is exactly what a green run leaves behind.
+#
+# PLACEMENT, and why it differs from rung 0's. Rung 0 (flag hygiene) sits ABOVE
+# the missing-corpus gate because it reads only this repo and must run in a
+# checkout without the lazily-spec sibling. This rung has the opposite
+# requirement in two ways: it needs `LAZILY_CONFORMANCE_RUN_ID`, which only a
+# `make` invocation or a CI job supplies, and it judges EVIDENCE FILES, which
+# the gate above has just established this checkout may legitimately never have
+# produced — with no corpus the recorder attributes no read and the manifest
+# comes out EMPTY. Above the gate it would turn a contributor's honest local
+# skip into a failure. So it sits here, with the evidence, and each file is
+# checked at the point it is first read.
+#
+# There is no opt-out flag, deliberately. The only two callers of this script
+# are the Makefile and .github/workflows/ci.yml, and both supply the id; a
+# hand-run `./scripts/check-conformance-coverage.sh` SHOULD refuse, because it
+# has no way to know which run wrote build/.
+RUN_ID_PREFIX="# lazily-run-id "
+RUN_ID="${LAZILY_CONFORMANCE_RUN_ID:-}"
+if [ -z "$RUN_ID" ]; then
+  echo "FAIL: LAZILY_CONFORMANCE_RUN_ID is not set (#lzstalemanifest)." >&2
+  echo "      This guard reads evidence files written by a SEPARATE process (the" >&2
+  echo "      \`dart test\` children), so it can only tell this run's evidence from" >&2
+  echo "      last run's by the id both sides carry. Refusing rather than skipping:" >&2
+  echo "      a guard that accepts unstamped evidence when the variable is unset is" >&2
+  echo "      the same stale-evidence hole with one extra step." >&2
+  echo "      Run \`make check\` (or \`make conformance-coverage\`), which generates" >&2
+  echo "      one id per invocation and exports it." >&2
+  exit 1
+fi
+
+# Require the stamp the recorder in test/conformance_manifest.dart writes as the
+# first line of each evidence file, and fail by NAME: the file, the id found,
+# the id wanted. A missing stamp fails too — an evidence file predating this
+# change carries none, and so does one written by a suite run without the
+# variable set.
+require_run_id() {
+  local file="$1" label="$2" first found
+  first="$(head -n 1 "$file")"
+  case "$first" in
+    "$RUN_ID_PREFIX"*) ;;
+    *)
+      echo "FAIL: $label at $file carries no run-id stamp (#lzstalemanifest)." >&2
+      echo "      wanted first line: ${RUN_ID_PREFIX}${RUN_ID}" >&2
+      echo "      found first line:  ${first}" >&2
+      echo "      The file was written by a suite run with no" >&2
+      echo "      LAZILY_CONFORMANCE_RUN_ID in its environment, or it predates the" >&2
+      echo "      stamp entirely. Either way it is not evidence about this run." >&2
+      exit 1 ;;
+  esac
+  found="${first#"$RUN_ID_PREFIX"}"
+  if [ "$found" != "$RUN_ID" ]; then
+    echo "FAIL: $label at $file is STALE (#lzstalemanifest)." >&2
+    echo "      run id in the file:   $found" >&2
+    echo "      run id of this gate:  $RUN_ID" >&2
+    echo "      It was written by an earlier invocation — a previous \`make check\`," >&2
+    echo "      an aborted run, or a single-file \`dart test\`. Re-run the suite in" >&2
+    echo "      this invocation (\`make check\`); do NOT read it as coverage." >&2
+    exit 1
+  fi
+}
+
 if [ ! -s "$MANIFEST" ]; then
   echo "FAIL: no conformance manifest at $MANIFEST." >&2
   echo "      Run the suite with LAZILY_CONFORMANCE_MANIFEST set so the recorder" >&2
@@ -159,7 +239,12 @@ if [ ! -s "$MANIFEST" ]; then
   echo "      manifest is missing evidence, not evidence of absence." >&2
   exit 1
 fi
-OPENED="$(sort -u "$MANIFEST")"
+require_run_id "$MANIFEST" "conformance manifest"
+# `sed`, not `grep -v`: with `set -o pipefail` a grep that matches every line
+# exits 1 and kills the substitution. The stamp is stripped rather than skipped
+# over because the corruption check below resolves EVERY recorded id against the
+# corpus root, and would report the stamp line as a severed fixture name.
+OPENED="$(sed "/^$RUN_ID_PREFIX/d" "$MANIFEST" | sort -u)"
 
 missing=0
 total=0
@@ -258,7 +343,8 @@ if [ ! -f "$SCENARIOS" ]; then
   echo "      An absent ledger is missing evidence, not evidence of absence." >&2
   exit 1
 fi
-REPLAYED="$(sort -u "$SCENARIOS")"
+require_run_id "$SCENARIOS" "scenario replay ledger"
+REPLAYED="$(sed "/^$RUN_ID_PREFIX/d" "$SCENARIOS" | sort -u)"
 
 # Every scenario id the corpus carries, for the fixtures the suite OPENED, in
 # the same `fixture<TAB>id` shape the ledger uses. Resolution order — `id`, else

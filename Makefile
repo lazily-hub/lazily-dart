@@ -1,3 +1,39 @@
+# ---------------------------------------------------------------------------
+# One run id per invocation (#lzstalemanifest)
+# ---------------------------------------------------------------------------
+#
+# The three conformance evidence files under build/ are written by the 69 `dart
+# test` processes and read afterwards by separate guard processes. `dart test`
+# caches nothing, so a full `make check` always re-runs the suite and the `test`
+# target truncates the files first — but that is the only thing that was tying
+# the evidence to the run, and it does not cover the paths the bug actually
+# travels:
+#
+#   * `make conformance-coverage` and `make unbound-block-check` are targets of
+#     their own, and CI runs the same two guards as steps of their own. Invoked
+#     without a preceding suite they read whatever is on disk. Measured before
+#     this change: `make conformance-coverage` with no test run printed
+#     "144/156 canonical fixtures OPENED ... these bytes were really read" and
+#     "153/153 scenarios", and `make unbound-block-check` printed the whole
+#     712/737 block ledger, all of it last run's file.
+#   * a single-file run leaves evidence a later guard accepts. Also measured:
+#     `dart test test/topic_test.dart` (5 tests) with the three variables set
+#     APPENDS to the leftover files, and both guards then reported every
+#     magnitude green. #lzsiblingrunnermasking ran each of 69 test files alone
+#     against its own manifest, so this is a state this repo reaches routinely.
+#
+# A TRUNCATED-then-partial file was already caught — the derived equalities
+# (#lzdartcoveragefloors) refuse `covered != 144` — so the undetected shape is
+# the stale COMPLETE file, which is precisely what a finished earlier run leaves.
+#
+# `:=`, so the value is expanded ONCE at parse time. A recursive `=` would hand
+# a different id to every reference and the guards would refuse a perfectly good
+# run — fail-closed, but for a reason no reader could find. `od` over
+# /dev/urandom rather than $$RANDOM because make's shell may be dash; the pid
+# and the epoch second are belt and braces.
+LAZILY_CONFORMANCE_RUN_ID := $(shell echo "make-$$(date -u +%s)-$$$$-$$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')")
+export LAZILY_CONFORMANCE_RUN_ID
+
 .PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach
 
 # lazily-dart had no Makefile; verification was ad-hoc `dart analyze` + `dart test`.
