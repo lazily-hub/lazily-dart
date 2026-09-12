@@ -249,16 +249,35 @@ jobs:
         env:
           LAZILY_FORMAL_PATH: ${{ github.workspace }}/_lazily-formal
         run: |
+          # `case`, not `echo "$out" | grep -q` (#lzgrepcpipefail). `grep -q` exits
+          # at its first hit; the upstream `echo` then takes SIGPIPE writing the
+          # rest, and with `set -o pipefail` in effect the shell surfaces that as
+          # the PIPELINE's status — so a HIT reads as a MISS. Measured in this
+          # repo against the real 69512-byte block ledger: `PIPESTATUS=(141 0)`
+          # in 15 of 40 runs, arming once the producer's output passes the 64KiB
+          # pipe buffer. The SKIP test below is the dangerous direction — a match
+          # means "I found an offender", so a missed hit is a FALSE GREEN, a
+          # formal-check that skipped and was waved through.
+          #
+          # GitHub's default `run:` shell is `bash -e {0}`, so pipefail is OFF
+          # here today and neither pipe is armed (measured: 40/40 hits). But that
+          # is one `shell: bash` away — which ADDS `-o pipefail` — from arming
+          # the false green, and `case` has no pipeline to poison at any size or
+          # under any option. The guards in scripts/ use a here-string for the
+          # same reason; see check-conformance-coverage.sh's covered-check.
           out=$(dart tool/formal_check.dart 2>&1) || { echo "$out"; echo "::error::lazily-formal Lean proofs failed to build"; exit 1; }
           echo "$out"
-          if echo "$out" | grep -q "SKIP —"; then
-            echo "::error::formal-check skipped instead of building the Lean model — it proved nothing"
-            exit 1
-          fi
-          echo "$out" | grep -q "OK — all Lean proofs in lazily-formal compile." || {
-            echo "::error::formal-check exited 0 without reaching its verdict"
-            exit 1
-          }
+          case "$out" in
+            *"SKIP —"*)
+              echo "::error::formal-check skipped instead of building the Lean model — it proved nothing"
+              exit 1 ;;
+          esac
+          case "$out" in
+            *"OK — all Lean proofs in lazily-formal compile."*) ;;
+            *)
+              echo "::error::formal-check exited 0 without reaching its verdict"
+              exit 1 ;;
+          esac
 
       # The gate that keeps every step above honest (#lzcheckcireachguard). It
       # compares `make check`'s prerequisite closure against the run: bodies in
@@ -267,12 +286,20 @@ jobs:
       # nine bindings as covered and every one of those hits was a comment.
       - name: CI-reachability guard (#lzcheckcireachguard)
         run: |
+          # `case`, not a `grep -q` pipe, for the reason spelled out in the Lean
+          # step above (#lzgrepcpipefail). This one is the fail-CLOSED direction —
+          # a match means "the verdict I require is present", so a missed hit
+          # would be a false RED — but the guard's own OK line is the only thing
+          # standing between an exit 0 and a green badge, and it should not
+          # depend on a pipe buffer either way.
           out=$(./scripts/check-ci-reach.sh 2>&1) || { echo "$out"; echo "::error::a make check gate is unreachable from CI"; exit 1; }
           echo "$out"
-          echo "$out" | grep -q "check-ci-reach: OK" || {
-            echo "::error::the CI-reachability guard exited 0 without reaching its verdict"
-            exit 1
-          }
+          case "$out" in
+            *"check-ci-reach: OK"*) ;;
+            *)
+              echo "::error::the CI-reachability guard exited 0 without reaching its verdict"
+              exit 1 ;;
+          esac
 
   lean:
     name: Lean formal models (#lzleanformal)

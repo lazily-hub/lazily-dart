@@ -146,12 +146,16 @@ done
 #
 # Fully redirected, never piped: a pipe into a head/grep would SIGPIPE make
 # mid-recipe.
-if ! "$MAKE_BIN" -n "$ROOT_TARGET" >/dev/null 2>&1; then
+# `2>&1 >/dev/null`, in that order: stderr is duplicated onto the substitution
+# and stdout is then thrown away, so make's own complaint — which NAMES the
+# offending target and prerequisite — goes into the diagnostic instead of being
+# swallowed by the `2>/dev/null` that `dry_run` needs on its success path.
+if ! root_probe="$("$MAKE_BIN" -n "$ROOT_TARGET" 2>&1 >/dev/null)"; then
 	echo "check-ci-reach: '$MAKE_BIN -n $ROOT_TARGET' FAILED, so the recipes this guard audits cannot be read." >&2
 	echo "                Every recipe reaches this guard through \`make -n\`, and an unreadable one" >&2
 	echo "                is indistinguishable from a recipe with no commands — which would be" >&2
 	echo "                reported as 'carrying no gate' and pass. Refusing instead." >&2
-	echo "                Run \`$MAKE_BIN -n $ROOT_TARGET\` to see what make is complaining about." >&2
+	printf '%s\n' "$root_probe" | sed 's/^/                > /' >&2
 	exit 1
 fi
 
@@ -291,7 +295,13 @@ dry_run() {
 		echo "                An UNREADABLE recipe is not a recipe with no gate. Reporting it as" >&2
 		echo "                'carrying no gate' would drop the target out of the audit and still" >&2
 		echo "                print OK, which is the false green this check exists to prevent." >&2
-		echo "                Run \`$MAKE_BIN -n $*\` to see what make is complaining about." >&2
+		# Re-run for the MESSAGE only, stderr kept and stdout dropped: the run
+		# above needed `2>/dev/null` so make's diagnostics never reach the anchor
+		# scanner as if they were recipe lines, and a second dry run of a target
+		# that has already failed costs nothing. The `|| true` is on the reporting
+		# pipeline alone — make's status here is the one already reported, and
+		# without it `pipefail` would exit with make's 2 instead of this rung's 1.
+		"$MAKE_BIN" -n "$@" 2>&1 >/dev/null | sed 's/^/                > /' >&2 || true
 		exit 1
 	fi
 	[ -n "$out" ] || return 0
