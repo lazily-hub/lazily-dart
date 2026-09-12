@@ -306,38 +306,58 @@ EXPECTED_NOGATE_TARGETS=(
 #
 # STEP NAMES ARE NOT UNIQUE — rs has 69 steps and 65 distinct names — so a name
 # that matches two steps is refused rather than silently unioning their commands,
-# and an UNNAMED step is refused with its file:line, because a pin cannot name
-# it. Both directions of the set equality are reported, by name, like every pin
-# here.
+# and an UNNAMED step is refused outright, because a pin cannot name it. Both
+# directions of the set equality are reported, by name, like every pin here.
 #
-# THE REACH MODE is pinned too, and deliberately NOT by a second array.
+# ACROSS FILES too: lazily-cpp found that two listed workflows sharing a job id
+# AND a step name unioned their commands under one scope, and re-keyed to
+# (file, job, step). Scoping here is keyed by `file:line`, which cannot collide,
+# so this is immune — measured rather than inferred, because the conf may list
+# more than one workflow. Two identical copies of this workflow, same job id and
+# every step name shared, produce 30 distinct scopes for 15 distinct names, and
+# the `dart test` gate keys separately as `ci.yml:173` and `ci2.yml:173`. The
+# ambiguity refusal then fires on every pinned name, naming both files, so the
+# union is unreachable even before it is impossible. dart lists one workflow
+# today.
 #
-# lazily-zig added an EXPECTED_MAKE_INVOKED_TARGETS because deleting a
-# make-invoked member's CI step made `make_invokes` fail, the member fell through
-# to the flat anchor check, and a wildcard absorbed it. Here the partition is
-# already pinned in BOTH directions by the set equality below, because the three
-# populations are complementary: EXPECTED_CLOSURE_TARGETS fixes the members,
-# EXPECTED_NOGATE_TARGETS fixes which carry a gate, and this pin fixes which of
-# the rest are anchor-reached — so which are make-invoked is determined, not
-# unstated. Measured, both flips:
+# THE REACH MODE is pinned EXPLICITLY, by EXPECTED_MAKE_INVOKED_TARGETS below.
 #
-#   * CI stops running `make fmt` and spells `dart format --output=none
-#     --set-exit-if-changed .` instead. `fmt` becomes anchor-reached, has no
-#     entry, exit 1: "reached by CI SPELLING its command, but no entry in
-#     EXPECTED_GATE_STEPS says which step does".
+# This rung first shipped WITHOUT that array, on the argument that the mode is
+# already determined: EXPECTED_CLOSURE_TARGETS fixes the members,
+# EXPECTED_NOGATE_TARGETS fixes which carry a gate, this pin fixes which of the
+# rest are anchor-reached, so which are make-invoked is the complement. Two
+# measurements backed it, and both were of SINGLE-sided edits:
+#
+#   * CI spells `dart format --output=none --set-exit-if-changed .` instead of
+#     running `make fmt`. `fmt` becomes anchor-reached with no entry, exit 1.
 #   * CI switches `dart test` to `make test`. `test` becomes make-invoked, its
-#     entry orphans, exit 1: "is now reached by CI running `make test` instead of
-#     spelling its command".
+#     entry orphans, exit 1.
 #
-# And the zig attack itself: delete the `Format gate (make fmt)` step outright.
-# Exit 1 twice over — `fmt` is unreached AND unpinned. A second array would
-# restate a property these three already fix, which is the objection this file
-# makes about the run-id rung.
+# The argument was WRONG, and lazily-cpp found the case that shows it: make both
+# halves at ONCE. Re-measured here, on a byte-verified scratch copy — swap the
+# `dart test` step's body to `make test` AND delete `test`'s entry from
+# EXPECTED_GATE_STEPS in the same edit: **exit 0**. The two refusals cancel,
+# because the deleted entry is the very evidence that would have made the mode
+# change visible. The only trace was informational, inside an OK line: `gate-step
+# pin OK — 9 target(s)` instead of 10, and `2 reached via make <target>` instead
+# of 1. The CI step that runs this guard tests the exit status and greps for
+# `check-ci-reach: OK`; both were satisfied.
 #
-# THE ONE GAP, stated because it is real: an EXCUSED member is excluded from the
-# anchor-reached population (an excuse says CI does not reach the gate, so there
-# is no step to pin), so its MODE is not pinned. dart has no excuses, so the
-# population is empty; adding one would open this.
+# The general fault, worth stating because it is not specific to this rung: a
+# population pinned only as the COMPLEMENT of another pinned population is not
+# pinned against an edit that moves both together. A count is not a pin. So both
+# halves of the partition are now set-equal to a committed list, and a member
+# changing mode has to be WRITTEN into the other list — which is the reviewable
+# edit these pins exist to force, rather than a deletion that erases its own
+# evidence. With this array there is no complement left anywhere in the file:
+# closure, no-gate, anchor-reached and make-invoked are each an explicit set, and
+# excuses are explicit in the conf.
+#
+# THE ONE GAP, stated because it is real: an EXCUSED member is excluded from BOTH
+# populations (an excuse says CI does not reach the gate, so there is no step to
+# pin and no make invocation to record), so its mode is not pinned. An excused
+# member CI turns out to reach through make is still refused, by the stale-excuse
+# rung. dart has no excuses, so the population is empty.
 #
 # A TRAILING WILDCARD is the other flat-search defect zig found: an anchor ending
 # in an ANY token makes its step a superset of anything matching its prefix plus
@@ -416,6 +436,23 @@ EXPECTED_GATE_STEPS=(
 	"test                     => dart test (with lazily-formal proof verification)"
 	"test-interop-peer        => Interop peer self-check (#lzinteroppeerci)"
 	"unbound-block-check      => Unbound assertion-block guard (#lzunboundblockguard)"
+)
+
+# Which closure members CI reaches by running `make <target>` (#reversereachdirection).
+#
+# The other half of the reach-mode partition, and set-equal both directions for
+# the reason spelled out above: without it the mode was a COMPLEMENT, and a
+# simultaneous two-part edit passed at exit 0. A member here has no independent
+# CI-side spelling of its gate, so it gets no step pin — CI's instruction is "run
+# the target", and there is nothing to cross-check. That is not a weaker claim
+# than a step pin; it is a claim about a different thing, and it has to be
+# stated rather than inferred from the absence of a step pin.
+#
+# `fmt` is the only one: CI's format step is `run: make fmt`, chosen so the
+# workflow cannot drift from the Makefile's `--output=none --set-exit-if-changed`
+# gate spelling.
+EXPECTED_MAKE_INVOKED_TARGETS=(
+	"fmt"
 )
 
 # Split a pin entry into its target and its step name. The separator is ` => `,
@@ -1428,6 +1465,7 @@ excuse_reason() {
 }
 
 anchor_eligible=""
+makeinv_targets=""
 makeinv_count=0
 unreached=""
 unreached_count=0
@@ -1504,9 +1542,14 @@ while IFS= read -r target; do
 	pinned_loc=""
 	if make_invokes "$target"; then
 		# Reached by CI running `make <target>`. No CI-side spelling of its own,
-		# so no step to pin — counted, because the gate-step verdict below states
-		# this population rather than deriving it from the other counts.
-		makeinv_count=$((makeinv_count + 1))
+		# so no STEP to pin — but the MODE is pinned, against
+		# EXPECTED_MAKE_INVOKED_TARGETS. Recorded as a NAME, not only a count: a
+		# count is what let the mode change pass at exit 0 before this rung
+		# existed. Excused members are outside both populations, same as below.
+		if ! is_excused "$target"; then
+			makeinv_targets="$makeinv_targets$target"$'\n'
+			makeinv_count=$((makeinv_count + 1))
+		fi
 	else
 		# This member has a CI-side spelling of its own, so it is in the
 		# population EXPECTED_GATE_STEPS is set-equal to (#reversereachdirection).
@@ -1748,10 +1791,48 @@ if [ -n "$(awk 'NF' <<<"$gatestep_orphans")" ]; then
 	echo "the target, and say which of the three it was." >&2
 	gatestep_status=1
 fi
+# The OTHER half of the partition, set-equal both directions. See the note on
+# EXPECTED_MAKE_INVOKED_TARGETS: a population pinned only as the complement of
+# this one passed a simultaneous two-part edit at exit 0.
+makeinv_pinned_sorted="$(printf '%s\n' "${EXPECTED_MAKE_INVOKED_TARGETS[@]}" | awk 'NF' | LC_ALL=C sort)"
+makeinv_seen_sorted="$(printf '%s\n' "$makeinv_targets" | awk 'NF' | LC_ALL=C sort -u)"
+makeinv_orphans="$(LC_ALL=C comm -23 <(printf '%s\n' "$makeinv_pinned_sorted") <(printf '%s\n' "$makeinv_seen_sorted"))"
+makeinv_unpinned="$(LC_ALL=C comm -13 <(printf '%s\n' "$makeinv_pinned_sorted") <(printf '%s\n' "$makeinv_seen_sorted"))"
+makeinv_pin_count="$(awk 'NF' <<<"$makeinv_pinned_sorted" | wc -l)"
+if [ -n "$(awk 'NF' <<<"$makeinv_unpinned")" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: CI reaches '$t' by running \`make $t\`, and it is NOT in" >&2
+		echo "                EXPECTED_MAKE_INVOKED_TARGETS. Its gate is no longer cross-checked against" >&2
+		echo "                any CI-side spelling, and no step pin covers it — so if it ALSO lost its" >&2
+		echo "                EXPECTED_GATE_STEPS entry in this edit, the two refusals would cancel and" >&2
+		echo "                this guard would have exited 0." >&2
+	done <<<"$makeinv_unpinned"
+	echo >&2
+	echo "If CI deliberately runs the target instead of spelling its command, add '$0''s" >&2
+	echo "EXPECTED_MAKE_INVOKED_TARGETS entry and remove the EXPECTED_GATE_STEPS one in the same" >&2
+	echo "commit. Both edits name the target, which is the point." >&2
+	gatestep_status=1
+fi
+if [ -n "$(awk 'NF' <<<"$makeinv_orphans")" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: EXPECTED_MAKE_INVOKED_TARGETS lists '$t', but no CI \`run:\` step invokes" >&2
+		echo "                \`make $t\` — it left the closure, stopped carrying a gate, or CI now spells" >&2
+		echo "                its command, in which case it needs an EXPECTED_GATE_STEPS entry instead." >&2
+	done <<<"$makeinv_orphans"
+	echo >&2
+	echo "Remove the entry from EXPECTED_MAKE_INVOKED_TARGETS in $0, in the same commit as" >&2
+	echo "whatever moved the target." >&2
+	gatestep_status=1
+fi
+
 if [ "$gatestep_status" -ne 0 ]; then
 	status=1
 elif [ "$status" -eq 0 ]; then
-	echo "check-ci-reach: gate-step pin OK — $gatestep_count target(s) set-equal to EXPECTED_GATE_STEPS, every anchor matched INSIDE its pinned step; $makeinv_count reached via \`make <target>\`, which gets no pin"
+	echo "check-ci-reach: gate-step pin OK — $gatestep_count target(s) set-equal to EXPECTED_GATE_STEPS, every anchor matched INSIDE its pinned step; $makeinv_pin_count set-equal to EXPECTED_MAKE_INVOKED_TARGETS, reached via \`make <target>\` and carrying no step pin"
 fi
 
 accounted=$((reached + excused_ok + stale_count + unreached_count + unreadable_count + nogate_count))
