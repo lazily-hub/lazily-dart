@@ -36,13 +36,14 @@ CONTENT DIGESTS — both DERIVED from the canonical corpus minus this binding's
 own ``KNOWN_UNCOVERED`` ledger, and both compared for EQUALITY rather than
 floored (``#lzblocksitepin``). See ``derive_expected``.
 
-The excused set carries a CEILING on top of its set equality
-(``#lzledgerceiling``). An equality only says the ledger and the run AGREE, and
+The excused set carries a SIZE PIN on top of its set equality
+(``#lzledgerratchet``). An equality only says the ledger and the run AGREE, and
 any consistent pair satisfies it — a commit that detaches binds and writes the
 matching entries passes both directions, and the magnitude rung above cannot
-see it either because a detached site is still declared. ``MAX_LEDGERED``
-bounds how much may be excused at all, so the ledger can only shrink without a
-deliberate edit.
+see it either because a detached site is still declared.
+``EXPECTED_LEDGERED`` is compared for EQUALITY, in both directions, against a
+committed constant that the corpus cannot move; see its comment for why a
+one-sided bound on the same number self-disables after the first migration.
 """
 
 from __future__ import annotations
@@ -147,7 +148,8 @@ KNOWN_UNBOUND_BLOCKS = [
     ),
 ]
 
-# A CEILING on the excused population (#lzledgerceiling).
+# The SIZE of the excused population, pinned and compared for EQUALITY
+# (#lzledgerratchet).
 #
 # `KNOWN_UNBOUND_BLOCKS` is checked as a SET EQUALITY against the run, in both
 # directions: an unbound block nobody excused fails, and an excuse the suite
@@ -158,26 +160,62 @@ KNOWN_UNBOUND_BLOCKS = [
 # sites and digests against the canonical corpus, and a detached bind leaves the
 # site declared, merely no longer bound, so both dimensions stay equal.
 #
-# A typed COUNT of the ledger would not fix it. A number that mirrors the
-# current population is redundant with the equality above — equal sets have
-# equal counts — so it carries no information and only adds a second edit site
-# that drifts. That is the `MIN_BLOCKS` shape whose history is written out
-# below.
+# So the hole is closed by a number the corpus CANNOT MOVE. The set equality
+# compares the ledger against the RUN, and both sides move together under that
+# attack; this compares it against a COMMITTED CONSTANT, which does not move at
+# all. That independence is the whole value, and it is why the number is not
+# redundant with the equality above even though equal sets have equal counts.
 #
-# What closes the hole is a ceiling on how much MAY be excused. A ceiling is a
-# POLICY, not a measurement: it does not move when the corpus moves, and it
-# never needs re-pinning except deliberately and upward, in review. What it buys
-# is that a regression and its excuse can no longer land in the same commit
-# unnoticed — raising this line is the explicit act.
+# It is compared EXACTLY, both directions, and that is the correction
+# #lzledgerratchet made to the one-sided `<=` bound this line used to be. A
+# one-sided bound SELF-DISABLES. It refuses the detach-and-excuse commit only
+# while slack is zero; the first genuine migration shrinks the ledger, leaves the
+# constant where it is, and hands the next such commit a free slot. Repeat per
+# migration and the bound converges on exactly the `MIN_BLOCKS` defect written
+# out below: a number so far above reality that it never fires and so is never
+# updated. An equality has no slack by construction and cannot drift silently,
+# because a stale value FAILS — a number that fails when stale is a ratchet, not
+# a floor.
 #
-# Raise it ONLY for a block this binding genuinely cannot bind, carrying a reason
-# that says what cannot be expressed, and expect to be asked why the capability
-# cannot exist. Never raise it to park a block that is merely unbound today: that
-# is the laundering this guard exists to refuse. The six entries above are here
-# because the replay model has no `merge_cell` or `drain_exhausted` op;
-# implementing those ops is what LOWERS this line, and it should only ever move
-# in that direction.
-MAX_LEDGERED = int(os.environ.get("MAX_LEDGERED_BLOCKS", "25"))
+# Both directions are things a person must see. GROWTH means an excuse was
+# added: legitimate only for a block this binding genuinely cannot bind, with a
+# reason saying what cannot be expressed (a corpus that gains a genuinely
+# unreachable fixture is the real case), and expect to be asked why the
+# capability cannot exist. Never raise it to park a block that is merely unbound
+# today — that is the laundering this guard exists to refuse. SHRINK means sites
+# were migrated and this line was not lowered in the same commit; lower it, in
+# that commit, so the ratchet stays tight. Either way the edit is deliberate and
+# visible in the diff, which is the point.
+#
+# The 25 sites above are here because the replay model has no `merge_cell` or
+# `drain_exhausted` op; implementing those ops is what LOWERS this number, and
+# it should only ever move in that direction.
+EXPECTED_LEDGERED = os.environ.get("EXPECTED_LEDGERED_BLOCKS", "25")
+if not re.fullmatch(r"\d+", EXPECTED_LEDGERED.strip()):
+    # FAIL CLOSED, never fall back to the default. A pin that cannot be read is
+    # an unknown policy, and silently substituting the committed default would
+    # let an override typo report this rung as enforced while enforcing a number
+    # nobody asked for.
+    print(
+        "ERROR: EXPECTED_LEDGERED_BLOCKS is {!r}, which is not a non-negative "
+        "integer.".format(EXPECTED_LEDGERED),
+        file=sys.stderr,
+    )
+    print(
+        "       This pin is the excused-ledger size, compared for EQUALITY. An",
+        file=sys.stderr,
+    )
+    print(
+        "       unreadable pin fails closed rather than falling back to the",
+        file=sys.stderr,
+    )
+    print(
+        "       committed default, which would report a policy that is not the one",
+        file=sys.stderr,
+    )
+    print("       in force.", file=sys.stderr)
+    sys.exit(1)
+EXPECTED_LEDGERED = int(EXPECTED_LEDGERED)
 
 # Positive-evidence floors (#lzvacuousrun). Every check below reasons about
 # blocks the run OPENED, so all of them are vacuously satisfied by an empty
@@ -524,26 +562,71 @@ def main() -> None:
     excuses = expand_excuses()
     excused = {(fixture, path) for fixture, path, _ in excuses}
 
-    # The ceiling, before anything else is read (#lzledgerceiling). It is the
+    # The size pin, before anything else is read (#lzledgerratchet). It is the
     # one check here that needs no evidence from the run at all — it is a policy
     # about the committed ledger — so it reports first and on its own terms,
     # rather than behind a manifest or a corpus derivation that could fail for
     # unrelated reasons.
-    if len(excuses) > MAX_LEDGERED:
-        die(
-            "ERROR: {} assertion-block site(s) are ledgered as unbound; the "
-            "ceiling is {}.".format(len(excuses), MAX_LEDGERED),
-            "       The ledger may only SHRINK. It is checked as a set EQUALITY",
-            "       against the run, and an equality only says the ledger and the run",
-            "       AGREE — any consistent pair satisfies it, including a commit that",
-            "       detaches binds and writes the matching entries. The magnitude rung",
-            "       misses that too, because a detached site is still DECLARED. This",
-            "       ceiling is what makes enlarging the excused set an explicit act",
-            "       instead of a side effect.",
-            "       Bind the block. Raise MAX_LEDGERED_BLOCKS only for a block this",
-            "       binding genuinely cannot bind, with a reason saying what cannot be",
-            "       expressed.",
+    #
+    # EXACT, both directions. A one-sided bound would refuse growth only while
+    # slack is zero and would hand itself a free slot at every migration; see
+    # `EXPECTED_LEDGERED`.
+    if len(excuses) != EXPECTED_LEDGERED:
+        report = []
+        if len(excuses) > EXPECTED_LEDGERED:
+            report.append(
+                "ERROR: the excused assertion-block ledger GREW to {} site(s); the "
+                "pin is {}.".format(len(excuses), EXPECTED_LEDGERED)
+            )
+            report.append(
+                "       Set equality alone cannot see this. It compares the ledger"
+            )
+            report.append(
+                "       against the RUN, and a commit that detaches binds and writes the"
+            )
+            report.append(
+                "       matching entries moves both sides together and passes both"
+            )
+            report.append(
+                "       directions. The magnitude rung misses it too, because a detached"
+            )
+            report.append("       bind's site is still DECLARED, merely no longer bound.")
+            report.append(
+                "       Bind the block. Raise EXPECTED_LEDGERED_BLOCKS only for a block"
+            )
+            report.append(
+                "       this binding genuinely cannot bind, with a reason saying what"
+            )
+            report.append("       cannot be expressed.")
+        else:
+            report.append(
+                "ERROR: the excused assertion-block ledger SHRANK to {} site(s); the "
+                "pin is still {}.".format(len(excuses), EXPECTED_LEDGERED)
+            )
+            report.append(
+                "       LOWER THE PIN IN THIS COMMIT. This number is compared for"
+            )
+            report.append(
+                "       EQUALITY on purpose: leaving it high is how a one-sided bound"
+            )
+            report.append(
+                "       accumulates slack and stops refusing the detach-and-excuse commit"
+            )
+            report.append(
+                "       it exists to refuse. Migrating sites is the goal state; the pin"
+            )
+            report.append("       has to follow them down in the same diff.")
+        report.append(
+            "       The {} site(s) the ledger currently names:".format(len(excuses))
         )
+        for fixture, path, _ in excuses[:20]:
+            report.append("         {}|{}".format(fixture, path))
+        if len(excuses) > 20:
+            report.append(
+                "         ... and {} more — read `git diff` on KNOWN_UNBOUND_BLOCKS "
+                "for the rest".format(len(excuses) - 20)
+            )
+        die(*report)
 
     carried = {}
     # The inventory's two dimensions, held as maps rather than counts so a
@@ -821,9 +904,11 @@ def main() -> None:
 
     print(
         "unbound-block guard OK: {}/{} assertion blocks across {} opened fixtures "
-        "were BOUND by the suite ({} excused of at most {}; runtime ledger — these "
-        "blocks were really passed to a tracker; the ledger is an EQUALITY against "
-        "the run under a CEILING that makes enlarging it an explicit act). "
+        "were BOUND by the suite ({} excused against a pin of exactly {}; runtime "
+        "ledger — these blocks were really passed to a tracker; the ledger is an "
+        "EQUALITY against the run, and its SIZE is a second EQUALITY against a "
+        "committed constant the corpus cannot move, so neither growing it nor "
+        "migrating out of it can happen without a visible edit). "
         "Population {} site(s) and {} distinct content "
         "digest(s), BOTH DERIVED from the {} fixture(s) the canonical corpus carries "
         "minus KNOWN_UNCOVERED by the same walk the inventory uses, and BOTH asserted "
@@ -835,7 +920,7 @@ def main() -> None:
             total,
             examined,
             len(excuses),
-            MAX_LEDGERED,
+            EXPECTED_LEDGERED,
             len(expected_sites),
             len(expected_digests),
             expected_fixtures,
