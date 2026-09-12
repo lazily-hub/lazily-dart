@@ -111,7 +111,14 @@ jobs:
           "$HOME/.elan/bin/elan" default "$(cat "$GITHUB_WORKSPACE/_lazily-formal/lean-toolchain")"
           "$HOME/.elan/bin/lake" --version
 
-      - run: dart pub get
+      # NAMED, like every other step, because the CI-reachability guard now pins
+      # each gate to the NAME of the step that runs it (#reversereachdirection). An
+      # unnamed step cannot be pinned, and it cannot be cited in a diagnostic
+      # either: this is the step the recorded recipe-swap attack borrows, so the
+      # guard's message about it is only readable if the step has a name.
+      # Naming a step changes nothing it runs.
+      - name: Resolve dependencies (dart pub get)
+        run: dart pub get
 
       # The formatting gate (#lazilydartzig). Two placement constraints, both
       # learned the hard way when this step first went red in CI while `make fmt`
@@ -131,7 +138,12 @@ jobs:
       - name: Format gate (make fmt)
         if: matrix.sdk == 'stable'
         run: make fmt
-      - run: dart analyze --fatal-infos
+      # This step is the ONLY thing in CI that runs `make analyze`'s gate, so the
+      # guard pins `analyze` to this name (#reversereachdirection). It was unnamed,
+      # which means the one gate-bearing step in this workflow that could not be
+      # pinned was also the one whose recipe a swap would target first.
+      - name: Static analysis gate (make analyze)
+        run: dart analyze --fatal-infos
 
       # Two of the four conformance guards execute INSIDE `dart test` (the
       # unconsumed- and unasserted-assertion-key rungs, via the addTearDown in

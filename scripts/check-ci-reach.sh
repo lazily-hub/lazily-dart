@@ -42,10 +42,17 @@
 #     C. EXPECTED_NOGATE_TARGETS — set equality on which members legitimately
 #        carry no checkable command, so a name cannot be kept while its recipe
 #        is neutered.
+#     D. EXPECTED_GATE_STEPS — which CI STEP runs each gate, so reach is asked
+#        INSIDE that step instead of over a flat set of every `run:` body
+#        (#reversereachdirection). This is what closes the recipe swap A-C left
+#        open: repoint a member at any other step's command — including a real
+#        step no member runs — and its anchors are no longer in its own step.
 #
-#   Still not caught, and deliberately so: swapping a member's recipe for a
-#   DIFFERENT gate CI already runs. See the note on EXPECTED_ROOT_TARGET below
-#   for why closing it would cost more than it buys.
+#   Still not caught, and stated rather than implied: a recipe weakened INSIDE
+#   its pinned step. Anchors match as SUBSEQUENCES and extra CI-side tokens are
+#   allowed by design, so dropping `--self-check` from `test-interop-peer` stays
+#   green. Only a per-recipe-content pin would close that, and the note on
+#   EXPECTED_GATE_STEPS says why that one is declined.
 #
 # HOW A TARGET IS MATCHED
 #
@@ -58,9 +65,12 @@
 #   dropped, and the remainder is reduced to an ANCHOR: the program basename plus
 #   its subcommands and flag NAMES (values dropped), with path arguments reduced to
 #   basenames and bare path globs discarded. A target is reached when EVERY one of
-#   its anchors is a subsequence of some CI command's token list, or when CI runs
-#   `make <target>` directly. Every, not any: a target that runs two gates and is
-#   half-covered by CI is a gap, and "any" would report it green.
+#   its anchors is a subsequence of some CI command's token list IN THE STEP
+#   EXPECTED_GATE_STEPS pins it to, or when CI runs `make <target>` directly.
+#   Every, not any: a target that runs two gates and is half-covered by CI is a
+#   gap, and "any" would report it green. In the step it is PINNED to, not in any
+#   step: "some command anywhere in the workflows" is what let a recipe be
+#   repointed at an unrelated step and stay green (#reversereachdirection).
 #
 #   Keeping flag names in the anchor is what makes the guard falsifiable rather
 #   than decorative: `go test -race` does not match a CI step that only runs
@@ -177,24 +187,26 @@ CONF="${CI_REACH_CONF:-scripts/ci-reach.conf}"
 # three reason about a SET of names, so three things are structurally outside
 # them:
 #
-#   RECIPE IDENTITY, partly. Swapping a member's recipe for a DIFFERENT gate CI
+#   RECIPE IDENTITY was outside all three, and is now answered by a FOURTH rung
+#   rather than by these. Swapping a member's recipe for a DIFFERENT gate CI
 #   already runs keeps the name, the membership, the classification and every
-#   count. Half of it is now caught, by accident of the collision check on the
+#   count. Half of it was caught, by accident of the collision check on the
 #   oracle: if the borrowed gate belongs to ANOTHER closure member, the two
-#   members reduce to one anchor and that is refused. Measured — point
+#   members reduce to one anchor and that is refused. Re-measured — point
 #   `formal-check:` at `dart analyze --fatal-infos` and the guard names both
 #   targets and the shared anchor, exit 1.
 #
-#   The other half stands. Borrow a command CI runs that NO member runs and
-#   nothing sees it: measured, `formal-check:` running `dart pub get` (a real step
-#   in this workflow) leaves `make -n check` running `tool/formal_check.dart` ZERO
-#   times with the guard's whole output BYTE-IDENTICAL to healthy, exit 0.
-#   Closing that needs a per-target recipe anchor — a second spelling of every
-#   recipe inside this guard — which the header above records as a mistake that
-#   already cost lazily-cpp a hand-written equality assertion. It also bounds the
-#   honest case for this work: the argument for a pin is that it turns an
-#   invisible drop into a REVIEWABLE edit, and that swap is an equally reviewable
-#   edit that stays equally undetected.
+#   The other half — borrow a command CI runs that NO member runs — was open, and
+#   measured open: `formal-check:` running `dart pub get` (a real step in this
+#   workflow) left `make -n check` running `tool/formal_check.dart` ZERO times
+#   with this guard's whole output BYTE-IDENTICAL to healthy, exit 0. It is now
+#   closed by EXPECTED_GATE_STEPS (#reversereachdirection), which pins the STEP each
+#   gate runs in rather than the recipe's content: same attack, exit 1, naming
+#   `formal-check`, its pinned step, the absent anchor, and the step the borrowed
+#   one landed in. A per-target recipe-CONTENT anchor is still declined — its
+#   churn is recipe-rate, which is how a pin becomes the passes-when-stale check
+#   this family already removed once — and the step map's churn is step-name-rate,
+#   because a recipe gaining a flag moves the recipe and the CI step together.
 #
 #   ORDER. A set has none, and order is LOAD-BEARING here: `conformance-coverage`
 #   and `unbound-block-check` read evidence that `test` truncates and the suite
@@ -255,6 +267,132 @@ EXPECTED_CLOSURE_TARGETS=(
 EXPECTED_NOGATE_TARGETS=(
 	"check"
 )
+
+# Which CI STEP runs each gate (#reversereachdirection, part D).
+#
+# Reach was "some command, in a flat set of every `run:` body in every listed
+# workflow, contains this member's anchors as an in-order subsequence". The set
+# is flat, so the step a gate lives in was never part of the claim — and that is
+# the whole of the recipe-swap attack the three rungs above record as open.
+# Measured here, pre-fix, on a byte-verified scratch copy of this repo: point
+# `formal-check:` at `dart pub get` — a REAL step in this workflow that no
+# closure member runs — and `make -n check` runs `tool/formal_check.dart` ZERO
+# times while this guard's stdout is BYTE-IDENTICAL to healthy, stderr empty,
+# exit 0. Every name-level rung agrees, because no name changed.
+#
+# Pinning the STEP closes it. Repoint a member at any other step's command and
+# its anchors are no longer in ITS step, so it exits 1 naming the member, the
+# step and the absent anchor — and, because the step key is carried through the
+# whole match, naming the step the anchor actually landed in.
+#
+# WHY THIS PIN AND NOT A RECIPE PIN. The obvious fix is to pin each member's
+# recipe CONTENT. That was declined, and still is: its churn is recipe-rate, so
+# every flag a recipe gains is a pin edit, and a pin edited reflexively becomes
+# the passes-when-stale check this family has already removed once
+# (MAX_LEDGERED_BLOCKS). This pin's churn is STEP-NAME-rate. A recipe gaining a
+# flag moves the recipe and the CI step together and the mapping does not move,
+# which is exactly the property the recipe pin lacked.
+#
+# ANCHOR-REACHED MEMBERS ONLY, and the population is pinned by SET EQUALITY
+# against the members this run classified as anchor-reached. `fmt` is absent on
+# purpose: CI reaches it by running `make fmt`, so it has no independent CI-side
+# spelling, and pinning "the step that runs make" would assert nothing about the
+# gate. Measured split in this binding: 10 anchor-reached, 1 make-invocation-
+# reached (`fmt`), 1 carrying no gate (`check`).
+#
+# STEP NAMES ARE NOT UNIQUE — rs has 69 steps and 65 distinct names — so a name
+# that matches two steps is refused rather than silently unioning their commands,
+# and an UNNAMED step is refused with its file:line, because a pin cannot name
+# it. Both directions of the set equality are reported, by name, like every pin
+# here.
+#
+# THE SUPERSET SHAPE, measured here because it is a LIVE defect elsewhere. The
+# flat search this replaces has a second failure mode independent of any repoint:
+# if a NARROW step's command happens to be a superset of a BROAD member's anchor,
+# deleting the broad member's OWN step leaves the flat guard green. cs found one
+# by deleting its `test` step; rs found 8 of 46 members contained in another
+# step's command, `test` in 39 of them, and deleting its entire default-feature
+# suite passed BYTE-IDENTICALLY. Swept here — all 12 anchors of all 10
+# anchor-reached members against all 15 `run:` steps, with this file's own
+# subsequence matcher — and every anchor matches exactly ONE step, so this
+# binding has NO instance. Confirmed by consequence, not by the relation: each of
+# the 15 steps deleted in turn, and all 11 gate-bearing deletions redden the
+# guard while the 4 precondition steps (fixture assertion, Lean PATH, `dart pub
+# get`, evidence reset) carry no member gate and correctly do not.
+#
+# The margin is thin, which is the part worth writing down: 6 of the 12 anchors
+# are ONE token short of being contained in another step, and the two
+# browser-check steps match 5 of each other's 7 tokens — they differ only in two
+# basenames. Spell either step's input or output through a `$VAR` and the
+# normalizer turns that token into a wildcard, the two collapse, and the shape
+# goes live. Step scoping is what stops it doing so silently.
+#
+# WHAT IT DOES NOT CLOSE, stated rather than implied: a recipe weakened INSIDE
+# its pinned step. Drop `--self-check` from `test-interop-peer` and the shorter
+# anchor is still a subsequence of the step's command, by design — extra CI-side
+# tokens are allowed, which is what lets one CI spelling differ legitimately
+# from the Makefile's. Only the declined per-recipe-content pin would close that.
+#
+# WHY THE COLLISION RUNG STAYS. The oracle's collision check already refuses one
+# half of this attack — a member repointed at ANOTHER member's gate makes the two
+# reduce to one anchor — and this pin refuses that half too. Both are kept
+# because each has a case the other cannot see, measured rather than argued:
+#
+#   * collision only: two members whose gates run in the SAME CI step. Then both
+#     pins name that step, the borrowed anchor is inside it, and step-scoping is
+#     green. Measured on this repo by merging the two browser-check steps — a
+#     plausible consolidation, they are the same kind of check — and repointing
+#     `stdlib-browser-check:` at `ipc-browser-check`'s commands: step reach
+#     PASSES, the collision rung exits 1. The collision rung is also the only one
+#     of the two that protects the ORACLE, which is a Makefile-side claim CI
+#     cannot speak to at all.
+#   * step scope only: a member repointed at a step NO member runs. Nothing
+#     collides, so the collision rung is silent; this pin exits 1. That is the
+#     `dart pub get` measurement above.
+#
+# So they are not two mechanisms for one property — they are two properties. The
+# run-id rung, which IS one mechanism for a property this file states elsewhere,
+# is deliberately not restated here, for the same reason.
+EXPECTED_GATE_STEPS=(
+	"analyze                  => Static analysis gate (make analyze)"
+	"assertion-ordering-check => Assertion observation ordering (#lzassertordering)"
+	"ci-reach                 => CI-reachability guard (#lzcheckcireachguard)"
+	"conformance-coverage     => Conformance coverage + scenario replay guards (#lzguardsnotinci)"
+	"formal-check             => Lean proof verification (#lzcheckcireachguard)"
+	"ipc-browser-check        => IPC wire browser compile + behaviour check (#lzdartwebcompile)"
+	"stdlib-browser-check     => stdlib browser compile check (#lzinteroppeerci)"
+	"test                     => dart test (with lazily-formal proof verification)"
+	"test-interop-peer        => Interop peer self-check (#lzinteroppeerci)"
+	"unbound-block-check      => Unbound assertion-block guard (#lzunboundblockguard)"
+)
+
+# Split a pin entry into its target and its step name. The separator is ` => `,
+# and the step name is everything after the FIRST one — a step name may contain
+# anything, including another arrow.
+pin_target() {
+	local e="${1%%' => '*}"
+	# The column padding in the array is alignment, not part of the name.
+	e="${e%%[[:space:]]}"
+	while [ "$e" != "${e%[[:space:]]}" ]; do e="${e%[[:space:]]}"; done
+	printf '%s' "$e"
+}
+pin_step() {
+	local e="$1"
+	case "$e" in
+	*' => '*) printf '%s' "${e#*' => '}" ;;
+	*) return 1 ;;
+	esac
+}
+gate_step_of() {
+	local t="$1" e
+	for e in "${EXPECTED_GATE_STEPS[@]}"; do
+		if [ "$(pin_target "$e")" = "$t" ]; then
+			pin_step "$e"
+			return 0
+		fi
+	done
+	return 1
+}
 
 if [ ! -f Makefile ]; then
 	echo "check-ci-reach: no Makefile in $(pwd)" >&2
@@ -519,44 +657,89 @@ own_commands() {
 
 # ------------------------------------------------------------- workflow scraping
 
-# Command lines from every `run:` step. Comment lines inside a run body are
-# stripped here — the whole reason this guard is a script.
-ci_commands() {
+# Command lines from every `run:` step, each prefixed by TWO tab-separated
+# columns: the step's `file:line` and its NAME. Comment lines inside a run body
+# are stripped here — the whole reason this guard is a script.
+#
+# `file:line` is a column of its own because step names are NOT unique — rs has
+# 69 steps and 65 distinct names — so a roster keyed by name alone cannot see
+# two steps sharing one. Ambiguity is refused below before any name is used as a
+# key.
+#
+# The step key is what makes reach SCOPED rather than "some command anywhere"
+# (#reversereachdirection). Two passes over the slurped file, because a step's
+# `name:` is legal either before or after its `run:` and a one-pass scan would
+# label the second order unnamed — a false demand to name a step that is named.
+#
+# A step with no `name:` is keyed `<unnamed@file:line>`. That key can never equal
+# a pinned step name, so an unnamed step carrying a gate FAILS with a message
+# naming the file and line to name — which is the point: an unnamed step is the
+# one place in a workflow a pin cannot reach.
+ci_steps() {
 	awk '
-		function flush() { if (buf != "") { print buf; buf = "" } }
-		{
-			line = $0
-			indent = match(line, /[^ ]/) - 1
-			if (indent < 0) indent = 9999
-
-			if (inblock) {
-				if (line ~ /^[[:space:]]*$/) next
-				if (indent <= block_indent) { flush(); inblock = 0 }
-				else {
-					sub(/^[[:space:]]+/, "", line)
-					if (substr(line, 1, 1) == "#") next
-					if (line ~ /\\[[:space:]]*$/) {
-						sub(/\\[[:space:]]*$/, "", line)
-						buf = buf " " line
-						next
-					}
-					if (buf != "") { print buf " " line; buf = "" } else print line
-					next
+		{ L[NR] = $0; F[NR] = FILENAME; FN[NR] = FNR }
+		function ind(s,   m) { if (s ~ /^[[:space:]]*$/) return 9999; m = match(s, /[^ ]/); return m - 1 }
+		END {
+			# Pass 1: step extents. A step is a `- ` list item and its keys sit
+			# further in. Non-step list items (`- main` under `branches:`) are
+			# harmless: they carry no `run:`, so they contribute nothing.
+			ns = 0
+			for (i = 1; i <= NR; i++)
+				if (L[i] ~ /^[[:space:]]*-[[:space:]]/) { ns++; ss[ns] = i; si[ns] = ind(L[i]) }
+			for (s = 1; s <= ns; s++) {
+				se[s] = NR + 1
+				# A step cannot span two workflow FILES. Without the F test the last
+				# step of one file would absorb the lines of the next one, and its
+				# `loc` would name whichever file awk read last.
+				for (i = ss[s] + 1; i <= NR; i++) {
+					if (F[i] != F[ss[s]]) { se[s] = i; break }
+					if (L[i] !~ /^[[:space:]]*$/ && ind(L[i]) <= si[s]) { se[s] = i; break }
 				}
 			}
-
-			if (line ~ /^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*[|>][-+]?[[:space:]]*$/) {
-				inblock = 1
-				block_indent = indent
+			# Pass 2: the name, then the commands, per step.
+			for (s = 1; s <= ns; s++) {
+				key = ""
+				for (i = ss[s]; i < se[s]; i++) {
+					line = L[i]
+					sub(/^[[:space:]]*(-[[:space:]]+)?/, "", line)
+					if (line ~ /^name:[[:space:]]/) {
+						sub(/^name:[[:space:]]*/, "", line)
+						gsub(/[[:space:]]+$/, "", line)
+						# A quoted scalar is the same name; strip one matched pair.
+						if (line ~ /^".*"$/ || line ~ /^'"'"'.*'"'"'$/) line = substr(line, 2, length(line) - 2)
+						key = line
+						break
+					}
+				}
+				# FNR, not NR: with several workflows awk keeps counting, and a line
+				# number nobody can find in the named file is worse than none.
+				loc = F[ss[s]] ":" FN[ss[s]]
+				if (key == "") key = "<unnamed@" loc ">"
 				buf = ""
-				next
-			}
-			if (line ~ /^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*[^|>[:space:]]/) {
-				sub(/^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*/, "", line)
-				print line
+				for (i = ss[s]; i < se[s]; i++) {
+					line = L[i]
+					if (line ~ /^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*[|>][-+]?[[:space:]]*$/) {
+						bi = ind(line)
+						for (j = i + 1; j < se[s]; j++) {
+							b = L[j]
+							if (b ~ /^[[:space:]]*$/) continue
+							if (ind(b) <= bi) break
+							sub(/^[[:space:]]+/, "", b)
+							if (substr(b, 1, 1) == "#") continue
+							if (b ~ /\\[[:space:]]*$/) { sub(/\\[[:space:]]*$/, "", b); buf = buf " " b; continue }
+							if (buf != "") { print loc "\t" key "\t" buf " " b; buf = "" } else print loc "\t" key "\t" b
+						}
+						if (buf != "") { print loc "\t" key "\t" buf; buf = "" }
+						i = j - 1
+						continue
+					}
+					if (line ~ /^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*[^|>[:space:]]/) {
+						sub(/^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]*/, "", line)
+						print loc "\t" key "\t" line
+					}
+				}
 			}
 		}
-		END { flush() }
 	' "$@"
 }
 
@@ -963,11 +1146,23 @@ echo "check-ci-reach: closure pin OK — $pin_count target(s) set-equal to EXPEC
 
 # --------------------------------------------------------------------- matching
 
+ci_step_raw="$(mktemp)"
 ci_raw="$(mktemp)"
 ci_anchor="$(mktemp)"
-trap 'rm -f "$ci_raw" "$ci_anchor"' EXIT
-ci_commands "${workflows[@]}" >"$ci_raw"
+ci_step_anchor="$(mktemp)"
+trap 'rm -f "$ci_step_raw" "$ci_raw" "$ci_anchor" "$ci_step_anchor"' EXIT
+ci_steps "${workflows[@]}" >"$ci_step_raw"
+cut -f3- <"$ci_step_raw" >"$ci_raw"
 anchors <"$ci_raw" | sort -u >"$ci_anchor"
+
+# The same anchors, but keyed by STEP NAME (#reversereachdirection). Normalizing is
+# per step, not over the flat stream, because an anchor is only ever asked about
+# inside one step.
+while IFS= read -r sname; do
+	[ -n "$sname" ] || continue
+	awk -F'\t' -v k="$sname" '$2 == k { sub(/^[^\t]*\t[^\t]*\t/, ""); print }' "$ci_step_raw" |
+		anchors | sort -u | awk -v k="$sname" 'NF { print k "\t" $0 }'
+done < <(cut -f2 <"$ci_step_raw" | LC_ALL=C sort -u) >"$ci_step_anchor"
 
 if [ ! -s "$ci_anchor" ]; then
 	echo "check-ci-reach: no run: steps found in ${workflows[*]} — a guard with an empty haystack passes everything" >&2
@@ -977,11 +1172,20 @@ fi
 # Does CI contain a command whose tokens contain this anchor as an in-order
 # subsequence? Extra flags and arguments on the CI side are fine; missing ones are
 # not.
+#
+# $2, when given, SCOPES the haystack to the commands of one named step
+# (#reversereachdirection). Unscoped it is the old flat search over every `run:`
+# body in every workflow, and it is still what `make_invokes` and the
+# make-invocation-reached members use — a member CI reaches by running `make
+# <target>` has no CI-side spelling of its own to locate in a step.
 anchor_reached() {
-	awk -v want="$1" '
+	local hay="$ci_anchor"
+	[ -n "${2-}" ] && hay="$ci_step_anchor"
+	awk -F'\t' -v want="$1" -v scope="${2-}" '
 		BEGIN { ANY = "\001any"; wn = split(want, w, / /) }
 		{
-			hn = split($0, h, / /)
+			if (scope != "") { if ($1 != scope) next; hay = $2 } else hay = $0
+			hn = split(hay, h, / /)
 			wi = 1
 			# A wildcard on EITHER side matches, because either side may be the
 			# one that spelled the argument through a variable.
@@ -990,8 +1194,116 @@ anchor_reached() {
 			if (wi > wn) { found = 1; exit }
 		}
 		END { exit found ? 0 : 1 }
-	' "$ci_anchor"
+	' "$hay"
 }
+
+# Which named steps DO contain this anchor? Diagnostics only — the whole value of
+# scoping is a message that says where the gate went, not just that it is gone.
+anchor_steps() {
+	awk -F'\t' -v want="$1" '
+		BEGIN { ANY = "\001any"; wn = split(want, w, / /) }
+		{
+			hn = split($2, h, / /)
+			wi = 1
+			for (hi = 1; hi <= hn && wi <= wn; hi++)
+				if (h[hi] == w[wi] || h[hi] == ANY || w[wi] == ANY) wi++
+			if (wi > wn && !($1 in seen)) { seen[$1] = 1; print $1 }
+		}
+	' "$ci_step_anchor"
+}
+
+# ------------------------- the gate-STEP pin, resolved against the real workflows
+#
+# Every refusal here is about the PIN, not about a gate, so it is answered before
+# the audit loop reads a single recipe: a pin naming a step that does not exist,
+# or a name that matches two steps, cannot scope anything, and scoping reach to
+# nothing would pass everything.
+step_roster="$(cut -f1,2 <"$ci_step_raw" | LC_ALL=C sort -u)"
+pin_status=0
+pinned_targets=""
+for entry in "${EXPECTED_GATE_STEPS[@]}"; do
+	if ! sname="$(pin_step "$entry")"; then
+		echo "check-ci-reach: EXPECTED_GATE_STEPS entry \"$entry\" has no ' => ' — an entry is 'target => CI step name'" >&2
+		pin_status=1
+		continue
+	fi
+	tname="$(pin_target "$entry")"
+	if [ -z "$tname" ] || [ -z "$sname" ]; then
+		echo "check-ci-reach: EXPECTED_GATE_STEPS entry \"$entry\" names an empty target or step" >&2
+		pin_status=1
+		continue
+	fi
+	case $'\n'"$pinned_targets" in
+	*$'\n'"$tname"$'\n'*)
+		echo "check-ci-reach: EXPECTED_GATE_STEPS pins '$tname' more than once — one gate, one step" >&2
+		pin_status=1
+		continue
+		;;
+	esac
+	pinned_targets="$pinned_targets$tname"$'\n'
+
+	# An `<unnamed@file:line>` placeholder is NOT a step name, and pinning one is
+	# refused here rather than resolved. Measured while building this rung, which
+	# is the only reason it is here: the placeholder IS a real key in the roster,
+	# so it resolved, scoping worked against it, and the guard exited 0 — a pin
+	# that satisfies "name the step" by pinning the absence of a name. It is also
+	# a pin whose identity is a LINE NUMBER: insert a comment above the step and
+	# it points at a different one, or at nothing.
+	case "$sname" in
+	'<unnamed@'*)
+		echo >&2
+		echo "check-ci-reach: EXPECTED_GATE_STEPS pins '$tname' to \"$sname\", which is this guard's" >&2
+		echo "                placeholder for a step with NO \`name:\` — not a step name. Its identity is" >&2
+		echo "                a line number, so it points somewhere else the moment anything above the" >&2
+		echo "                step moves. Add a \`name:\` to that step, which changes nothing it runs," >&2
+		echo "                and pin the name." >&2
+		pin_status=1
+		continue
+		;;
+	esac
+
+	# How many STEPS carry this name? Zero is a pin over nothing; two is the
+	# non-uniqueness the roster's file:line column exists to see. Herestrings,
+	# never a pipe into a short-circuiting reader (#lzgrepcpipefail).
+	matches="$(awk -F'\t' -v k="$sname" '$2 == k { print $1 }' <<<"$step_roster")"
+	match_count="$(awk 'NF' <<<"$matches" | wc -l)"
+	if [ "$match_count" -eq 0 ]; then
+		echo >&2
+		echo "check-ci-reach: EXPECTED_GATE_STEPS pins '$tname' to a CI step named" >&2
+		echo "                \"$sname\"" >&2
+		echo "                and no \`run:\` step in ${workflows[*]} has that name." >&2
+		echo "                Either the step was RENAMED (update this pin, and say so in the" >&2
+		echo "                commit) or it was DELETED and took the gate with it." >&2
+		# A third cause, and the one a reader will not guess: the step is still
+		# there and LOST its `name:`. Say so when the roster holds any unnamed
+		# step, because that is the pairing, and an unnamed step is unpinnable.
+		unnamed_steps="$(awk -F'\t' '$2 ~ /^<unnamed@/ { print $1 }' <<<"$step_roster" | LC_ALL=C sort -u)"
+		if [ -n "$(awk 'NF' <<<"$unnamed_steps")" ]; then
+			echo "                Or the step kept its \`run:\` and LOST its \`name:\` — these steps have no" >&2
+			echo "                name, and an unnamed step cannot be pinned:" >&2
+			while IFS= read -r loc; do
+				[ -n "$loc" ] || continue
+				echo "                  - $loc" >&2
+			done <<<"$unnamed_steps"
+		fi
+		pin_status=1
+		continue
+	fi
+	if [ "$match_count" -gt 1 ]; then
+		echo >&2
+		echo "check-ci-reach: EXPECTED_GATE_STEPS pins '$tname' to \"$sname\", which names $match_count steps:" >&2
+		while IFS= read -r loc; do
+			[ -n "$loc" ] || continue
+			echo "                  - $loc" >&2
+		done <<<"$matches"
+		echo "                Scoping reach to an ambiguous name would union their commands, which is" >&2
+		echo "                the flat search this pin replaces. Give the steps distinct names." >&2
+		pin_status=1
+	fi
+done
+if [ "$pin_status" -ne 0 ]; then
+	exit 1
+fi
 
 # CI invoking the target through make counts as reach without any anchor work.
 make_invokes() {
@@ -1023,6 +1335,8 @@ excuse_reason() {
 	done
 }
 
+anchor_eligible=""
+makeinv_count=0
 unreached=""
 unreached_count=0
 stale=""
@@ -1094,13 +1408,40 @@ while IFS= read -r target; do
 
 	hit=1
 	missing_anchors=""
-	if ! make_invokes "$target"; then
+	pinned_step=""
+	if make_invokes "$target"; then
+		# Reached by CI running `make <target>`. No CI-side spelling of its own,
+		# so no step to pin — counted, because the gate-step verdict below states
+		# this population rather than deriving it from the other counts.
+		makeinv_count=$((makeinv_count + 1))
+	else
+		# This member has a CI-side spelling of its own, so it is in the
+		# population EXPECTED_GATE_STEPS is set-equal to (#reversereachdirection).
+		# Recorded here rather than derived later: the classification is what the
+		# pin is pinned against, and computing it twice is how two answers drift.
+		#
+		# An EXCUSED target is left out. An excuse is a claim that CI does not
+		# reach the gate at all, so there is no step to pin, and the stale-excuse
+		# check below genuinely asks the FLAT question — "does any CI step reach
+		# it" — which is why it keeps the unscoped search. dart has no excuses
+		# today; this is what stops the first one from being a false red.
+		if ! is_excused "$target"; then
+			anchor_eligible="$anchor_eligible$target"$'\n'
+			if pinned_step="$(gate_step_of "$target")"; then :; else pinned_step=""; fi
+		fi
 		while IFS= read -r a; do
 			[ -n "$a" ] || continue
-			if ! anchor_reached "$a"; then
-				hit=0
-				missing_anchors="$missing_anchors$a"$'\n'
+			# SCOPED to the pinned step when there is one. Unpinned falls back to
+			# the flat search, which is the pre-#reversereachdirection behaviour — and
+			# an unpinned anchor-eligible member is itself refused by the set
+			# equality below, so the fallback cannot become a quiet exemption.
+			if [ -n "$pinned_step" ]; then
+				anchor_reached "$a" "$pinned_step" && continue
+			else
+				anchor_reached "$a" && continue
 			fi
+			hit=0
+			missing_anchors="$missing_anchors$a"$'\n'
 		done <<<"$target_anchors"
 	fi
 
@@ -1124,7 +1465,23 @@ while IFS= read -r target; do
 		printf 'MISSING  %s\n' "$target"
 		while IFS= read -r a; do
 			[ -n "$a" ] || continue
-			printf '           no CI run: step matches `%s`\n' "$a"
+			if [ -z "$pinned_step" ]; then
+				printf '           no CI run: step matches `%s`\n' "$a"
+				continue
+			fi
+			# Name the step the gate is PINNED to, then the steps that do run the
+			# anchor. "It is somewhere else" is the whole content of a recipe swap,
+			# and the reader cannot act on "missing" alone (#reversereachdirection).
+			printf '           step "%s" runs no command matching `%s`\n' "$pinned_step" "$a"
+			elsewhere="$(anchor_steps "$a")"
+			if [ -n "$(awk 'NF' <<<"$elsewhere")" ]; then
+				while IFS= read -r other; do
+					[ -n "$other" ] || continue
+					printf '             ...but step "%s" does — a recipe pointed at another step\n' "$other"
+				done <<<"$elsewhere"
+			else
+				printf '             and no other run: step in %s does either\n' "${workflows[*]}"
+			fi
 		done <<<"$missing_anchors"
 	fi
 done <<<"$closure"
@@ -1246,6 +1603,61 @@ if [ -n "$nogate_regained" ]; then
 fi
 if [ "$status" -eq 0 ]; then
 	echo "check-ci-reach: no-gate pin OK — $nogate_count target(s) set-equal to EXPECTED_NOGATE_TARGETS"
+fi
+
+# ------------------ the gate-STEP pin's POPULATION (#reversereachdirection, part D)
+#
+# Set equality, both directions, between EXPECTED_GATE_STEPS and the members this
+# run classified as anchor-reached. Without it the pin has the same hole every
+# other pin here was built to close, one level up: a member that stops being
+# pinned falls back to the flat search silently, and the scoping the pin claims
+# to provide simply stops applying to it. The step names themselves were already
+# resolved against the workflows before the audit ran.
+#
+# A member REACHED BY `make <target>` is deliberately NOT in this population, and
+# adding one would be the mistake: it has no independent CI-side spelling, so
+# pinning "whichever step runs make" asserts nothing about the gate. `fmt` is the
+# one in this binding — CI runs `make fmt`, not `dart format`.
+gatestep_sorted="$(printf '%s\n' "${EXPECTED_GATE_STEPS[@]}" | while IFS= read -r e; do
+	[ -n "$e" ] && pin_target "$e" && printf '\n'
+done | awk 'NF' | LC_ALL=C sort)"
+eligible_sorted="$(printf '%s\n' "$anchor_eligible" | awk 'NF' | LC_ALL=C sort -u)"
+gatestep_orphans="$(LC_ALL=C comm -23 <(printf '%s\n' "$gatestep_sorted") <(printf '%s\n' "$eligible_sorted"))"
+gatestep_unpinned="$(LC_ALL=C comm -13 <(printf '%s\n' "$gatestep_sorted") <(printf '%s\n' "$eligible_sorted"))"
+gatestep_count="$(awk 'NF' <<<"$gatestep_sorted" | wc -l)"
+gatestep_status=0
+if [ -n "$(awk 'NF' <<<"$gatestep_unpinned")" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' is reached by CI SPELLING its command, but no entry in" >&2
+		echo "                EXPECTED_GATE_STEPS says which step does — so its reach is the old flat" >&2
+		echo "                search over every \`run:\` body, and a recipe repointed at any other" >&2
+		echo "                step's command would pass." >&2
+	done <<<"$gatestep_unpinned"
+	echo >&2
+	echo "Add 'target => <exact CI step name>' to EXPECTED_GATE_STEPS in $0." >&2
+	gatestep_status=1
+fi
+if [ -n "$(awk 'NF' <<<"$gatestep_orphans")" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: EXPECTED_GATE_STEPS pins '$t', which this run did NOT classify as" >&2
+		echo "                anchor-reached — it left '$ROOT_TARGET''s closure, stopped carrying a gate, or" >&2
+		echo "                is now reached by CI running \`make $t\` instead of spelling its command." >&2
+		echo "                In the last case the entry asserts nothing and must go: there is no" >&2
+		echo "                CI-side spelling of the gate to scope." >&2
+	done <<<"$gatestep_orphans"
+	echo >&2
+	echo "Remove the entry from EXPECTED_GATE_STEPS in $0, in the same commit as whatever moved" >&2
+	echo "the target, and say which of the three it was." >&2
+	gatestep_status=1
+fi
+if [ "$gatestep_status" -ne 0 ]; then
+	status=1
+elif [ "$status" -eq 0 ]; then
+	echo "check-ci-reach: gate-step pin OK — $gatestep_count target(s) set-equal to EXPECTED_GATE_STEPS, every anchor matched INSIDE its pinned step; $makeinv_count reached via \`make <target>\`, which gets no pin"
 fi
 
 accounted=$((reached + excused_ok + stale_count + unreached_count + unreadable_count + nogate_count))
