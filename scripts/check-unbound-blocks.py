@@ -238,27 +238,48 @@ if not EXPECTED_LEDGERED_RAW or EXPECTED_LEDGERED_RAW.strip("0123456789"):
     sys.exit(1)
 EXPECTED_LEDGERED = int(EXPECTED_LEDGERED_RAW)
 
-# Positive-evidence floors (#lzvacuousrun). Every check below reasons about
-# blocks the run OPENED, so all of them are vacuously satisfied by an empty
-# population: zero fixtures means zero unbound blocks and zero stale excuses,
-# and "nothing is wrong" is indistinguishable from "nothing was measured".
+# There are NO positive-evidence floors here any more (#lzdartboundfloor).
 #
-# EXACT, with no margin, and pinned from a green local `make check`. Do NOT
-# lower them to make a red run green: a drop means the corpus shrank or the
-# ledger detached mid-run, and that is the finding.
+# There used to be three. `MIN_BLOCKS` went first: a typed site count compared
+# with `>=`, whose own history is the ledger of why the shape does not work.
+# 672 -> 674 -> 722, every step the same event — the corpus moved, the gate went
+# red, and someone copied the gate's own output back into this file. The 722 pin
+# was stale within 53 MINUTES of being written (lazily-spec 4010d99, "replay: pin
+# member framing with three rows, not one", landed three more blocks the same
+# afternoon), and `>=` cannot notice the lag at all: a floor three below reality
+# tolerates three blocks silently detaching, which is the failure the floor
+# existed to catch. It is DERIVED from the corpus and asserted EQUAL in two
+# dimensions now; see `derive_expected`.
 #
-# The BLOCK POPULATION is no longer one of these. `MIN_BLOCKS` used to be a
-# typed constant compared with `>=`, and its own history is the ledger of why
-# that shape does not work: 672 -> 674 -> 722, every step the same event — the
-# corpus moved, a gate went red, and someone copied the gate's own output back
-# into this file. The 722 pin was stale within 53 MINUTES of being written:
-# lazily-spec 4010d99 ("replay: pin member framing with three rows, not one")
-# landed three more blocks the same afternoon, and `>=` cannot notice the lag at
-# all — a floor three below reality tolerates three blocks silently detaching,
-# which is the failure the floor existed to catch. It is now DERIVED from the
-# corpus and asserted EQUAL, in two dimensions; see `derive_expected`.
-MIN_FIXTURES = int(os.environ.get("MIN_BLOCK_FIXTURES", "144"))
-MIN_BOUND = int(os.environ.get("MIN_BOUND_BLOCKS", "697"))
+# `MIN_BOUND_BLOCKS` and `MIN_BLOCK_FIXTURES` have now gone the same way, and for
+# a sharper reason than redundancy: both were IMPLIED by rungs that already run,
+# so neither could ever do anything but agree, while drifting by hand in between.
+#
+#   * bound = declared - ledgered. `derive_expected` asserts the declared SITE
+#     SET equal to the canonical corpus minus KNOWN_UNCOVERED, and
+#     `EXPECTED_LEDGERED` pins the ledger size as an exact equality in both
+#     directions. Once the `problems` gate below has passed, every declared site
+#     is either bound or excused and the two sets are disjoint, so `bound_count`
+#     is DETERMINED at 725 - 25 = 700. A floor could only restate it.
+#   * `MIN_BLOCK_FIXTURES` was subsumed one rung up rather than here. 8 of the
+#     144 opened fixtures (all of `statechart/`) carry no assertion block at all,
+#     so the site set spans only 136 of them and the fixture set is NOT implied
+#     by the site-set equality — but check-conformance-coverage.sh asserts the
+#     opened set equal to corpus-minus-KNOWN_UNCOVERED from the other side, and
+#     it names the fixture that went missing instead of reporting a magnitude.
+#
+# And a floor is not merely redundant here, it is WEAKER than what remains.
+# `MIN_BOUND_BLOCKS` sat at 697 against a real 700, and a detach-plus-excuse
+# commit that took bound to 699 reached the floor and passed it — verified, not
+# argued. Slack is the whole defect: an exact pin fails when it goes stale, a
+# floor with slack passes.
+#
+# What stays is the VACUITY GUARDS (#lzvacuousrun), which are not floors and are
+# not implied by anything: every check here reasons about a population that can
+# be empty, and zero declared means zero ledgered means zero bound, so an empty
+# run satisfies every equality above by comparing nothing. Those live in `main`
+# as `examined == 0` and `total == 0`, and `derive_expected` carries the matching
+# zero-guard on the expectation side.
 
 
 def die(*lines: str) -> None:
@@ -672,10 +693,15 @@ def main() -> None:
             declared_sites[site(fixture, block_path)] = key
             declared_digests.setdefault(key, site(fixture, block_path))
 
-    # The vacuity floors come FIRST (#lzvacuousrun). Every check below reasons
+    # The vacuity guards come FIRST (#lzvacuousrun). Every check below reasons
     # about blocks the run OPENED, so all of them are vacuously satisfied by an
     # empty population — and a run that measured nothing must say so, rather
     # than report whatever the excuse list happens to disagree with.
+    #
+    # These two are not floors and do not become ones. A floor asks whether the
+    # population is BIG ENOUGH, which is a question the derived equality below
+    # already answers exactly; these ask whether there is a population at all,
+    # which no equality can answer, because zero compares equal to zero.
     total = sum(len(blocks) for blocks in carried.values())
     if examined == 0:
         die(
@@ -690,14 +716,6 @@ def main() -> None:
             ),
             "       The walk found nothing to check — either the block-name set is",
             "       wrong or the corpus is not what this guard thinks it is.",
-        )
-    if examined < MIN_FIXTURES:
-        die(
-            "ERROR: only {} opened fixtures were examined, expected >= {}.".format(
-                examined, MIN_FIXTURES
-            ),
-            "       A replay was removed or the recorder detached mid-run. Do not",
-            "       lower MIN_BLOCK_FIXTURES to fix this.",
         )
     # The MAGNITUDE of what was inventoried, in two derived dimensions, both
     # asserted EQUAL (#lzblocksitepin). Zero unbound blocks out of zero
@@ -914,15 +932,15 @@ def main() -> None:
     if problems:
         die("unbound-block guard FAILED: {} problem(s)".format(problems))
 
-    if bound_count < MIN_BOUND:
-        die(
-            "ERROR: only {} assertion blocks were BOUND, expected >= {}.".format(
-                bound_count, MIN_BOUND
-            ),
-            "       A binding was removed or short-circuited. Do not lower",
-            "       MIN_BOUND_BLOCKS to fix this.",
-        )
-
+    # `bound_count` is NOT checked against a floor (#lzdartboundfloor). Reaching
+    # here means the loop above found every declared site either bound or
+    # excused, and the stale-excuse direction means no site is both, so
+    # `bound_count == len(declared_sites) - len(excuses)` identically. Both of
+    # those are already pinned: the site set by the derived equality above, the
+    # ledger size by `EXPECTED_LEDGERED`. There is no way to move this number
+    # that does not move one of them first, and each of the three ways to try
+    # reports above — an unexcused detach in the loop just above, an excused one
+    # at the size pin, a shrunken corpus at the magnitude rung.
     print(
         "unbound-block guard OK: {}/{} assertion blocks across {} opened fixtures "
         "were BOUND by the suite ({} excused against a pin of exactly {}; runtime "
