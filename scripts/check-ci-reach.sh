@@ -353,11 +353,27 @@ EXPECTED_NOGATE_TARGETS=(
 # closure, no-gate, anchor-reached and make-invoked are each an explicit set, and
 # excuses are explicit in the conf.
 #
-# THE ONE GAP, stated because it is real: an EXCUSED member is excluded from BOTH
-# populations (an excuse says CI does not reach the gate, so there is no step to
-# pin and no make invocation to record), so its mode is not pinned. An excused
-# member CI turns out to reach through make is still refused, by the stale-excuse
-# rung. dart has no excuses, so the population is empty.
+# THE EXCUSED CELL, which an earlier version of this note called an open gap.
+# It is not one, and the correction is worth the words because the reasoning is
+# the same reasoning that was wrong about the complement.
+#
+# An excused member is excluded from BOTH populations, because an excuse says CI
+# does not reach the gate: there is no step to pin and no make invocation to
+# record, so the member has no MODE, not an unpinned one. What has to be pinned
+# is MEMBERSHIP of the excused set, and that is explicit in scripts/ci-reach.conf
+# — each entry carrying a required reason, checked in three directions (an
+# excuse CI turns out to reach, an excuse for a target outside the closure, an
+# excuse with no reason). So the partition over gate-carrying members is
+# three-way and every cell is an explicit set:
+#
+#   {gate-carrying} = {anchor-reached} + {make-invoked} + {excused}
+#
+# Exercised end to end, which dart had never done — it has zero excuses. Excuse
+# `formal-check` and delete its CI step: legitimate, green, `excused formal-check`
+# in the listing, the gate-step pin down to 9 and the coverage count to 10. Keep
+# its EXPECTED_GATE_STEPS entry as well: exit 1. List it in
+# EXPECTED_MAKE_INVOKED_TARGETS instead: exit 1. Excuse it while CI still runs
+# it: exit 1, stale excuse. The exclusivity is three-way, not two-way.
 #
 # A TRAILING WILDCARD is the other flat-search defect zig found: an anchor ending
 # in an ANY token makes its step a superset of anything matching its prefix plus
@@ -1465,6 +1481,8 @@ excuse_reason() {
 }
 
 anchor_eligible=""
+gatecarrying_targets=""
+excused_seen=""
 makeinv_targets=""
 makeinv_count=0
 unreached=""
@@ -1536,6 +1554,9 @@ while IFS= read -r target; do
 		continue
 	fi
 
+	# Past the UNREADABLE and `no gate` verdicts, so this member carries a gate
+	# and the mode partition below has to account for it.
+	gatecarrying_targets="$gatecarrying_targets$target"$'\n'
 	hit=1
 	missing_anchors=""
 	pinned_step=""
@@ -1583,6 +1604,7 @@ while IFS= read -r target; do
 	fi
 
 	if is_excused "$target"; then
+		excused_seen="$excused_seen$target"$'\n'
 		if [ "$hit" -eq 1 ]; then
 			stale="$stale$target"$'\n'
 			stale_count=$((stale_count + 1))
@@ -1829,10 +1851,99 @@ if [ -n "$(awk 'NF' <<<"$makeinv_orphans")" ]; then
 	gatestep_status=1
 fi
 
+# --- the partition itself: EXCLUSIVE and TOTAL (#reversereachdirection)
+#
+# The two set equalities above each compare a pinned list against an OBSERVED
+# population, and the two populations are disjoint and exhaustive because the
+# audit loop classifies every gate-carrying member through one `if make_invokes
+# ... else ...`. So exclusivity and total coverage held TRANSITIVELY, and the
+# header claimed there was no complement left in the file. That claim was
+# nearly true, and nearly is the same word cpp's finding earned.
+#
+# Measured: add a branch to that loop which leaves a member REACHED and
+# accounted for but records it in NEITHER population, and drop its
+# EXPECTED_GATE_STEPS entry. Both set equalities still hold — each is set-equal
+# to a population the member is no longer in — the accounting rung still
+# balances, and the guard exits 0 with `reached test` in the listing and the
+# member's CI-side spelling scoped to no step at all. The only trace was
+# `gate-step pin OK — 9 target(s)` instead of 10. That is cpp's cancellation one
+# level up: the evidence that would have made the change visible is what the
+# change removes.
+#
+# So the partition is asserted DIRECTLY rather than inherited from the shape of
+# a conditional. Two properties, both on the OBSERVED sets, because those are
+# what the pins are compared against:
+#
+#   EXCLUSIVE — no member in both modes. A member CI both spells and invokes
+#   through make is not a contradiction in CI, but it is one here: it would
+#   satisfy either pin, so one array could absorb what the other drops.
+#   TOTAL — every gate-carrying member that is not excused is in one of them.
+#   This is the property the residual above broke, and it is also the gap the
+#   header already admitted for excused members, now closed for everything else.
+#
+# lazily-py reached the same place from the other side, by pinning the gate-step
+# DOMAIN set-equal to {gate-carrying} minus {excused} minus {make-invoked}. Same
+# partition, stated as one equation instead of two properties; this spelling
+# keeps the two arrays' own equalities readable as separate verdicts.
+partition_status=0
+gatecarrying_sorted="$(printf '%s\n' "$gatecarrying_targets" | awk 'NF' | LC_ALL=C sort -u)"
+excused_seen_sorted="$(printf '%s\n' "$excused_seen" | awk 'NF' | LC_ALL=C sort -u)"
+mode_owed="$(LC_ALL=C comm -23 <(printf '%s\n' "$gatecarrying_sorted") <(printf '%s\n' "$excused_seen_sorted"))"
+mode_seen="$(LC_ALL=C sort -u <(printf '%s\n' "$anchor_eligible" | awk 'NF') <(printf '%s\n' "$makeinv_targets" | awk 'NF'))"
+mode_both="$(LC_ALL=C comm -12 <(printf '%s\n' "$anchor_eligible" | awk 'NF' | LC_ALL=C sort -u) <(printf '%s\n' "$makeinv_targets" | awk 'NF' | LC_ALL=C sort -u))"
+mode_unclassified="$(LC_ALL=C comm -23 <(printf '%s\n' "$mode_owed" | awk 'NF') <(printf '%s\n' "$mode_seen" | awk 'NF'))"
+mode_extra="$(LC_ALL=C comm -13 <(printf '%s\n' "$mode_owed" | awk 'NF') <(printf '%s\n' "$mode_seen" | awk 'NF'))"
+if [ -n "$(awk 'NF' <<<"$mode_both")" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' was classified as BOTH anchor-reached and make-invoked, so either" >&2
+		echo "                pin would accept it and one array could absorb what the other drops." >&2
+	done <<<"$mode_both"
+	partition_status=1
+fi
+if [ -n "$(awk 'NF' <<<"$mode_unclassified")" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' carries a gate, is not excused, and was classified into NEITHER" >&2
+		echo "                reach mode — so neither EXPECTED_GATE_STEPS nor" >&2
+		echo "                EXPECTED_MAKE_INVOKED_TARGETS is required to mention it, and its gate is" >&2
+		echo "                audited by nothing. This is a bug in $0, not in the Makefile or the" >&2
+		echo "                workflow: every gate-carrying member must leave the audit loop through" >&2
+		echo "                exactly one of the two mode branches." >&2
+	done <<<"$mode_unclassified"
+	partition_status=1
+fi
+if [ -n "$(awk 'NF' <<<"$mode_extra")" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' was classified into a reach mode but is not a gate-carrying," >&2
+		echo "                non-excused member of the closure — a bug in $0." >&2
+	done <<<"$mode_extra"
+	partition_status=1
+fi
+pinned_both="$(LC_ALL=C comm -12 <(printf '%s\n' "$gatestep_sorted" | awk 'NF') <(printf '%s\n' "$makeinv_pinned_sorted" | awk 'NF'))"
+if [ -n "$(awk 'NF' <<<"$pinned_both")" ]; then
+	echo >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "check-ci-reach: '$t' is listed in BOTH EXPECTED_GATE_STEPS and" >&2
+		echo "                EXPECTED_MAKE_INVOKED_TARGETS. The two are exclusive: a member either has" >&2
+		echo "                a CI-side spelling to scope or CI runs the target. Remove one." >&2
+	done <<<"$pinned_both"
+	partition_status=1
+fi
+if [ "$partition_status" -ne 0 ]; then
+	gatestep_status=1
+fi
+
 if [ "$gatestep_status" -ne 0 ]; then
 	status=1
 elif [ "$status" -eq 0 ]; then
-	echo "check-ci-reach: gate-step pin OK — $gatestep_count target(s) set-equal to EXPECTED_GATE_STEPS, every anchor matched INSIDE its pinned step; $makeinv_pin_count set-equal to EXPECTED_MAKE_INVOKED_TARGETS, reached via \`make <target>\` and carrying no step pin"
+	mode_owed_count="$(awk 'NF' <<<"$mode_owed" | wc -l)"
+	echo "check-ci-reach: gate-step pin OK — $gatestep_count target(s) set-equal to EXPECTED_GATE_STEPS, every anchor matched INSIDE its pinned step; $makeinv_pin_count set-equal to EXPECTED_MAKE_INVOKED_TARGETS, reached via \`make <target>\` and carrying no step pin; the two are EXCLUSIVE and cover all $mode_owed_count gate-carrying non-excused member(s)"
 fi
 
 accounted=$((reached + excused_ok + stale_count + unreached_count + unreadable_count + nogate_count))
