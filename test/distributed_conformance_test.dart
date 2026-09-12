@@ -270,7 +270,9 @@ void _playSignalingSession(Map<String, dynamic> fixture) {
   var rostersSeen = 0;
   var forwardsSeen = 0;
 
-  for (final step in (fixture['steps'] as List).cast<Map<String, dynamic>>()) {
+  final steps = (fixture['steps'] as List).cast<Map<String, dynamic>>();
+  for (var stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+    final step = steps[stepIndex];
     final input =
         (step['input'] as Map<String, dynamic>).cast<String, dynamic>();
     final connId = input['conn'] as String;
@@ -287,15 +289,35 @@ void _playSignalingSession(Map<String, dynamic> fixture) {
         reason: 'frame count for step $type');
 
     for (var i = 0; i < expected.length; i++) {
-      final exp = expected[i];
-      final targetConn = exp['to'] as String;
-      final expFrame =
-          (exp['frame'] as Map<String, dynamic>).cast<String, dynamic>();
+      // Each ELEMENT of the array-valued `expect` is its own assertion block
+      // (`#lzdartarrayblocks`). Binding it here is what puts
+      // `steps[$stepIndex].expect[$i]` in the block ledger, so rung 0 covers
+      // all 12 of this fixture's expected frames INDIVIDUALLY: a runner that
+      // stopped asserting one of them now fails naming that element, where
+      // before the whole array contributed no site and only a falsified VALUE
+      // was ever caught.
+      final exp =
+          assertionsOf(expected[i], 'steps[$stepIndex].expect[$i] ($type)');
 
       expect(i < frames.length, isTrue, reason: 'frame $i exists');
-      expect(frames[i].connId, targetConn, reason: 'frame[$i] target');
+      assertKey(exp, 'to', frames[i].connId, 'frame[$i] target');
 
       final actualWire = frames[i].message.toWire();
+      // KEY SET, both directions, before any value comparison
+      // (`#lzsubblockkeyset`). The per-key loop below visits only the keys the
+      // FIXTURE names, so splitting the frame into per-key equalities is
+      // strictly weaker than comparing it whole unless the key set is asserted
+      // beside it: a field the room really emitted that the fixture omits is
+      // compared by nothing at all. This is the assertion that makes the
+      // element's block worth binding rather than merely counted.
+      final expFrame = assertKeySet(
+        exp,
+        'frame',
+        actualWire.keys.map((k) => '$k'),
+        reason: 'frame[$i]: the wire keys the room produced must equal the '
+            'keys the fixture declares, in both directions — a produced key '
+            'the fixture omits is invisible to the per-key loop below',
+      );
       for (final entry in expFrame.entries) {
         expect(actualWire[entry.key], entry.value,
             reason: 'frame[$i].${entry.key}');

@@ -348,17 +348,43 @@ def walk(node, path, depth, limit, keys, out):
     read as a corpus problem.
 
     The rule is this binding's own, read out of the tracker by the caller: the
-    `assertionBlockKeys` names, OBJECT values only (an array element is never a
-    block here — `isAssertionBlockPath` in the tracker says the same), at any
-    depth up to `attributionDepthLimit`.
+    `assertionBlockKeys` names, at any depth up to `attributionDepthLimit`, and
+    a site for
+
+      * the OBJECT value of a tracked key, and
+      * each plain-OBJECT ELEMENT of an ARRAY value of a tracked key
+        (`#lzdartarrayblocks`).
+
+    The second is the widening, and `isAssertionBlockPath` in the tracker now
+    says exactly the same — a path with ONE trailing index stripped down to a
+    bare tracked key name. Before it, an array-valued tracked key contributed no
+    site at all: the array is not an object, and its elements are list items
+    rather than tracked keys, so they were descended into and dropped.
+    `signaling/anti_spoof_session.json` holds its expected outbound frames that
+    way, and all 12 of its elements were invisible to this guard while the
+    runner read and asserted every one.
+
+    The site is the ELEMENT, `steps[3].expect[1]`, never the array. A label per
+    array would collapse a step's frames into one site, and two frames that are
+    individually falsifiable would stop being individually nameable — the
+    set-identity failure the site dimension exists to catch.
+
+    A NESTED array element is not directly under a tracked key and gets no site
+    of its own; the element walk below is only entered from the tracked-key
+    branch. The canonical corpus carries no such shape.
     """
     if depth > limit:
         return
     if isinstance(node, dict):
         for key, value in node.items():
             child = key if not path else "{}.{}".format(path, key)
-            if isinstance(value, dict) and key in keys:
-                out.append((child, value))
+            if key in keys:
+                if isinstance(value, dict):
+                    out.append((child, value))
+                elif isinstance(value, list):
+                    for index, element in enumerate(value):
+                        if isinstance(element, dict):
+                            out.append(("{}[{}]".format(child, index), element))
             walk(value, child, depth + 1, limit, keys, out)
     elif isinstance(node, list):
         for index, value in enumerate(node):

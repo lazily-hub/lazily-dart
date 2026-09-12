@@ -301,16 +301,46 @@ void recordBoundBlock(Object? raw) {
   blockLedgerSink?.call('$fixture\t$path');
 }
 
-/// Whether [path] names a value at an [assertionBlockKeys] key.
+/// Whether [path] names a value at an [assertionBlockKeys] key, or one plain
+/// OBJECT ELEMENT of an array held at such a key (`#lzdartarrayblocks`).
 ///
-/// Paths are `assertions`, `frames[2].assertions`, `scenarios[0].expect`. An
-/// ARRAY element (`scenarios[0]`) is never a block, whatever it is nested
-/// under.
+/// Paths are `assertions`, `frames[2].assertions`, `scenarios[0].expect`, and
+/// `steps[3].expect[1]`.
+///
+/// That last shape is the widening. A tracked key may hold an ARRAY of
+/// assertion objects — `signaling/anti_spoof_session.json` holds its expected
+/// outbound frames that way, 12 elements across 8 steps — and the old rule
+/// refused any path ending in `]` outright, so all 12 were invisible to rung 0
+/// while being read and asserted by the runner. "A runner binds elements, not
+/// the array" was always this rule's own parenthetical; the SITE is the
+/// element, which is also what makes each one individually falsifiable rather
+/// than collapsing a step's frames into one label.
+///
+/// Exactly ONE index level is stripped, and what remains must be a bare key
+/// name. So `steps[3].expect[1]` is a block and `scenarios[0]` is still not
+/// one — `scenarios` is not a tracked key, whatever is nested under it. A
+/// doubly-nested element (`expect[0][1]`) is not directly under a tracked key
+/// and stays out; lazily-spec's corpus carries no such shape.
 bool isAssertionBlockPath(String path) {
-  if (path.endsWith(']')) return false;
-  final dot = path.lastIndexOf('.');
+  final bare = _withoutTrailingIndex(path);
+  if (bare == null) return false;
+  final dot = bare.lastIndexOf('.');
   return assertionBlockKeys
-      .contains(dot == -1 ? path : path.substring(dot + 1));
+      .contains(dot == -1 ? bare : bare.substring(dot + 1));
+}
+
+/// [path] with a single trailing `[i]` removed, or [path] unchanged when it has
+/// none; null when what remains still ends in an index.
+///
+/// Returning null rather than stripping again is what keeps the rule to one
+/// level: `expect[0][1]` reduces to `expect[0]`, which is not a bare key name,
+/// so it is not a block.
+String? _withoutTrailingIndex(String path) {
+  if (!path.endsWith(']')) return path;
+  final open = path.lastIndexOf('[');
+  if (open <= 0) return null;
+  final bare = path.substring(0, open);
+  return bare.endsWith(']') ? null : bare;
 }
 
 /// Record [currentConformanceFixture] as the owner of every object in
