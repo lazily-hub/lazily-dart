@@ -339,7 +339,7 @@ def current_run_id() -> str:
     return raw
 
 
-def read_stamped_evidence(path: str, label: str, run_id: str) -> list:
+def read_stamped_evidence(path: str, label: str, run_id: str, hint: str) -> list:
     """Lines of ``path`` with the run-id stamp verified and removed.
 
     Fails by NAME — the file, the id found, the id wanted. A MISSING stamp fails
@@ -350,9 +350,38 @@ def read_stamped_evidence(path: str, label: str, run_id: str) -> list:
     every remaining line as evidence — a corpus-relative fixture id here, a
     ``fixture<TAB>path`` site in the ledger — and a stray comment line would be
     read as a corrupt record.
+
+    RECORDS, not bytes (``#lzstampsatisfiesnonempty``). The two callers in `main`
+    used to ask ``os.path.getsize(...) == 0``, and the stamp this function
+    verifies makes any written file non-empty — so a byte test can no longer tell
+    a suite that replayed the corpus from a recorder that attached, stamped, and
+    attributed nothing. The emptiness half of those gates therefore lives HERE,
+    below the stamp prefix it has to skip, and their existence half stays in
+    `main` where it was.
+
+    This binding's recorder cannot currently produce a stamp-only file — the
+    stamp and the first record are written in one call under one lock, keyed off
+    a zero-length file, and ``make test`` truncates to GENUINELY empty — but the
+    gate judges bytes written by a separate process, so it refuses what is on
+    disk rather than what today's recorder happens to write. Unchecked, a
+    stamp-only ledger died 712 blocks later as "no runner ever bound", once per
+    block: detected, and reported as a binding collapse rather than as absent
+    evidence.
     """
     with open(path, encoding="utf-8") as handle:
         lines = handle.read().splitlines()
+    if not any(
+        line.strip() and not line.startswith(RUN_ID_PREFIX) for line in lines
+    ):
+        die(
+            "FAIL: {} at {} carries ZERO records "
+            "(#lzstampsatisfiesnonempty).".format(label, path),
+            "      The file is empty, or it holds nothing but the run-id stamp —",
+            "      which is itself non-empty, so a byte test would have accepted",
+            "      it. Either way the recorder attributed nothing in this run.",
+            "      {}".format(hint),
+            "      Zero records is missing evidence, not evidence of absence.",
+        )
     first = lines[0] if lines else ""
     if not first.startswith(RUN_ID_PREFIX):
         die(
@@ -694,19 +723,24 @@ def main() -> None:
         )
         return
 
-    if not os.path.isfile(manifest) or os.path.getsize(manifest) == 0:
+    # EXISTENCE only. The emptiness half of both gates moved into
+    # `read_stamped_evidence`, which counts records BELOW the stamp
+    # (#lzstampsatisfiesnonempty); `getsize(...) == 0` was a byte test, and the
+    # stamp makes every written evidence file non-empty. These two stay here, at
+    # the order they always reported in, because an absent file and a
+    # record-free one want different answers.
+    if not os.path.isfile(manifest):
         die(
             "FAIL: no conformance manifest at {}.".format(manifest),
             "      Run the suite with LAZILY_CONFORMANCE_MANIFEST set (`make test`).",
             "      An absent manifest is missing evidence, not evidence of absence.",
         )
-    if not os.path.isfile(ledger_path) or os.path.getsize(ledger_path) == 0:
+    if not os.path.isfile(ledger_path):
         die(
             "FAIL: no bound-block ledger at {}.".format(ledger_path),
             "      Run the suite with LAZILY_CONFORMANCE_BLOCKS set (`make test`) so",
             "      the recorder in test/conformance_assertions.dart attaches. An",
-            "      empty ledger would report EVERY block unbound, which is missing",
-            "      evidence, not evidence of absence.",
+            "      absent ledger is missing evidence, not evidence of absence.",
         )
 
     # The stamp rung (#lzstalemanifest), at the point each file is first read
@@ -718,7 +752,10 @@ def main() -> None:
         {
             line.strip()
             for line in read_stamped_evidence(
-                manifest, "conformance manifest", run_id
+                manifest,
+                "conformance manifest",
+                run_id,
+                "Run the suite with LAZILY_CONFORMANCE_MANIFEST set (`make test`).",
             )
             if line.strip()
         }
@@ -726,7 +763,12 @@ def main() -> None:
     bound = {
         line
         for line in read_stamped_evidence(
-            ledger_path, "bound-block ledger", run_id
+            ledger_path,
+            "bound-block ledger",
+            run_id,
+            "Run the suite with LAZILY_CONFORMANCE_BLOCKS set (`make test`) so the "
+            "recorder in test/conformance_assertions.dart attaches. An empty ledger "
+            "would report EVERY block unbound.",
         )
         if line.strip()
     }

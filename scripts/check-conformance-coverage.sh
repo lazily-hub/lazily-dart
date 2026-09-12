@@ -232,14 +232,73 @@ require_run_id() {
   fi
 }
 
-if [ ! -s "$MANIFEST" ]; then
-  echo "FAIL: no conformance manifest at $MANIFEST." >&2
-  echo "      Run the suite with LAZILY_CONFORMANCE_MANIFEST set so the recorder" >&2
-  echo "      attaches (\`make test\`, or \`make check\` for the whole gate). An absent" >&2
-  echo "      manifest is missing evidence, not evidence of absence." >&2
-  exit 1
-fi
-require_run_id "$MANIFEST" "conformance manifest"
+# ---------------------------------------------------------------------------
+# Rung 1b: RECORDS, not bytes (#lzstampsatisfiesnonempty)
+# ---------------------------------------------------------------------------
+#
+# The stamp above is the hazard this rung repairs. Every "is there evidence?"
+# gate in this file used to be a BYTE test — `test -s` on the manifest, `test -f`
+# on the scenario ledger — and a stamped file is non-empty by construction. So
+# `-s` stopped being able to tell a suite that replayed the corpus from a
+# recorder that attached, stamped, and attributed nothing.
+#
+# In THIS binding the recorder cannot currently produce that file, and that is
+# worth stating precisely rather than assuming: `_appendEvidence` in
+# test/conformance_manifest.dart writes the stamp and the first record in ONE
+# call under ONE lock, keyed off a zero-length file, so a stamp implies at least
+# one record — and `make test`'s `: >` truncation leaves the file GENUINELY
+# empty, with no stamp at all, which the old byte test still caught. Measured:
+# seven tests that open no fixture, with all three path variables set, leave all
+# three files at 0 bytes. Stamping from the recorder rather than at truncation is
+# what buys that.
+#
+# It is still the wrong test to leave here, for two reasons. Every binding that
+# stamps at TRUNCATION produces a stamp-only file as its normal empty state, so
+# the shape is one refactor away from this repo. And these gates judge bytes
+# written by a SEPARATE process — the 69 `dart test` children of an earlier make
+# step — so what they have to refuse is what is ON DISK, not what today's
+# recorder happens to write. Measured on a stamp-only manifest against the real
+# corpus: this rung passed it, and the run died 144 fixtures later as "was NOT
+# opened", once per fixture, never naming the file — the derived equality from
+# #lzdartcoveragefloors was never even reached, because `missing` exits first.
+# Detected, and reported as a coverage collapse rather than as absent evidence.
+#
+# `awk`, not `grep -c`: grep exits 1 when it matches nothing, and under `set
+# -euo pipefail` that kills the command substitution before the count can be
+# read back as zero — the same class of trap as the `grep -q` pipe below.
+evidence_records() {
+  awk -v prefix="$RUN_ID_PREFIX" '
+    substr($0, 1, length(prefix)) == prefix { next }
+    /[^[:space:]]/ { records++ }
+    END { print records + 0 }' "$1"
+}
+
+# Existence, then RECORDS, then the stamp. That order is deliberate: a genuinely
+# empty file carries no stamp either, so checking the stamp first would answer a
+# contributor who forgot `LAZILY_CONFORMANCE_MANIFEST` with "carries no run-id
+# stamp" — true, and the wrong rung to send them to.
+require_evidence() {
+  local file="$1" label="$2" hint="$3"
+  if [ ! -f "$file" ]; then
+    echo "FAIL: no $label at $file." >&2
+    echo "      $hint" >&2
+    echo "      An absent $label is missing evidence, not evidence of absence." >&2
+    exit 1
+  fi
+  if [ "$(evidence_records "$file")" -eq 0 ]; then
+    echo "FAIL: $label at $file carries ZERO records (#lzstampsatisfiesnonempty)." >&2
+    echo "      The file is empty, or it holds nothing but the run-id stamp — which" >&2
+    echo "      is itself non-empty, so a byte test would have accepted it. Either" >&2
+    echo "      way the recorder attributed no read in this run." >&2
+    echo "      $hint" >&2
+    echo "      Zero records is missing evidence, not evidence of absence." >&2
+    exit 1
+  fi
+  require_run_id "$file" "$label"
+}
+
+require_evidence "$MANIFEST" "conformance manifest" \
+  "Run the suite with LAZILY_CONFORMANCE_MANIFEST set so the recorder attaches (\`make test\`, or \`make check\` for the whole gate)."
 # `sed`, not `grep -v`: with `set -o pipefail` a grep that matches every line
 # exits 1 and kills the substitution. The stamp is stripped rather than skipped
 # over because the corruption check below resolves EVERY recorded id against the
@@ -337,13 +396,12 @@ if ! command -v jq >/dev/null 2>&1; then
   exit 1
 fi
 
-if [ ! -f "$SCENARIOS" ]; then
-  echo "FAIL: no scenario ledger at $SCENARIOS." >&2
-  echo "      Run the suite with LAZILY_CONFORMANCE_SCENARIOS set (\`make test\`)." >&2
-  echo "      An absent ledger is missing evidence, not evidence of absence." >&2
-  exit 1
-fi
-require_run_id "$SCENARIOS" "scenario replay ledger"
+# `-f` alone was the weaker half of the pair even before the stamp existed: an
+# empty ledger passed it and died 153 scenarios later as "was NOT replayed". Now
+# a stamp-only one would too, so this rung counts records like the manifest's
+# (#lzstampsatisfiesnonempty).
+require_evidence "$SCENARIOS" "scenario replay ledger" \
+  "Run the suite with LAZILY_CONFORMANCE_SCENARIOS set (\`make test\`)."
 REPLAYED="$(sed "/^$RUN_ID_PREFIX/d" "$SCENARIOS" | sort -u)"
 
 # Every scenario id the corpus carries, for the fixtures the suite OPENED, in
