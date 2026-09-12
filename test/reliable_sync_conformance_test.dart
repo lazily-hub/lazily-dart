@@ -178,7 +178,18 @@ class _LivenessReplica {
     for (final entry in open.entries) {
       if (!entry.value.present()) continue;
       final parts = entry.key.split('/');
-      if (alive['alive/${parts[1]}']?.value == true) docs.add(parts[0]);
+      // Spelled as an explicit PRESENCE test rather than `?.value == true`
+      // (`#lzsiblingrunnermasking`). The semantics are unchanged and were
+      // always correct here — `alive` is built from REPLAYED OPS, not from
+      // fixture keys, so "no liveness register for this editor" is a real CRDT
+      // state meaning no evidence of life, which is exactly `not live`. What
+      // changes is that the coercing spelling is gone: `== true` on a
+      // `dynamic` is the shape `#lzflagcoercion` found inverted assertions
+      // under, and this was the last instance in the suite that a reviewer had
+      // to recognise as benign. Being the only survivor of a banned spelling
+      // is how the next copy of it gets waved through.
+      final liveness = alive['alive/${parts[1]}'];
+      if (liveness != null && liveness.value) docs.add(parts[0]);
     }
     return docs.toList()..sort();
   }

@@ -1007,12 +1007,24 @@ Map<String, Object?> _modelBarrier(
     return _barrierObservation(state);
   }
   if (op == 'advance') {
+    // `as bool`, the same spelling `_barrierStep` uses on the same key of the
+    // same step (`#lzsiblingrunnermasking`). This model's `== true` was a
+    // LEGITIMATE mask and was left alone by `#lzflagcoercion`: the library
+    // driver casts `step['predicate'] as bool` for exactly the three ops this
+    // model coerces it in (`advance`, `register_recheck`, and the `observe`
+    // tail below), in the same run over the same fixture, so a non-boolean
+    // throws there first and the model's coercion can never be the sole
+    // survivor. It is still the banned spelling, and a mask is not a guard —
+    // the driver and this model are separate `test()` blocks, so deleting or
+    // skipping one leaves the other coercing. Matching the driver's cast costs
+    // nothing, refuses identically, and means the flag-hygiene rung in
+    // `scripts/check-conformance-coverage.sh` needs no allowlist entry.
     final revision =
         _maxBig(state['revision'] as BigInt, _uint(step['revision']));
     state['revision'] = revision;
     state['generation'] = (state['generation'] as BigInt) + BigInt.one;
     if (revision >= (state['required'] as BigInt) &&
-        step['predicate'] == true) {
+        step['predicate'] as bool) {
       state['status'] = 'satisfied';
     }
     return _barrierObservation(state);
@@ -1037,7 +1049,7 @@ Map<String, Object?> _modelBarrier(
       );
       state['revision'] = revision;
       if (revision >= (state['required'] as BigInt) &&
-          step['predicate'] == true) {
+          step['predicate'] as bool) {
         state['status'] = 'satisfied';
       }
     }
@@ -1059,7 +1071,7 @@ Map<String, Object?> _modelBarrier(
     return result;
   }
   if ((state['revision'] as BigInt) >= (state['required'] as BigInt) &&
-      step['predicate'] == true) {
+      step['predicate'] as bool) {
     state['status'] = 'satisfied';
     final result = _barrierObservation(state);
     result['cancellation_calls'] = BigInt.zero;

@@ -225,9 +225,15 @@ void _applyTextCrdtDeltaStep(
     final ops = replicas[from]!.deltaSince({});
     replicas[into] = TextCrdt(peer);
     final changed = replicas[into]!.applyDelta(ops);
-    final expectChanged = step['expect_changed'] as bool?;
-    if (expectChanged != null) {
-      expect(changed, expectChanged, reason: 'snapshot apply_delta changed');
+    // `containsKey` + `flagOf`, not `as bool?` + a null test
+    // (`#lzsiblingrunnermasking`). The cast refused a String, so this was
+    // never the inverted-assertion shape — but an explicit `null` silently
+    // SKIPPED the assertion, and `expect_changed: null` reads as a claim, not
+    // as an omission. Presence now decides whether the assertion runs, and the
+    // value is required to be a boolean by name.
+    if (step.containsKey('expect_changed')) {
+      expect(changed, flagOf(step['expect_changed'], 'snapshot expect_changed'),
+          reason: 'snapshot apply_delta changed');
     }
     return;
   }
@@ -248,9 +254,11 @@ void _applyTextCrdtDeltaStep(
     final from = delta['from'] as String;
     final ops = replicas[from]!.deltaSince(replicas[into]!.versionVector());
     final changed = replicas[into]!.applyDelta(ops);
-    final expectChanged = step['expect_changed'] as bool?;
-    if (expectChanged != null) {
-      expect(changed, expectChanged, reason: 'delta apply changed');
+    // See the `snapshot` arm above: presence decides, and the value is
+    // required to be a boolean by name (`#lzsiblingrunnermasking`).
+    if (step.containsKey('expect_changed')) {
+      expect(changed, flagOf(step['expect_changed'], 'delta expect_changed'),
+          reason: 'delta apply changed');
     }
     return;
   }

@@ -31,11 +31,21 @@ Map<String, dynamic> _loadFixture(String name) => attributeFixture(
 /// Build a QueueCell from the fixture's `initial` block.
 QueueCell<String> _buildInitial(
   Context ctx,
+  String name,
   Map<String, dynamic> initial,
 ) {
   final elements = (initial['elements'] as List?)?.cast<String>() ?? const [];
   final capacity = initial['capacity'] as int?;
-  final closed = (initial['closed'] as bool?) ?? false;
+  // `flagAt`, not `(initial['closed'] as bool?) ?? false`
+  // (`#lzsiblingrunnermasking`). The cast form was SAFE as spelled — `as bool?`
+  // throws on a String, so only ABSENCE defaulted — but it is the same shape
+  // the coercion audit had to reason about one site at a time, and leaving one
+  // legitimate instance standing is what lets the next copy reach for it.
+  // `flagAt` is that exact contract by name: absent or null means false, a
+  // present non-boolean is a named refusal. The spelling is now unused across
+  // the whole suite, which is what `scripts/check-conformance-coverage.sh`'s
+  // flag-hygiene rung needs in order to ban it with no allowlist.
+  final closed = flagAt(initial, 'closed', '$name initial');
   return QueueCell<String>(
     ctx,
     VecDequeStorage<String>.from(
@@ -88,7 +98,15 @@ void _assertInvalidation(
     'is_full': readers.isFull,
     'closed': readers.isClosed,
   };
-  assertKeysOfIfPresent(expected, 'invalidates', byKind.keys, (kind, want) {
+  // REQUIRED, not `assertKeysOfIfPresent` (`#lzsiblingrunnermasking`).
+  // `queue_family_conformance_test` replays all five of these fixtures and
+  // refuses a step whose `expected` carries no matrix at all; this runner made
+  // the whole matrix optional, so a step that lost `invalidates` upstream — or
+  // moved it back to step level, the misplacement the family runner names —
+  // asserted NO invalidation here and reported green. The coverage was an
+  // accident of the family runner existing, and every step of all five
+  // fixtures carries the key.
+  assertKeysOf(expected, 'invalidates', byKind.keys, (kind, want) {
     final warm = _isWarm(byKind[kind]!, ctx);
     // Inverted, so type-strict `assertKey` equality is unavailable and the flag
     // is required by type instead (`#lzflagcoercion`): `want != true` read
@@ -140,11 +158,27 @@ String _returnsLabel(QueuePopResult<String> result) {
 void _runFixture(String name) {
   final fixture = _loadFixture(name);
   final ctx = Context();
-  final q = _buildInitial(ctx, fixture['initial'] as Map<String, dynamic>);
+  final q =
+      _buildInitial(ctx, name, fixture['initial'] as Map<String, dynamic>);
 
   final steps = (fixture['steps'] as List).cast<Map<String, dynamic>>();
+  // VACUITY FLOOR + the misplacement guard, carried locally rather than
+  // borrowed from the sibling runner (`#lzsiblingrunnermasking`).
+  // `queue_family_conformance_test` replays all five of these fixtures and
+  // already refuses a zero-step fixture and a step that puts `invalidates` at
+  // step level instead of under `expected`. This runner refused neither, so
+  // both defects were caught only because that runner exists — and its
+  // `invalidates` checks are the ones this runner duplicates, so a split or a
+  // rename takes the floor away with it.
+  expect(steps, isNotEmpty,
+      reason: '$name has no steps - loading a fixture is not replaying it, '
+          'and a zero-step replay reports green having compared nothing');
   for (var i = 0; i < steps.length; i++) {
     final step = steps[i];
+    expect(step.containsKey('invalidates'), isFalse,
+        reason: '$name step $i puts `invalidates` at step level; the canonical '
+            'location is `expected.invalidates`, and a matrix this runner '
+            'never descends into is a matrix nothing compares');
     final op = step['op'] as Map<String, dynamic>;
     final expected = assertionsOf(step['expected']);
 
@@ -152,22 +186,31 @@ void _runFixture(String name) {
     // measured in isolation.
     final readers = _Readers(ctx, q);
 
-    // Apply the op.
+    // Apply the op, and produce the step's RETURN LABEL whatever the op was.
+    //
+    // `returns` used to be compared inside the pop/try_pop arm only
+    // (`#lzsiblingrunnermasking`), so the two `try_push` steps that carry it —
+    // `queuecell_bounded_backpressure` step 2 (`Full`) and
+    // `queuecell_closure_lifecycle` step 6 (`Closed`) — were read by NOTHING
+    // in this runner. They are asserted in `queue_family_conformance_test`,
+    // which computes the label for every op type, so the corpus' backpressure
+    // and post-close refusal labels were covered here purely by that runner's
+    // existence. Same label expression as the family runner, hoisted out of
+    // the switch so an op type that grows a `returns` cannot go unread.
+    final Object? returns;
     switch (op['type'] as String) {
       case 'push':
         final err = q.tryPush(op['value'] as String);
         expect(err, isNull, reason: '$name step $i: push should succeed');
+        returns = err?.label ?? 'Ok';
       case 'try_push':
-        q.tryPush(op['value'] as String);
+        returns = q.tryPush(op['value'] as String)?.label ?? 'Ok';
       case 'pop':
       case 'try_pop':
-        final result = q.tryPop();
-        if (step.containsKey('returns')) {
-          expect(_returnsLabel(result), equals(step['returns']),
-              reason: '$name step $i: returns mismatch');
-        }
+        returns = _returnsLabel(q.tryPop());
       case 'close':
         q.close();
+        returns = null;
       case 'batch':
         // MPSC: multiple producers push inside one logical batch. The reactive
         // graph groups them inside Context.batch via _syncContent; the fixture's
@@ -180,8 +223,14 @@ void _runFixture(String name) {
             q.tryPush(innerOp['value'] as String);
           }
         });
+        returns = null;
       default:
         throw StateError('unknown queue op type: ${op['type']}');
+    }
+
+    if (step.containsKey('returns')) {
+      expect(returns, equals(step['returns']),
+          reason: '$name step $i `${op['type']}`: returns mismatch');
     }
 
     // Assert observable state.

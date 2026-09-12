@@ -271,7 +271,18 @@ void _replay(_Flavor flavor, String fixtureName) {
           reason: '${where(i)}: order diverged');
     });
 
-    assertKeyIfPresent(expected, 'membership', (v) {
+    // REQUIRED, not `assertKeyIfPresent` (`#lzsiblingrunnermasking`).
+    // `collections_conformance_test` reads the same key off the same two
+    // fixtures with a REQUIRED `assertKeyWith`, so a step that lost
+    // `membership` upstream reddened over there and slid past here. That is a
+    // mask, not a division of labour: nothing about the three flavors makes
+    // set-identity optional, and every step of both fixtures carries the key.
+    assertKeyWith<void>(expected, 'membership', (v) {
+      expect(v, isA<List<dynamic>>(),
+          reason: '${where(i)}: `membership` must be an array of keys. A step '
+              'that OMITS it leaves set identity unasserted here, and this '
+              'runner used to accept that because the sibling runner asserted '
+              'it for us');
       expect(gotOrder.toSet(), (v as List).cast<String>().toSet(),
           reason: '${where(i)}: membership set diverged');
     });
@@ -337,6 +348,16 @@ void _replay(_Flavor flavor, String fixtureName) {
         (key, wantStable) {
       final after = flavor.entryIdentity(key);
       final before = idsBefore[key];
+      // PRESENCE first, in both directions (`#lzsiblingrunnermasking`).
+      // `collections_conformance_test` asserts the handle is still there
+      // before comparing identity; this runner only compared identity, and
+      // `identical(null, before)` is false — so an entry whose node VANISHED
+      // satisfied the `handle_stable: false` branch as though it had been
+      // re-minted. A key bounded by `gotOrder` is present in the collection,
+      // so its node must be present too.
+      expect(after, isNotNull,
+          reason: '${where(i)}: handle for $key is gone, but the key is still '
+              'in the collection - an absent node is not a re-mint');
       // A flag that selects a BRANCH is the coercion's worst shape
       // (`#lzflagcoercion`): a non-boolean took the `else`, so the runner went
       // on to assert that the handle CHANGED while the fixture read as

@@ -90,9 +90,29 @@ void _runStepsFixture(String name) {
   final fixture = _loadFixture(name);
   final ctx = Context();
   final map = SourceMap<String, int>(ctx);
-  _seedInitial(ctx, map, fixture['initial'] as Map<String, dynamic>);
+  final initial = fixture['initial'] as Map<String, dynamic>;
+  _seedInitial(ctx, map, initial);
 
+  // VACUITY FLOORS, carried locally rather than borrowed from the sibling
+  // runner (`#lzsiblingrunnermasking`). `collections_family_conformance_test`
+  // replays these same two fixtures and already refuses an empty seed and an
+  // empty step list; this runner refused neither, so a fixture whose `steps`
+  // went to `[]` upstream replayed nothing here and reported green. That green
+  // was covered only by the accident that a second runner over the same
+  // fixture happens to be strict — delete or rename that runner and the hole
+  // is silent. Both floors now exist on BOTH sides of the pair.
+  //
+  // The per-step `invalidates` requirement the family runner spells as an
+  // explicit `isNotNull` needs no counterpart here: `subKey` below THROWS on a
+  // missing key, so with a non-empty step list every step is already forced to
+  // carry the matrix.
+  expect((initial['order'] as List), isNotEmpty,
+      reason: '$name seeds no keys - '
+          'a replay against an empty map asserts almost nothing');
   final steps = (fixture['steps'] as List).cast<Map<String, dynamic>>();
+  expect(steps, isNotEmpty,
+      reason: '$name has no steps - loading a fixture is not replaying it, '
+          'and a zero-step replay reports green having compared nothing');
   for (var i = 0; i < steps.length; i++) {
     final step = steps[i];
     final op = step['op'] as Map<String, dynamic>;

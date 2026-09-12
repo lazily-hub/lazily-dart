@@ -129,10 +129,18 @@ List<Map<String, dynamic>> _steps(Map<String, dynamic> fixture, String name) {
 
 final class _QueueHarness {
   _QueueHarness(this.flavor, Map<String, dynamic> initial) {
+    // `flagAt` for `closed`, not `(initial['closed'] as bool?) ?? false`
+    // (`#lzsiblingrunnermasking`) — the same conversion as
+    // `queue_conformance_test`, and for the same reason: the cast form refused
+    // a non-boolean but the SPELLING is the one the coercion audit had to
+    // reason about site by site, and one legitimate instance left standing is
+    // what the next copy reaches for. `elements` keeps its `?? const []`: that
+    // is an INPUT SEED, where absence legitimately means "start empty", and
+    // `as List?` already refuses anything that is present and not a list.
     QueueStorage<String> storage() => VecDequeStorage<String>.from(
           elements: (initial['elements'] as List?)?.cast<String>() ?? const [],
           capacity: initial['capacity'] as int?,
-          closed: (initial['closed'] as bool?) ?? false,
+          closed: flagAt(initial, 'closed', '${flavor.label} initial'),
         );
 
     switch (flavor) {

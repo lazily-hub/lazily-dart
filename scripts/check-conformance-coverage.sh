@@ -22,6 +22,34 @@
 # exports an ABSOLUTE path for the test run.
 set -euo pipefail
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+
+# ---------------------------------------------------------------------------
+# Rung 0: fixture-flag hygiene (#lzsiblingrunnermasking)
+# ---------------------------------------------------------------------------
+#
+# FIRST, and deliberately ABOVE the missing-corpus gate below: this rung reads
+# only this repo's own sources, so it must run in a checkout without the
+# lazily-spec sibling too. Every rung after this one reasons about fixtures the
+# run OPENED and is vacuous without the corpus; this one is not, and skipping it
+# with the rest would mean the ban only ever ran where the corpus happened to be
+# present.
+#
+# `#lzflagcoercion` fixed every coerced fixture-flag read in the suite and left
+# nothing to stop the next one. In lazily-rs and lazily-kt the ONLY thing that
+# caught the coercion was a second runner over the same fixture happening to be
+# strict — coverage by accident of which runners exist, gone the moment one is
+# deleted, split, renamed or skipped. lazily-cpp's `97790fd` answered this by
+# DELETING the weak accessor so the spelling became a compile error; Dart has no
+# accessor to delete and no custom-lint plugin here, so the local equivalent is
+# this scan plus the strict funnel (`flagOf` / `flagAt`) everything was
+# converted to.
+#
+# The scan accumulates: every banned site in every file, plus both scan-reach
+# floors, report together in one run rather than one-per-invocation.
+"$ROOT/scripts/check-flag-hygiene.py" "$ROOT"
+
 SPEC_DIR="${LAZILY_SPEC_CONFORMANCE_DIR:-../lazily-spec/conformance}"
 
 # A missing corpus is a legitimate LOCAL state and an illegitimate CI state
