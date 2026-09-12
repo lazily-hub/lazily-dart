@@ -288,22 +288,28 @@ join_continuations() {
 # was already caught by the vacuity rung at the bottom of this file, because
 # reached + excused + unreached would come out zero.
 dry_run() {
-	local out status=0
-	out="$("$MAKE_BIN" -n "$@" 2>/dev/null)" || status=$?
-	if [ "$status" -ne 0 ]; then
-		echo "check-ci-reach: '$MAKE_BIN -n $*' exited $status, so this recipe could not be read." >&2
-		echo "                An UNREADABLE recipe is not a recipe with no gate. Reporting it as" >&2
-		echo "                'carrying no gate' would drop the target out of the audit and still" >&2
-		echo "                print OK, which is the false green this check exists to prevent." >&2
-		# Re-run for the MESSAGE only, stderr kept and stdout dropped: the run
-		# above needed `2>/dev/null` so make's diagnostics never reach the anchor
-		# scanner as if they were recipe lines, and a second dry run of a target
-		# that has already failed costs nothing. The `|| true` is on the reporting
-		# pipeline alone — make's status here is the one already reported, and
-		# without it `pipefail` would exit with make's 2 instead of this rung's 1.
-		"$MAKE_BIN" -n "$@" 2>&1 >/dev/null | sed 's/^/                > /' >&2 || true
-		exit 1
-	fi
+	local out
+	# make's own status is deliberately NOT judged in here, for two reasons.
+	#
+	# It is answered EARLIER and better: the walk below takes a per-target
+	# UNREADABLE verdict before it reads any recipe, so by the time a
+	# single-target `dry_run` runs the question is already settled, and a verdict
+	# reached from inside a `$(...)` could only `exit` its own subshell anyway.
+	#
+	# And the multi-goal call below MUST NOT be judged. When `make -n <deps...>`
+	# fails, `prefix` stays 0 and the target is credited with its prerequisites'
+	# commands as well as its own — OVER-reporting, which demands more CI anchors
+	# and fails closed. Only SILENCE launders, and only the single-target call can
+	# produce it. Judging the multi-goal call would also invent a false red of its
+	# own: `make -n` with several goals sets `MAKECMDGOALS` to the whole list, so a
+	# perfectly healthy goal-conditional prerequisite can behave differently there
+	# than in any real invocation.
+	#
+	# `awk`, not `grep -v`, for the filter: a `grep -v` that matches nothing exits
+	# 1, and under `set -o pipefail` that would poison the pipeline the moment a
+	# recipe printed nothing BUT make noise — a legitimate zero. awk exits 0
+	# either way, so the line count stays a measurement (#lzgrepcpipefail).
+	out="$("$MAKE_BIN" -n "$@" 2>/dev/null)" || out=""
 	[ -n "$out" ] || return 0
 	printf '%s\n' "$out" | awk '!/^make\[/ && !/^make:/' | join_continuations
 }
@@ -324,19 +330,11 @@ own_commands() {
 		dry_run "$target"
 		return
 	fi
-	# `dry_run` refuses an unreadable recipe by exiting 1, and that status has to
-	# be read HERE. Measured: `errexit` does not fire for `prefix="$(dry_run ...
-	# | wc -l)"` when the failing member sits inside a command substitution that
-	# feeds a pipeline — the assignment carries the status (checked below) but the
-	# shell keeps going — so without this `if`, a make failure on the PREREQUISITE
-	# side alone would print its diagnostic, leave `prefix` at 0, and hand the
-	# target its prerequisites' commands as if they were its own. The target's own
-	# `dry_run` is the last command of this function, so its status propagates on
-	# its own.
+	# Unprobed on purpose — see `dry_run`. A failure here over-reports the
+	# target's anchors, which fails closed; it cannot produce the silence that
+	# launders a gate out of the audit.
 	local prefix
-	if ! prefix="$(dry_run "${deps[@]}" | wc -l)"; then
-		exit 1
-	fi
+	prefix="$(dry_run "${deps[@]}" | wc -l)"
 	dry_run "$target" | tail -n +"$((prefix + 1))"
 }
 
@@ -552,16 +550,60 @@ stale=""
 stale_count=0
 nogate=""
 nogate_count=0
+unreadable=""
+unreadable_count=0
 reached=0
 excused_ok=0
 
 while IFS= read -r target; do
 	[ -n "$target" ] || continue
 
+	# ---------------------------------------------------------------------
+	# The UNREADABLE verdict, FIRST (#lzgrepcpipefail)
+	# ---------------------------------------------------------------------
+	#
+	# Ahead of the recipe read, and ahead of the excuse consultation further
+	# down, because both of those launder a Makefile make cannot read into a
+	# pass. Every recipe reaches this guard through `make -n`, and a make that
+	# FAILS yields the same empty output as a recipe with no commands — which
+	# the `no gate` branch below then waves through at exit 0.
+	#
+	# Three attacks, all measured against this repo's real Makefile rather than
+	# reasoned about:
+	#
+	#   1. a prerequisite with no rule (`analyze: build/generated-lints.txt`,
+	#      the shape of a generated file absent on a fresh clone). Pre-fix:
+	#      `no gate analyze` / `OK — 10 target(s) reached by CI, 0 excused, 2
+	#      carrying no gate`, exit 0, down from 11 reached, with
+	#      `dart analyze --fatal-infos` sitting in the recipe untouched.
+	#   2. a goal-conditional prerequisite. `make -n check` exits 0 while
+	#      `make -n typecheck` exits 2, so a ROOT-only probe never sees the
+	#      member drop out. Pre-fix: `no gate typecheck` /
+	#      `OK — 11 target(s) reached by CI, 0 excused, 2 carrying no gate`,
+	#      exit 0.
+	#   3. attack 2 plus `excuse: typecheck ...` in the config. An excuse is a
+	#      claim about what CI RUNS, never a licence for a recipe make cannot
+	#      read. (In this binding the `no gate` branch already preceded the
+	#      excuse check, so the measured route was `no gate typecheck` rather
+	#      than `excused typecheck` — same exit 0 either way.)
+	#
+	# `2>&1 >/dev/null`, in that order: stderr onto the substitution, stdout
+	# thrown away, so make's own message — which NAMES the target and the
+	# prerequisite — goes into the diagnostic. Single-goal, never the multi-goal
+	# dep list: see `dry_run`. And `continue`, so a target can never be labelled
+	# UNREADABLE and then also classified `no gate`.
+	if ! target_probe="$("$MAKE_BIN" -n "$target" 2>&1 >/dev/null)"; then
+		unreadable="$unreadable$target"$'\n'
+		unreadable_count=$((unreadable_count + 1))
+		printf 'UNREADABLE  %s\n' "$target"
+		printf '%s\n' "$target_probe" | sed 's/^/              > /'
+		continue
+	fi
+
 	# No `|| true`: nothing in this pipeline signals "nothing found" with a
-	# nonzero exit any more — `anchors` and `join_continuations` are awk and
-	# `sort -u` is empty-safe — so the only nonzero left is `dry_run` refusing an
-	# unreadable recipe, and swallowing that here would put the false green above
+	# nonzero exit — `anchors` and `join_continuations` are awk, `sort -u` is
+	# empty-safe, and `dry_run` no longer refuses — so there is no status here
+	# worth swallowing, and swallowing one would put the false green above
 	# straight back (#lzgrepcpipefail).
 	target_anchors="$(own_commands "$target" | anchors | sort -u)"
 
@@ -614,13 +656,32 @@ while IFS= read -r target; do
 done <<<"$nogate"
 
 # A guard that examined nothing must not report OK — the same vacuity rule the
-# conformance guards apply (#lzvacuousrun).
-if [ "$((reached + excused_ok + unreached_count))" -eq 0 ]; then
+# conformance guards apply (#lzvacuousrun). `unreadable_count` is in the sum so
+# that a closure make cannot read anywhere is reported as unreadable by the rung
+# below rather than as "no target carrying a gate", which would name the wrong
+# problem.
+if [ "$((reached + excused_ok + unreached_count + unreadable_count))" -eq 0 ]; then
 	echo "check-ci-reach: '$ROOT_TARGET' has no prerequisite target carrying a gate — nothing was verified" >&2
 	exit 1
 fi
 
 status=0
+# Its OWN heading, not the `unreached` list. Appending these to `unreached`
+# would print them under "no CI run: step reaches" and send the reader to the
+# workflow file for a problem that is in the Makefile.
+if [ "$unreadable_count" -gt 0 ]; then
+	echo >&2
+	echo "check-ci-reach: $unreadable_count target(s) run by 'make $ROOT_TARGET' whose recipe make could NOT READ:" >&2
+	while IFS= read -r t; do
+		[ -n "$t" ] || continue
+		echo "  - $t" >&2
+	done <<<"$unreadable"
+	echo >&2
+	echo "An unreadable recipe is not a recipe with no gate, and no excuse in $CONF covers" >&2
+	echo "one: an excuse is a claim about what CI RUNS. This is a Makefile problem — fix it" >&2
+	echo "there, not in the workflow." >&2
+	status=1
+fi
 if [ "$stale_count" -gt 0 ]; then
 	echo >&2
 	while IFS= read -r t; do
