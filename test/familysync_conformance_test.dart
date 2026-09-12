@@ -67,7 +67,11 @@ void main() {
 
         final expect_ = assertionsOf(sc['expect']);
 
-        if (sc['reingest'] == true) {
+        // A GATE on a fixture flag (`#lzflagcoercion`). Coerced, a non-boolean
+        // skipped the branch outright; the tracker then caught it only because
+        // `reingest_applied` went unasserted, which is luck rather than a
+        // guard — a gated branch carrying no tracked assertion is invisible.
+        if (flagAt(sc, 'reingest', 'scenario `${sc['name']}`')) {
           final reapplied = target.ingest(frame);
           assertKey(expect_, 'reingest_applied', reapplied,
               're-ingest is not idempotent');
@@ -88,7 +92,10 @@ void main() {
         // really materialized (`#lzsubblockkeyset`).
         assertKeysOf(expect_, 'target_values',
             target.familyKeys(namespace).map(_suffixOf), (suffix, want) {
-          expect(target.familyValueLww(namespace, suffix), want as bool,
+          // Named refusal rather than a bare cast's stack trace
+          // (`#lzflagcoercion`).
+          expect(target.familyValueLww(namespace, suffix),
+              flagOf(want, 'scenario `${sc['name']}` target_values.$suffix'),
               reason: 'value for $namespace/$suffix diverged');
         },
             reason: '`target_values` names a family member the target does '

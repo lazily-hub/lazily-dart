@@ -133,12 +133,18 @@ void _playAntiEntropy(Map<String, dynamic> scenario) {
 
   assertKey(expect_, 'applied_count', applied);
 
-  if (scenario['redeliver'] == true) {
+  // Both gates are fixture FLAGS, required by type rather than coerced
+  // (`#lzflagcoercion`). The second is the one that was genuinely silent: the
+  // branch it guards carries no TRACKED assertion, so a non-boolean skipped a
+  // real convergence check with nothing left behind to notice. (The first was
+  // caught only indirectly, by `redeliver_applied_count` going unasserted.)
+  if (flagAt(scenario, 'redeliver', 'scenario `${scenario['name']}`')) {
     final reapplied = runtime.ingestOps(ops);
     assertKey(expect_, 'redeliver_applied_count', reapplied);
   }
 
-  if (scenario['reverse_order_equivalent'] == true) {
+  if (flagAt(
+      scenario, 'reverse_order_equivalent', 'scenario `${scenario['name']}`')) {
     final runtime2 = CrdtPlaneRuntime(1);
     runtime2.ingestOps(ops.reversed.toList());
     final reversedWire = runtime2.converged().map((e) => e.toWire()).toList();

@@ -90,7 +90,13 @@ void _assertInvalidation(
   };
   assertKeysOfIfPresent(expected, 'invalidates', byKind.keys, (kind, want) {
     final warm = _isWarm(byKind[kind]!, ctx);
-    expect(warm, want != true,
+    // Inverted, so type-strict `assertKey` equality is unavailable and the flag
+    // is required by type instead (`#lzflagcoercion`): `want != true` read
+    // every non-boolean as "not invalidated", so a fixture spelling
+    // `"head": "true"` against a step that really left the head reader warm
+    // passed while asserting the opposite.
+    expect(warm,
+        !flagOf(want, '$name step $stepIndex `$opType` invalidates.$kind'),
         reason: '$name step $stepIndex `$opType` reader `$kind`: '
             'expected invalidated=$want (warm=$warm)');
   },

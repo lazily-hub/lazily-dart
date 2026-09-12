@@ -313,13 +313,20 @@ void _replay(_Flavor flavor, String fixtureName) {
         }
       });
     });
+    // `flagOf`, not `v == true` (`#lzflagcoercion`). The comparison is against
+    // a DERIVED bool, so `assertKey`'s type-strict equality is not available
+    // here and the coerced spelling silently inverted the fixture: a
+    // non-boolean read as `false`, i.e. "this reader was not invalidated",
+    // which is what a pure reorder really does — so the assertion passed while
+    // the fixture read as demanding the opposite.
     assertKeyWith<void>(invalidates, 'membership', (v) {
-      expect(membership() != membershipBase, v == true,
+      expect(membership() != membershipBase,
+          flagOf(v, '${where(i)}: invalidates.membership'),
           reason: '${where(i)}: membership reader invalidation mismatch - '
               'a pure reorder must NOT invalidate set-identity readers');
     });
     assertKeyWith<void>(invalidates, 'order', (v) {
-      expect(order() != orderBase, v == true,
+      expect(order() != orderBase, flagOf(v, '${where(i)}: invalidates.order'),
           reason: '${where(i)}: order reader invalidation mismatch');
     });
 
@@ -330,7 +337,11 @@ void _replay(_Flavor flavor, String fixtureName) {
         (key, wantStable) {
       final after = flavor.entryIdentity(key);
       final before = idsBefore[key];
-      if (wantStable == true) {
+      // A flag that selects a BRANCH is the coercion's worst shape
+      // (`#lzflagcoercion`): a non-boolean took the `else`, so the runner went
+      // on to assert that the handle CHANGED while the fixture read as
+      // demanding it survive. Required by type instead.
+      if (flagOf(wantStable, '${where(i)}: handle_stable.$key')) {
         expect(before != null && identical(after, before), isTrue,
             reason: '${where(i)}: handle for $key must survive the move - '
                 'a reorder that re-mints is a remove + insert, not a move');

@@ -440,9 +440,23 @@ class _SyncModel implements _Model {
   @override
   Iterable<String> get nodeIds => nodes.keys;
 
+  /// The node [id] names, or a NAMED failure when the replay never made one.
+  ///
+  /// `kindOf` used to read `nodes[id]` and fall through to `_Kind.slot`, which
+  /// is the `#lzflagcoercion` sibling shape: an accessor answering a plausible
+  /// DEFAULT for something absent, read as a measurement. A `cleanup_order`
+  /// entry naming a node that does not exist was classified `slot`, filtered
+  /// out of the expected list by the effects-only projection, and the
+  /// assertion passed having compared nothing. Callers that must tolerate
+  /// absence read `nodes[id]` directly.
+  Object _node(String id) =>
+      nodes[id] ??
+      (throw StateError('no node `$id` — this replay never made one, so '
+          'nothing here is a measurement of it'));
+
   @override
   _Kind kindOf(String id) {
-    final node = nodes[id];
+    final node = _node(id);
     if (node is Cell) return _Kind.cell;
     if (node is Effect) return _Kind.effect;
     return _Kind.slot;
@@ -621,9 +635,23 @@ class _AsyncModel implements _Model {
   @override
   Iterable<String> get nodeIds => nodes.keys;
 
+  /// The node [id] names, or a NAMED failure when the replay never made one.
+  ///
+  /// `kindOf` used to read `nodes[id]` and fall through to `_Kind.slot`, which
+  /// is the `#lzflagcoercion` sibling shape: an accessor answering a plausible
+  /// DEFAULT for something absent, read as a measurement. A `cleanup_order`
+  /// entry naming a node that does not exist was classified `slot`, filtered
+  /// out of the expected list by the effects-only projection, and the
+  /// assertion passed having compared nothing. Callers that must tolerate
+  /// absence read `nodes[id]` directly.
+  Object _node(String id) =>
+      nodes[id] ??
+      (throw StateError('no node `$id` — this replay never made one, so '
+          'nothing here is a measurement of it'));
+
   @override
   _Kind kindOf(String id) {
-    final node = nodes[id];
+    final node = _node(id);
     if (node is AsyncCellHandle) return _Kind.cell;
     if (node is AsyncEffectHandle) return _Kind.effect;
     return _Kind.slot;
@@ -943,8 +971,22 @@ Future<_Report> _replay(
         case 'note':
           // An annotation, exempt by name: there is nothing here to compare.
           break;
+        // The three id-keyed degree/count maps are bounded by the nodes the
+        // replay really MADE (`subKeyOf`, not a bare `subKey`). A bare descend
+        // kept the child tracker's drop check and silently lost the population
+        // bound, which is the `#lzflagcoercion` sibling defect: an accessor
+        // that answers a ZERO VALUE for something ABSENT, read as a
+        // measurement. `computes_of` was the live case — `computes[id] ?? 0`
+        // satisfied `{"typo_id": 0}` by the node's NON-EXISTENCE — and the two
+        // degree maps threw `Null check operator used on a null value` off
+        // `nodes[id]!`, a refusal that named neither the id nor the fixture.
+        // The `scenarios` tail already bounds its counterparts this way; the
+        // per-step loop did not, only because it drives its own SORTED walk.
         case 'dependents_of':
-          final m = subKey(expect_, key, '#$i $key');
+          final m = subKeyOf(expect_, key, model.nodeIds,
+              where: '#$i $key',
+              reason: '#$i dependents_of names an id this replay never '
+                  'made');
           for (final id in m.keys.toList()..sort()) {
             assertKeyWith<void>(
                 m,
@@ -953,7 +995,10 @@ Future<_Report> _replay(
                     check('dependents_of.$id', model.dependentsOf(id), want));
           }
         case 'dependencies_of':
-          final m = subKey(expect_, key, '#$i $key');
+          final m = subKeyOf(expect_, key, model.nodeIds,
+              where: '#$i $key',
+              reason: '#$i dependencies_of names an id this replay never '
+                  'made');
           for (final id in m.keys.toList()..sort()) {
             assertKeyWith<void>(
                 m,
@@ -969,7 +1014,12 @@ Future<_Report> _replay(
           // asserts `readable` and `computes_of` in the same step precisely to
           // catch a puller that survived disposal, and it only discriminates
           // if the count is taken before the read.
-          final m = subKey(expect_, key, '#$i $key');
+          final m = subKeyOf(expect_, key, model.nodeIds,
+              where: '#$i $key',
+              reason: '#$i computes_of names an id this replay never made. '
+                  '`computes[id] ?? 0` cannot tell "this node exists and has '
+                  'not computed" from "there is no such node", so without this '
+                  'bound a typo satisfied any expectation of 0');
           for (final id in m.keys.toList()..sort()) {
             assertKeyWith<void>(
                 m,
@@ -1036,6 +1086,12 @@ Future<_Report> _replay(
           // Only effects run a cleanup callback, so the expected order is
           // projected onto its effect entries.
           assertKeyWith<void>(expect_, key, (want) {
+            // The kind filter is legitimate — only effects run a cleanup — but
+            // it used to run against a `kindOf` that answered `slot` for an id
+            // the replay never made, so a phantom in this list was silently
+            // PROJECTED OUT of the expectation and the assertion passed. That
+            // sentinel is gone (`kindOf` now fails by name), and this is where
+            // it would have been dropped.
             final wanted = _strs(want)
                 .where((id) => model.kindOf(id) == _Kind.effect)
                 .toList();

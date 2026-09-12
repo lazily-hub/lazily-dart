@@ -419,7 +419,10 @@ void main() {
       var requests = 0;
       for (final frame
           in (sc['inbound'] as List).cast<Map<String, dynamic>>()) {
-        if (frame['dropped'] == true) continue;
+        // An INPUT gate on a fixture flag (`#lzflagcoercion`): coerced, a
+        // non-boolean read as "not dropped", so the frame was ingested and the
+        // replay diverged from the one the fixture describes.
+        if (flagAt(frame, 'dropped', 'inbound frame')) continue;
         final m = _msg(frame['frame']);
         final res = coord.ingest(m);
         switch (frame['expect_action']) {
@@ -586,7 +589,8 @@ void main() {
       assertKey(
           ex2,
           'frame_retained_after_failed_send',
-          sc2['send_fails_first_attempt'] == true &&
+          flagAt(sc2, 'send_fails_first_attempt',
+                  'scenario `${sc2['name']}`') &&
               sc2['ack_through'] == null &&
               mem2.retainedEpochs().isNotEmpty,
           'a failed send retains the frame');
@@ -725,7 +729,10 @@ void main() {
       final death = _scenario(fx, 'whole_editor_death_cascades');
       final open = (death['open_set'] as List)
           .cast<Map<String, dynamic>>()
-          .where((e) => e['present'] == true)
+          // A fixture flag FILTERING the replay's input set
+          // (`#lzflagcoercion`): coerced, a non-boolean dropped the entry from
+          // the open set entirely.
+          .where((e) => flagAt(e, 'present', 'open_set entry `${e['key']}`'))
           .map((e) {
         final parts = (e['key'] as String).split('/');
         return (parts[0], int.parse(parts[1].replaceFirst('pid', '')));
@@ -740,9 +747,21 @@ void main() {
           int.parse((op['key'] as String).replaceFirst('alive/pid', ''));
       alive[pid]!.set(
           _stamp(op['stamp'] as Map<String, dynamic>), op['value'] as bool);
+      // `alive[p]?.value == true` read a pid ABSENT from `alive_before` as
+      // "not alive" and dropped the doc from the aggregate, so an `open_set`
+      // naming an editor the liveness map never mentions silently agreed with
+      // any `live_docs_after` that omits that doc — the `#lzflagcoercion`
+      // sibling defect, a lookup's absence read as a measurement. Required to
+      // be present instead. (`.value` is statically `bool` here, so the flag
+      // itself needs no type check; what was missing is the PRESENCE.)
       final live = <String>{
         for (final (doc, p) in open)
-          if (alive[p]?.value == true) doc
+          if ((alive[p] ??
+                  (throw StateError('open_set names pid$p, which '
+                      '`alive_before` says nothing about — an absent liveness '
+                      'register is not a measurement of death')))
+              .value)
+            doc
       }.toList()
         ..sort();
       final deathEx = assertionsOf(death['expect']);
@@ -798,7 +817,14 @@ void main() {
       // build the second replica, so it DRIVES the replay rather than being
       // compared against a hardcoded reversal.
       final second = _LivenessReplica();
-      for (final op in (derived['reverse_order_equivalent'] as bool)
+      // `flagOf`, not `as bool` (`#lzflagcoercion`). REQUIRED-present, as the
+      // cast was — this flag drives the replay, so defaulting an absent one to
+      // false would quietly build the second replica the same way as the first
+      // and assert order-independence against nothing. Only the diagnostic
+      // changes: the key and scenario are named instead of a bare type-cast
+      // stack trace.
+      for (final op in flagOf(derived['reverse_order_equivalent'],
+              'scenario `${derived['name']}` reverse_order_equivalent')
           ? derivedOps.reversed
           : derivedOps) {
         second.apply(op);
@@ -820,7 +846,8 @@ void main() {
       // would report a non-zero count here even though presence is unchanged.
       final appliedBefore = first.applied;
       final aggregateBefore = first.liveDocs();
-      if (derived['redeliver'] as bool) {
+      if (flagOf(
+          derived['redeliver'], 'scenario `${derived['name']}` redeliver')) {
         for (final op in derivedOps) {
           first.apply(op);
         }

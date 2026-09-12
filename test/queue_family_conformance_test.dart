@@ -255,7 +255,12 @@ int _replayQueue(_Flavor flavor, String name) {
           reason: '${flavor.label} $name step $i returns');
     }
     assertKeysOf(expected, 'invalidates', harness.readers.keys, (reader, want) {
-      expect(harness.warm(reader), !(want as bool),
+      // `flagOf`, not `want as bool` (`#lzflagcoercion`). The cast REFUSED a
+      // non-boolean, which beats coercing, but it refused as "type 'String' is
+      // not a subtype of type 'bool' in type cast" plus a stack trace — naming
+      // neither the reader, the step, nor the fixture. Same refusal, named.
+      expect(harness.warm(reader),
+          !flagOf(want, '${flavor.label} $name step $i invalidates.$reader'),
           reason: '${flavor.label} $name step $i invalidates.$reader');
     });
     assertKeyIfPresent(expected, 'elements', (v) {
@@ -444,7 +449,8 @@ int _replayTopic(_Flavor flavor, String name) {
           reason: '${flavor.label} $name step $i returns');
     }
     assertKeysOf(expected, 'invalidates', ids, (id, want) {
-      expect(harness.warm(id), !(want as bool),
+      expect(harness.warm(id),
+          !flagOf(want, '${flavor.label} $name step $i invalidates.$id'),
           reason: '${flavor.label} $name step $i invalidates.$id');
     });
     assertKeyWith(expected, 'base_offset', (v) {
@@ -671,7 +677,8 @@ int _replayWork(_Flavor flavor, String name) {
           reason: '${flavor.label} $name step $i returns');
     }
     assertKeysOf(expected, 'invalidates', harness.readers.keys, (reader, want) {
-      expect(harness.warm(reader), !(want as bool),
+      expect(harness.warm(reader),
+          !flagOf(want, '${flavor.label} $name step $i invalidates.$reader'),
           reason: '${flavor.label} $name step $i invalidates.$reader');
     });
     assertKeyWith(expected, 'pending', (v) {

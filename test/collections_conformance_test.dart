@@ -149,13 +149,20 @@ void _runStepsFixture(String name) {
                 'expected invalidated=$invalidated');
       }
     });
+    // `flagOf`, not `v != true` (`#lzflagcoercion`). An INVERTED flag cannot
+    // route through the type-strict `assertKey`, and the coerced spelling made
+    // a non-boolean read as "not invalidated": `"membership": "true"` against a
+    // step whose membership reader really did stay warm passed here while the
+    // fixture reads as asserting the opposite.
     assertKeyWith<void>(invalidates, 'membership', (v) {
-      expect(_isWarm(membershipReader, ctx), v != true,
+      expect(_isWarm(membershipReader, ctx),
+          !flagOf(v, '$name step $i `${op['type']}` invalidates.membership'),
           reason: '$name step $i `${op['type']}` membership reader: '
               'expected invalidated=$v');
     });
     assertKeyWith<void>(invalidates, 'order', (v) {
-      expect(_isWarm(orderReader, ctx), v != true,
+      expect(_isWarm(orderReader, ctx),
+          !flagOf(v, '$name step $i `${op['type']}` invalidates.order'),
           reason: '$name step $i `${op['type']}` order reader: '
               'expected invalidated=$v');
     });

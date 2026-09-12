@@ -541,6 +541,62 @@ void assertKeyIfPresent(
   _recordAsserted(block, key);
 }
 
+/// A fixture FLAG, REQUIRED to be a JSON boolean (`#lzflagcoercion`).
+///
+/// Every fixture value arrives as `dynamic`, and both idiomatic Dart spellings
+/// for reading one as a flag are wrong at a conformance call site:
+///
+/// - `want == true` COERCES. It is false for EVERY non-boolean — `0`, `1`,
+///   `null`, an object, and the string `"true"` — so a fixture spelling
+///   `{"downstream_consumer_reran": "true"}` against a run that observed
+///   `false` goes GREEN while the fixture reads as asserting the consumer DID
+///   re-run. That is not a missed assertion, it is a silently INVERTED one
+///   that passes, and every sibling boolean in the same block keeps reddening
+///   so the block looks alive. lazily-go shipped exactly this and fixed it in
+///   its `6a1a6b9`; lazily-dart's `dynamic` is the same exposure in a language
+///   that never needed `any`.
+/// - `want as bool` at least refuses, and refusing beats coercing. But it
+///   refuses as `type 'String' is not a subtype of type 'bool' in type cast`
+///   plus a stack trace, naming neither the key, the step, nor the fixture —
+///   so the one thing the reader needs, WHICH assertion the corpus spelled
+///   wrongly, is the one thing it does not say.
+///
+/// So the type is REQUIRED and the refusal is NAMED. Nothing is coerced: not
+/// `"true"`, not `1`, not a non-null object, and not `null`. [where] is the
+/// site, with whatever fixture/step/scenario label the caller already builds.
+///
+/// The counterpart for a value handed to [assertKey] is nothing at all —
+/// `expect(actual, equals(expected))` is type-strict in Dart, so a `bool`
+/// actual against a `"true"` expected already fails there. This helper exists
+/// for the sites that cannot use it: an INVERTED flag (`!want`), a flag that
+/// selects a BRANCH, and a flag that is an INPUT to the replay.
+bool flagOf(Object? expected, String where) {
+  if (expected is bool) return expected;
+  fail('$where: expected a JSON boolean, got '
+      '${expected == null ? 'null' : '`$expected` (${expected.runtimeType})'}. '
+      'A conformance flag is required by TYPE and never coerced: `want == '
+      'true` is false for every non-boolean, so a fixture spelling "true" or '
+      '1 against a run that observed false would pass while reading as the '
+      'opposite assertion (`#lzflagcoercion`).');
+}
+
+/// [flagOf] for an OPTIONAL flag, the shape every scenario union uses: a block
+/// that OMITS the key (or carries an explicit `null`) means `false`, and a
+/// block that carries it must carry a boolean.
+///
+/// This is the spelling for a flag that GATES a branch of the replay —
+/// `if (scenario['redeliver'] == true)`. Absence is the fixture's business and
+/// was never the coercion's concern; what the coercion did was make a PRESENT
+/// non-boolean silently indistinguishable from absence, so a gate went unrun
+/// and the branch it guards was never replayed.
+bool flagAt(Map<String, dynamic> block, String key, String where) {
+  final inner = block is _TrackedAssertions ? block._inner : block;
+  if (!inner.containsKey(key)) return false;
+  final raw = inner[key];
+  if (raw == null) return false;
+  return flagOf(raw, '$where.$key');
+}
+
 /// Consume an ENTIRE assertion block by deep-equalling it against [actual].
 ///
 /// The whole-block counterpart of [assertKeyDeep], and the honest spelling for
@@ -753,7 +809,38 @@ void assertKeysOf(
   void Function(String subKey, dynamic expected) check, {
   String? reason,
 }) {
-  final child = subKey(block, key);
+  final child = subKeyOf(block, key, population, reason: reason);
+  for (final subKeyName in child.keys.toList()) {
+    assertKeyWith<void>(
+        child, subKeyName, (expected) => check(subKeyName, expected));
+  }
+}
+
+/// [subKey], plus the POPULATION bound [assertKeysOf] applies — and nothing
+/// else, so a runner can drive its own iteration over the keys.
+///
+/// Split out for the runners that have to walk the object themselves: a SORTED
+/// walk whose order is load-bearing, or an observation pass interleaved with
+/// the comparisons. Those descended with a bare [subKey] and so kept the child
+/// tracker's drop check while silently losing the bound, which is the
+/// `#lzflagcoercion` sibling defect — an accessor that answers a ZERO VALUE
+/// for something ABSENT, read as a measurement. `computes_of` in
+/// reactive_graph_conformance_test.dart was exactly that shape:
+/// `model.computes[id] ?? 0` satisfied `{"typo_id": 0}` by the node's
+/// NON-EXISTENCE, so a fixture naming a node the replay never made passed for
+/// any expectation of zero.
+///
+/// [population] must come from the RUN, for the reason [assertKeysOf] gives:
+/// scraping it out of the same expectation block it bounds compares the
+/// fixture against itself.
+Map<String, dynamic> subKeyOf(
+  Map<String, dynamic> block,
+  String key,
+  Iterable<String> population, {
+  String? reason,
+  String where = '',
+}) {
+  final child = subKey(block, key, where);
   final known = population.toSet();
   final unknown = child.keys.where((k) => !known.contains(k)).toList()..sort();
   expect(unknown, isEmpty,
@@ -761,10 +848,7 @@ void assertKeysOf(
           '$key names $unknown, which this run has nothing for. An '
               'object-valued assertion key may only name identifiers the run '
               'really produced');
-  for (final subKeyName in child.keys.toList()) {
-    assertKeyWith<void>(
-        child, subKeyName, (expected) => check(subKeyName, expected));
-  }
+  return child;
 }
 
 /// [assertKeysOf], but a no-op when the block does not carry [key].

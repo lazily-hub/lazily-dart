@@ -78,13 +78,22 @@ void main() {
       for (var i = 0; i < steps.length; i++) {
         final step = steps[i];
         final event = step['event']! as String;
+        // `guards` is an INPUT, and the coerced projection turned a
+        // non-boolean into a DISARMED guard (`#lzflagcoercion`) — the replay
+        // then took a different transition than the fixture spells, and
+        // whether that shows up at all depends on the step asserting something
+        // the guard happens to move.
         final guards = (step['guards'] as Map<String, dynamic>?)?.map(
-              (k, v) => MapEntry(k, v == true),
+              (k, v) => MapEntry(k, flagOf(v, 'step $i `$event` guards.$k')),
             ) ??
             const <String, bool>{};
 
         final accepted = chart.send(event, guards);
-        expect(accepted, equals(step['accepted'] == true),
+        // `accepted` coerced was the defect verbatim: `"accepted": "true"`
+        // compared `false == false` on a step the chart really REJECTED, so
+        // the fixture read as asserting acceptance and passed.
+        expect(accepted,
+            equals(flagOf(step['accepted'], 'step $i `$event` accepted')),
             reason: 'step $i `$event` accepted');
 
         final wantActive = _activeExpected(step['active'])..sort();
@@ -96,7 +105,8 @@ void main() {
           for (final entry in matches.entries) {
             expect(
               chart.matches(entry.key),
-              equals(entry.value == true),
+              equals(flagOf(
+                  entry.value, 'step $i `$event` matches(${entry.key})')),
               reason: 'step $i `$event` matches(${entry.key})',
             );
           }
@@ -132,7 +142,7 @@ void main() {
           in (fixture['steps'] as List).cast<Map<String, dynamic>>()) {
         final event = step['event']! as String;
         final guards = (step['guards'] as Map<String, dynamic>?)?.map(
-              (k, v) => MapEntry(k, v == true),
+              (k, v) => MapEntry(k, flagOf(v, '$name `$event` guards.$k')),
             ) ??
             const <String, bool>{};
         chart.send(event, guards);
