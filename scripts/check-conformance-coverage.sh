@@ -273,10 +273,14 @@ evidence_records() {
     END { print records + 0 }' "$1"
 }
 
-# Existence, then RECORDS, then the stamp. That order is deliberate: a genuinely
-# empty file carries no stamp either, so checking the stamp first would answer a
-# contributor who forgot `LAZILY_CONFORMANCE_MANIFEST` with "carries no run-id
-# stamp" — true, and the wrong rung to send them to.
+# Existence, then RECORDS, then the stamp — except that the records rung
+# adjudicates a stamp it FINDS before reporting, see below. The base order is
+# deliberate: a genuinely empty file carries no stamp either, so checking the
+# stamp first would answer a contributor who forgot
+# `LAZILY_CONFORMANCE_MANIFEST` with "carries no run-id stamp" — true, and the
+# wrong rung to send them to. The exception is just as deliberate: a file that
+# does carry a stamp is not that contributor's file, and when the id is a
+# stranger's the honest answer is STALE.
 require_evidence() {
   local file="$1" label="$2" hint="$3"
   if [ ! -f "$file" ]; then
@@ -286,6 +290,21 @@ require_evidence() {
     exit 1
   fi
   if [ "$(evidence_records "$file")" -eq 0 ]; then
+    # Records-before-stamp is right for the file this rung was written for — a
+    # GENUINELY empty one, which carries no stamp either, so blaming the stamp
+    # would send a contributor who forgot `LAZILY_CONFORMANCE_MANIFEST` to the
+    # wrong rung. It is wrong for a file that DOES carry a stamp: the stamp is
+    # positive evidence that some run wrote here, and if the id is not this run's
+    # the file is a LEFTOVER, which is the rung below. Measured before this
+    # split: a stamp-only ledger carrying a stale id reported "carries ZERO
+    # records ... the recorder attributed no read in this run" — a sentence about
+    # a run the file is not about, with the stale rung never reached.
+    #
+    # So the stamp is adjudicated only when there IS one. A zero-length file
+    # still falls straight through to the message below, unchanged.
+    case "$(head -n 1 "$file")" in
+      "$RUN_ID_PREFIX"*) require_run_id "$file" "$label" ;;
+    esac
     echo "FAIL: $label at $file carries ZERO records (#lzstampsatisfiesnonempty)." >&2
     echo "      The file is empty, or it holds nothing but the run-id stamp — which" >&2
     echo "      is itself non-empty, so a byte test would have accepted it. Either" >&2
@@ -321,6 +340,7 @@ while IFS= read -r fixture; do
   fi
   excused=0
   for known in "${KNOWN_UNCOVERED[@]:-}"; do
+    [ -n "$known" ] || continue
     if [ "$known" = "$fixture" ]; then excused=1; break; fi
   done
   if [ "$excused" -eq 0 ]; then
@@ -360,6 +380,16 @@ done <<< "$OPENED"
 #     `grep -qxF <<< "$OPENED"` the covered-check uses, so the two can never
 #     disagree about what "opened" means.
 for known in "${KNOWN_UNCOVERED[@]:-}"; do
+  # `"${arr[@]:-}"` on an EMPTY array expands to ONE empty element, not to
+  # nothing — `${arr[@]}` is unset there, so the `:-` substitutes its (absent)
+  # default, which is the empty string. This loop read that element as a ledger
+  # ENTRY: measured with the ledger emptied, `[ ! -f "$SPEC_DIR/" ]` is true for
+  # a directory and the guard reported `ERROR: KNOWN_UNCOVERED lists '', which is
+  # not in the canonical corpus` / `conformance coverage FAILED: 1 problem(s)`,
+  # exit 1 — a fail-closed MISDIAGNOSIS naming an entry nobody wrote, at exactly
+  # the state the header above calls the goal ("shrinking this list is the
+  # work"). The three other loops over this array already carry this guard.
+  [ -n "$known" ] || continue
   if [ ! -f "$SPEC_DIR/$known" ]; then
     echo "ERROR: KNOWN_UNCOVERED lists '$known', which is not in the canonical corpus." >&2
     missing=$((missing + 1))
@@ -580,7 +610,12 @@ fi
 # The fixture-ledger duplicate check, AHEAD of the equality it protects.
 uniq_known=0
 if [ "${#KNOWN_UNCOVERED[@]}" -gt 0 ]; then
-  dupes="$(printf '%s\n' "${KNOWN_UNCOVERED[@]}" | grep -v '^$' | sort | uniq -d || true)"
+  # `awk NF`, not `grep -v '^$'`: a `grep -v` that matches nothing exits 1, and
+  # under `set -o pipefail` that is indistinguishable from `sort` or `uniq`
+  # failing. The `|| true` this line used to end with hid both. awk exits 0
+  # whether or not anything survives, so "no blank entries" stays a measurement
+  # and a real tool failure is fatal again (#lzgrepcpipefail).
+  dupes="$(printf '%s\n' "${KNOWN_UNCOVERED[@]}" | awk 'NF' | sort | uniq -d)"
   if [ -n "$dupes" ]; then
     echo "ERROR: KNOWN_UNCOVERED lists the same fixture more than once:" >&2
     printf '         %s\n' $dupes >&2
@@ -590,7 +625,16 @@ if [ "${#KNOWN_UNCOVERED[@]}" -gt 0 ]; then
     echo "       the duplicates." >&2
     exit 1
   fi
-  uniq_known="$(printf '%s\n' "${KNOWN_UNCOVERED[@]}" | grep -v '^$' | sort -u | wc -l)"
+  # The same rewrite, and here the old spelling was a live instance of the class
+  # rather than a masked one: this assignment carried NO `|| true`, so an array
+  # of nothing but blank elements made `grep -v '^$'` exit 1, `pipefail` poisoned
+  # the substitution, and `set -e` killed the script AT THIS LINE. Measured on a
+  # scratch copy with `KNOWN_UNCOVERED=("")` and a one-fixture scratch corpus at
+  # full coverage: exit 1, and the only thing printed by the whole guard was the
+  # flag-hygiene OK line — no ERROR, no "conformance coverage OK", no mention of
+  # the ledger. A SILENT DEATH. (It was unreachable behind the empty-element
+  # misdiagnosis fixed above, which exits first; fixing that one exposed this.)
+  uniq_known="$(printf '%s\n' "${KNOWN_UNCOVERED[@]}" | sort -u | awk 'NF { n++ } END { print n + 0 }')"
 fi
 
 if [ "$total" -eq 0 ]; then
@@ -673,7 +717,7 @@ for item in "${KNOWN_UNREPLAYED_SCENARIOS[@]:-}"; do
   excuse_keys+="${entry%%|*}|${entry#*|}"$'\n'
 done
 if [ -n "$excuse_keys" ]; then
-  dupes="$(printf '%s' "$excuse_keys" | grep -v '^$' | sort | uniq -d || true)"
+  dupes="$(printf '%s' "$excuse_keys" | awk 'NF' | sort | uniq -d)"
   if [ -n "$dupes" ]; then
     echo "ERROR: KNOWN_UNREPLAYED_SCENARIOS names the same fixture and scenario more" >&2
     echo "       than once:" >&2
@@ -690,7 +734,12 @@ while IFS= read -r key; do
   if grep -qxF "${key%%|*}" <<< "$DERIVED_OPENED"; then
     derived_excused=$((derived_excused + 1))
   fi
-done <<< "$(printf '%s' "$excuse_keys" | grep -v '^$' | sort -u || true)"
+# `awk NF` again, and here the `|| true` was LOAD-BEARING before the rewrite:
+# `KNOWN_UNREPLAYED_SCENARIOS` is empty, so `excuse_keys` is the empty string and
+# `grep -v '^$'` over no input exits 1 on every run. The guard was one deleted
+# `|| true` away from dying silently here, with the zero it was measuring never
+# read back (#lzgrepcpipefail).
+done <<< "$(printf '%s' "$excuse_keys" | awk 'NF' | sort -u)"
 
 if [ "$SCENARIO_TOTAL" -eq 0 ] || [ "$derived_scenario_total" -eq 0 ]; then
   echo "ERROR: ZERO scenarios were found across the OPENED fixtures." >&2

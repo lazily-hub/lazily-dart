@@ -359,6 +359,11 @@ def read_stamped_evidence(path: str, label: str, run_id: str, hint: str) -> list
     below the stamp prefix it has to skip, and their existence half stays in
     `main` where it was.
 
+    The records rung comes first but is not the LAST word: when the file carries
+    a stamp at all, the stamp is adjudicated before emptiness is blamed, so a
+    stamp-only LEFTOVER is reported as STALE rather than as a recorder that
+    attributed nothing "in this run".
+
     This binding's recorder cannot currently produce a stamp-only file — the
     stamp and the first record are written in one call under one lock, keyed off
     a zero-length file, and ``make test`` truncates to GENUINELY empty — but the
@@ -370,9 +375,23 @@ def read_stamped_evidence(path: str, label: str, run_id: str, hint: str) -> list
     """
     with open(path, encoding="utf-8") as handle:
         lines = handle.read().splitlines()
+    first = lines[0] if lines else ""
     if not any(
         line.strip() and not line.startswith(RUN_ID_PREFIX) for line in lines
     ):
+        # Records-before-stamp is right for a GENUINELY empty file, which carries
+        # no stamp either — blaming the stamp would send a contributor who forgot
+        # `LAZILY_CONFORMANCE_BLOCKS` to the wrong rung. It is wrong for a file
+        # that DOES carry one: a stamp is positive evidence that some run wrote
+        # here, and an id that is not this run's makes the file a LEFTOVER, which
+        # is the rung below. Measured before this split, with a matching manifest
+        # so this file was the one under test: a 0-byte ledger and a stamp-only
+        # ledger carrying `make-STALE-0000-deadbeef` produced the SAME message,
+        # "the recorder attributed nothing in this run" — a claim about a run the
+        # stale file is not about, with the stale rung never reached. Mirrors the
+        # same split in check-conformance-coverage.sh's `require_evidence`.
+        if first.startswith(RUN_ID_PREFIX):
+            _refuse_foreign_stamp(first, path, label, run_id)
         die(
             "FAIL: {} at {} carries ZERO records "
             "(#lzstampsatisfiesnonempty).".format(label, path),
@@ -382,7 +401,6 @@ def read_stamped_evidence(path: str, label: str, run_id: str, hint: str) -> list
             "      {}".format(hint),
             "      Zero records is missing evidence, not evidence of absence.",
         )
-    first = lines[0] if lines else ""
     if not first.startswith(RUN_ID_PREFIX):
         die(
             "FAIL: {} at {} carries no run-id stamp (#lzstalemanifest).".format(
@@ -394,6 +412,17 @@ def read_stamped_evidence(path: str, label: str, run_id: str, hint: str) -> list
             "      environment, or it predates the stamp. Either way it is not",
             "      evidence about this run.",
         )
+    _refuse_foreign_stamp(first, path, label, run_id)
+    return [line for line in lines[1:] if not line.startswith(RUN_ID_PREFIX)]
+
+
+def _refuse_foreign_stamp(first: str, path: str, label: str, run_id: str) -> None:
+    """Die unless ``first`` is a run-id stamp naming THIS run.
+
+    Called from two places in `read_stamped_evidence` — once for a file with
+    records and once for a stamp-only one — so a leftover file is reported as
+    STALE either way instead of as an absence of records.
+    """
     found = first[len(RUN_ID_PREFIX) :]
     if found != run_id:
         die(
@@ -404,7 +433,6 @@ def read_stamped_evidence(path: str, label: str, run_id: str, hint: str) -> list
             "      an aborted run, or a single-file `dart test`. Re-run the suite in",
             "      this invocation (`make check`); do NOT read it as block coverage.",
         )
-    return [line for line in lines[1:] if not line.startswith(RUN_ID_PREFIX)]
 
 
 def expand_excuses() -> list:

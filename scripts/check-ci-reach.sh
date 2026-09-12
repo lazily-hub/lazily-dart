@@ -136,6 +136,25 @@ for wf in "${workflows[@]}"; do
 	fi
 done
 
+# Can make read the closure at all? (#lzgrepcpipefail) Every recipe this guard
+# audits arrives through `make -n`, and a make that FAILS produces the same empty
+# stdout as a recipe with no commands — which the walk below reads as "carrying
+# no gate", drops from the population, and still reports OK on. `dry_run` refuses
+# per target and both of its call sites read that status back, but its `exit 1`
+# fires inside a command substitution, so this says the same refusal ONCE, up
+# front, in the MAIN shell where nothing can swallow it (lazily-py's shape).
+#
+# Fully redirected, never piped: a pipe into a head/grep would SIGPIPE make
+# mid-recipe.
+if ! "$MAKE_BIN" -n "$ROOT_TARGET" >/dev/null 2>&1; then
+	echo "check-ci-reach: '$MAKE_BIN -n $ROOT_TARGET' FAILED, so the recipes this guard audits cannot be read." >&2
+	echo "                Every recipe reaches this guard through \`make -n\`, and an unreadable one" >&2
+	echo "                is indistinguishable from a recipe with no commands — which would be" >&2
+	echo "                reported as 'carrying no gate' and pass. Refusing instead." >&2
+	echo "                Run \`$MAKE_BIN -n $ROOT_TARGET\` to see what make is complaining about." >&2
+	exit 1
+fi
+
 # ------------------------------------------------------- make target extraction
 
 # A Makefile may set .RECIPEPREFIX to something other than tab (lazily-rs uses
@@ -242,8 +261,41 @@ join_continuations() {
 	'
 }
 
+# A `|| true` used to hang off this whole pipeline, and it could not tell make's
+# own FAILURE from "this recipe prints no commands" (#lzgrepcpipefail). Both
+# arrive here as an empty stdout, and the caller reads empty as `no gate`: the
+# target leaves the audited population with a benign line and the guard still
+# prints OK. Measured, by giving `analyze` a prerequisite with no rule — the
+# shape of a generated file absent on a fresh clone: `make -n analyze` exits 2
+# with "No rule to make target", and the guard reported
+# `no gate  analyze  recipe runs no checkable command` and exited 0 with
+# "OK — 10 target(s) reached by CI, 0 excused, 2 carrying no gate", down from 11
+# reached, while `dart analyze --fatal-infos` sat in the recipe untouched. A
+# FALSE GREEN, and the exact case the brief warns a blanket `|| true` creates:
+# here the nonzero exit was the real signal, not a measurement of zero.
+#
+# So make's status is checked and a failure is fatal, while the FILTER is `awk`
+# rather than `grep -v` — a `grep -v` that matches nothing exits 1, and under
+# `set -o pipefail` that would poison the pipeline the moment a recipe printed
+# nothing BUT make noise, which is a legitimate zero. awk exits 0 either way, so
+# the line count stays a measurement.
+#
+# Only the per-target collapse needed this: a Makefile broken for EVERY target
+# was already caught by the vacuity rung at the bottom of this file, because
+# reached + excused + unreached would come out zero.
 dry_run() {
-	"$MAKE_BIN" -n "$@" 2>/dev/null | grep -v -e '^make\[' -e '^make:' | join_continuations || true
+	local out status=0
+	out="$("$MAKE_BIN" -n "$@" 2>/dev/null)" || status=$?
+	if [ "$status" -ne 0 ]; then
+		echo "check-ci-reach: '$MAKE_BIN -n $*' exited $status, so this recipe could not be read." >&2
+		echo "                An UNREADABLE recipe is not a recipe with no gate. Reporting it as" >&2
+		echo "                'carrying no gate' would drop the target out of the audit and still" >&2
+		echo "                print OK, which is the false green this check exists to prevent." >&2
+		echo "                Run \`$MAKE_BIN -n $*\` to see what make is complaining about." >&2
+		exit 1
+	fi
+	[ -n "$out" ] || return 0
+	printf '%s\n' "$out" | awk '!/^make\[/ && !/^make:/' | join_continuations
 }
 
 own_commands() {
@@ -262,8 +314,19 @@ own_commands() {
 		dry_run "$target"
 		return
 	fi
+	# `dry_run` refuses an unreadable recipe by exiting 1, and that status has to
+	# be read HERE. Measured: `errexit` does not fire for `prefix="$(dry_run ...
+	# | wc -l)"` when the failing member sits inside a command substitution that
+	# feeds a pipeline — the assignment carries the status (checked below) but the
+	# shell keeps going — so without this `if`, a make failure on the PREREQUISITE
+	# side alone would print its diagnostic, leave `prefix` at 0, and hand the
+	# target its prerequisites' commands as if they were its own. The target's own
+	# `dry_run` is the last command of this function, so its status propagates on
+	# its own.
 	local prefix
-	prefix="$(dry_run "${deps[@]}" | wc -l)"
+	if ! prefix="$(dry_run "${deps[@]}" | wc -l)"; then
+		exit 1
+	fi
 	dry_run "$target" | tail -n +"$((prefix + 1))"
 }
 
@@ -485,7 +548,12 @@ excused_ok=0
 while IFS= read -r target; do
 	[ -n "$target" ] || continue
 
-	target_anchors="$(own_commands "$target" | anchors | sort -u || true)"
+	# No `|| true`: nothing in this pipeline signals "nothing found" with a
+	# nonzero exit any more — `anchors` and `join_continuations` are awk and
+	# `sort -u` is empty-safe — so the only nonzero left is `dry_run` refusing an
+	# unreadable recipe, and swallowing that here would put the false green above
+	# straight back (#lzgrepcpipefail).
+	target_anchors="$(own_commands "$target" | anchors | sort -u)"
 
 	if [ -z "$target_anchors" ]; then
 		nogate="$nogate$target"$'\n'
