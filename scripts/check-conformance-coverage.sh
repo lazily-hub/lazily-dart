@@ -98,6 +98,20 @@ fi
 # half fiction is one nobody can read the real gaps out of. The stale-entry check
 # at the bottom of this file now fails on that direction too.
 KNOWN_UNCOVERED=(
+  # Durable-owner Phase 0 is not implemented in Dart yet. Keep each fixture
+  # explicit: the gaps are distinct contracts, not one directory-wide waiver.
+  # There is no atomic owner transaction spanning inbox admission, the
+  # state/history mutation, durable receipt and outbox effect.
+  "durable-owner/atomic_crash_boundary.json"
+  # There is no backend-neutral durable-owner store with monotonic positions,
+  # optimistic fences and versioned records from which to replay ordered history.
+  "durable-owner/ordered_replay.json"
+  # Stable inbox identities, stable outbox effect identities and durable receipt
+  # deduplication have not been implemented as one owner boundary.
+  "durable-owner/inbox_outbox_deduplication.json"
+  # Complete-history, snapshot-state and LatestDurableProjection remain distinct;
+  # Dart has no durable-owner projection/history fingerprint implementation.
+  "durable-owner/projection_fingerprint.json"
   # Register CRDTs (LWW / MV / PnCounter + the CellCrdt projection bit) are
   # implemented here, but this binding has no canonical replay for the new
   # registers corpus yet; the Registers coverage row is `~` until it does.
