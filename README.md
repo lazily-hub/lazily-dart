@@ -606,6 +606,10 @@ language and held to the same behaviour by a shared conformance corpus.
 | **`lazily-dart`** | Dart / Flutter — you are here |
 | [`lazily-react`][react] | React / Preact bindings layered over [`lazily-js`][js] — not a separate language binding |
 
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
 [rs]: https://github.com/lazily-hub/lazily-rs
 [py]: https://github.com/lazily-hub/lazily-py
 [go]: https://github.com/lazily-hub/lazily-go
