@@ -14,6 +14,7 @@
 
 import 'dart:convert';
 
+import 'durable_client.dart';
 import 'ipc.dart';
 
 export 'ipc.dart' show PeerId;
@@ -53,6 +54,7 @@ class BindingCapabilities {
   static const bool permissions = true;
   static const bool capabilityNegotiation = true;
   static const bool asyncContext = true;
+  static const DurableTierDeclaration durableTiers = DurableTierDeclaration();
 
   /// Serialize as the JSON object a peer introspects at build/link time.
   Map<String, Object> toWire() => {
@@ -67,6 +69,13 @@ class BindingCapabilities {
         'permissions': permissions,
         'capability_negotiation': capabilityNegotiation,
         'async': asyncContext,
+        'durable_tiers': {
+          'core': durableTiers.core,
+          'client': durableTiers.client,
+          'durable_host': durableTiers.durableHost,
+          'distributed_host': durableTiers.distributedHost,
+          'accelerated_host': durableTiers.acceleratedHost,
+        },
       };
 }
 

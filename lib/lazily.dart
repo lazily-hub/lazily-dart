@@ -33,6 +33,7 @@ export 'src/collections.dart';
 export 'src/coordination.dart';
 export 'src/core.dart';
 export 'src/crdt_tree.dart';
+export 'src/durable_client.dart';
 export 'src/ingress.dart';
 export 'src/fnv1a64.dart';
 export 'src/ingress_core.dart';
