@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.32.0 - 2026-09-29
+
+### Added
+
+- Added the durable-client protocol surface and canonical conformance replay,
+  including transport publication, host receipts, projection observation, and
+  interop-peer support.
+
+### Changed
+
+- Adopted Apache-2.0 package licensing and refreshed the generated durable
+  capability coverage documentation.
+
 ## 0.31.0 - 2026-09-11
 
 ### Added
