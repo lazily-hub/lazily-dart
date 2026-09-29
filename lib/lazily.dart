@@ -54,6 +54,7 @@ export 'src/resilience.dart';
 export 'src/sem_tree.dart';
 export 'src/seq_crdt.dart';
 export 'src/service.dart';
+export 'src/sim_consumer_testkit.dart';
 export 'src/stable_id.dart';
 export 'src/state_chart.dart';
 export 'src/state_machine.dart';

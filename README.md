@@ -268,6 +268,12 @@ lazily-dart replays the shared [`lazily-spec`][spec] conformance fixtures:
   reported at its first checkpoint with the diverging cell's label, and the
   encoding's equality classes — never a hex digest, so each binding's choice of
   hash stays free.
+- `SimConsumerTestkit` applies one generated history to a deterministic
+  in-memory consumer and explicitly selected Postgres, NATS, or
+  external-process adapters. Its narrow `SimConsumerWorldEvidence` seam proves
+  execution without prescribing a scheduler; the canonical runner covers all
+  five `simulation/consumer_testkit.json` scenarios, including localized
+  observation, history-prefix, and simulation-bypass failures.
 
 ### Formal model (`lazily-formal`)
 
