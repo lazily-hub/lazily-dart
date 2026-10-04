@@ -193,7 +193,7 @@ class SpillResult {
 }
 
 /// Spill large payloads across an [IpcMessage]'s value/state sites: Snapshot node
-/// states, Delta `CellSet`/`SlotValue` payloads + `NodeAdd` states, and
+/// states, Delta `CellSet`/`SlotValue`/`QueuePush` payloads + `NodeAdd` states, and
 /// `CrdtSync` op states. Returns a [SpillResult] with the rewritten message and
 /// the total bytes spilled.
 ///
@@ -230,7 +230,7 @@ SpillResult spillMessage(
       // Exhaustive over the sealed `DeltaOp` hierarchy on purpose
       // (#failclosedsweep). This was an if/else-if chain whose terminal `else`
       // passed the op through untouched, which is the right answer for the
-      // four ops that carry no payload — and the WRONG answer, silently, for
+      // ops that carry no payload — and the WRONG answer, silently, for
       // any payload-bearing op added later: the frame would ship inline, over
       // the threshold, and the spill contract would be broken with nothing to
       // notice it. A `switch` over a sealed type with no `default` makes a new
@@ -248,11 +248,18 @@ SpillResult spillMessage(
           final (state, spilled) = _spillState(op.state, backend, threshold);
           total += spilled;
           ops.add(DeltaOpNodeAdd(op.node, op.typeTag, state, key: op.key));
+        case DeltaOpQueuePush():
+          // Same IpcValue payload as CellSet; spilled exactly like it.
+          final (payload, spilled) = spillValue(op.payload, backend, threshold);
+          total += spilled;
+          ops.add(DeltaOpQueuePush(op.node, payload));
         // No inline payload to spill; forwarded unchanged.
         case DeltaOpInvalidate():
         case DeltaOpNodeRemove():
         case DeltaOpEdgeAdd():
         case DeltaOpEdgeRemove():
+        case DeltaOpQueuePop():
+        case DeltaOpQueueClose():
           ops.add(op);
       }
     }

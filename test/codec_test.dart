@@ -64,6 +64,9 @@ String _deltaOpVariant(DeltaOp op) {
   if (op is DeltaOpNodeRemove) return 'NodeRemove';
   if (op is DeltaOpEdgeAdd) return 'EdgeAdd';
   if (op is DeltaOpEdgeRemove) return 'EdgeRemove';
+  if (op is DeltaOpQueuePush) return 'QueuePush';
+  if (op is DeltaOpQueuePop) return 'QueuePop';
+  if (op is DeltaOpQueueClose) return 'QueueClose';
   throw StateError('unknown DeltaOp: $op');
 }
 

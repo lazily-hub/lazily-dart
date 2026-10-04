@@ -628,6 +628,13 @@ sealed class DeltaOp {
       case 'EdgeRemove':
         return DeltaOpEdgeRemove(
             _reqInt(body, 'dependent'), _reqInt(body, 'dependency'));
+      case 'QueuePush':
+        return DeltaOpQueuePush(
+            _reqInt(body, 'node'), IpcValue.fromWire(body['payload']));
+      case 'QueuePop':
+        return DeltaOpQueuePop(_reqInt(body, 'node'));
+      case 'QueueClose':
+        return DeltaOpQueueClose(_reqInt(body, 'node'));
       default:
         throw FormatException('unknown DeltaOp variant: ${entry.key}');
     }
@@ -647,6 +654,10 @@ sealed class DeltaOp {
       DeltaOpEdgeAdd(dependent, dependency);
   static DeltaOp edgeRemove(NodeId dependent, NodeId dependency) =>
       DeltaOpEdgeRemove(dependent, dependency);
+  static DeltaOp queuePush(NodeId node, Object payload) =>
+      DeltaOpQueuePush(node, IpcValue.of(payload));
+  static DeltaOp queuePop(NodeId node) => DeltaOpQueuePop(node);
+  static DeltaOp queueClose(NodeId node) => DeltaOpQueueClose(node);
 }
 
 /// Changed-value cell write, `PartialEq`-guarded at the source.
@@ -845,6 +856,83 @@ final class DeltaOpEdgeRemove extends DeltaOp {
 
   @override
   int get hashCode => Object.hash('EdgeRemove', dependent, dependency);
+}
+
+/// QueueCell op-log: one element appended to the queue at [node]
+/// (protocol.md § QueueCell op-log delta form, `#lzdeltaqueueops`). Same body
+/// shape as [DeltaOpCellSet]; [payload] spills/resolves like a CellSet payload.
+final class DeltaOpQueuePush extends DeltaOp {
+  const DeltaOpQueuePush(this.node, this.payload);
+
+  final NodeId node;
+  final IpcValue payload;
+
+  @override
+  Object toWire() => {
+        'QueuePush': {
+          'node': node,
+          'payload': payload.toWire(),
+        },
+      };
+
+  @override
+  bool targetReadable(PeerPermissions permissions, PeerId peer) =>
+      permissions.canRead(peer, node);
+
+  @override
+  bool operator ==(Object other) =>
+      other is DeltaOpQueuePush &&
+      other.node == node &&
+      other.payload == payload;
+
+  @override
+  int get hashCode => Object.hash('QueuePush', node, payload);
+}
+
+/// QueueCell op-log: the head element of the queue at [node] was consumed.
+final class DeltaOpQueuePop extends DeltaOp {
+  const DeltaOpQueuePop(this.node);
+
+  final NodeId node;
+
+  @override
+  Object toWire() => {
+        'QueuePop': {'node': node},
+      };
+
+  @override
+  bool targetReadable(PeerPermissions permissions, PeerId peer) =>
+      permissions.canRead(peer, node);
+
+  @override
+  bool operator ==(Object other) =>
+      other is DeltaOpQueuePop && other.node == node;
+
+  @override
+  int get hashCode => Object.hash('QueuePop', node);
+}
+
+/// QueueCell op-log: the queue at [node] was closed (terminal).
+final class DeltaOpQueueClose extends DeltaOp {
+  const DeltaOpQueueClose(this.node);
+
+  final NodeId node;
+
+  @override
+  Object toWire() => {
+        'QueueClose': {'node': node},
+      };
+
+  @override
+  bool targetReadable(PeerPermissions permissions, PeerId peer) =>
+      permissions.canRead(peer, node);
+
+  @override
+  bool operator ==(Object other) =>
+      other is DeltaOpQueueClose && other.node == node;
+
+  @override
+  int get hashCode => Object.hash('QueueClose', node);
 }
 
 /// The outcome of attempting to apply a [Delta] (lean `ApplyDecision`).

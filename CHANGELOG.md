@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## Unreleased
+
+### Added
+
+- `DeltaOpQueuePush` / `DeltaOpQueuePop` / `DeltaOpQueueClose` — the QueueCell
+  op-log `DeltaOp` variants (protocol.md § QueueCell op-log delta form,
+  `#lzdeltaqueueops`), with `DeltaOp.queuePush` / `queuePop` / `queueClose`
+  constructors. They decode and encode in both the `json` and `msgpack` codecs
+  (previously a schema-valid `Delta` carrying one was rejected as an unknown
+  variant), are permission-filtered by a node-scoped read check like
+  `CellSet` / `Invalidate`, and `spillMessage` spills a `QueuePush` payload
+  exactly like a `CellSet` payload. The vendored
+  `codec/frame_roundtrip_{json,msgpack}.json` fixtures are resynced to the
+  10-op Delta scenario.
+
 ## 0.32.0 - 2026-09-29
 
 ### Added
