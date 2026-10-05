@@ -6,10 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
-## Unreleased
+## 0.33.0 - 2026-10-04
 
 ### Added
 
+- `SimConsumerTestkit` (`package:lazily/sim_consumer_testkit.dart`) — applies
+  one generated history to a deterministic in-memory consumer and explicitly
+  selected Postgres, NATS, or external-process adapters, with a narrow
+  `SimConsumerWorldEvidence` seam; the canonical runner covers all five
+  `simulation/consumer_testkit.json` scenarios.
 - `DeltaOpQueuePush` / `DeltaOpQueuePop` / `DeltaOpQueueClose` — the QueueCell
   op-log `DeltaOp` variants (protocol.md § QueueCell op-log delta form,
   `#lzdeltaqueueops`), with `DeltaOp.queuePush` / `queuePop` / `queueClose`
