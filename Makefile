@@ -34,7 +34,7 @@
 LAZILY_CONFORMANCE_RUN_ID := $(shell echo "make-$$(date -u +%s)-$$$$-$$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')")
 export LAZILY_CONFORMANCE_RUN_ID
 
-.PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach core-conformance-report
+.PHONY: check fmt fmt-fix analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach core-conformance-report
 
 # lazily-dart had no Makefile; verification was ad-hoc `dart analyze` + `dart test`.
 # The conformance-coverage guard needs somewhere to hang, and a named `check` makes
@@ -43,8 +43,15 @@ export LAZILY_CONFORMANCE_RUN_ID
 # `conformance-coverage` runs AFTER `test`, not before: the guard now reads the
 # runtime manifest the suite writes, so ordering it first would only ever see the
 # previous run's evidence, or none at all.
-check: fmt analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach
+check: fmt analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach
 	@echo "lazily-dart: check OK"
+
+# Resolve the focused facade with Dart's native analyzer element model and
+# compare every exported declaration/member with the committed normalized
+# generation-1 snapshot. The same command also validates deprecation lifecycle
+# and independently-shipped-module compatibility metadata.
+core-api-check:
+	dart run tool/core_api_snapshot.dart
 
 assertion-ordering-check:
 	python3 ../lazily-spec/scripts/check-assertion-ordering.py --binding dart --root .

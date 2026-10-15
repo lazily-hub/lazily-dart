@@ -1,0 +1,6 @@
+{
+  "schema_version": 1,
+  "core_api_generation": 1,
+  "independently_shipped_modules": [],
+  "not_applicable_reason": "Dart capabilities ship in the same lazily Pub package as Core; there is no independently versioned Dart module to test against oldest/current Core generations."
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "core_api_generation": 1,
+  "policy": {
+    "minimum_compatible_cohorts": 2,
+    "minimum_days": 90
+  },
+  "deprecations": [
+    {
+      "symbol": "Cell",
+      "introduced": "0.2.0",
+      "deprecated_since": "0.25.0",
+      "replacement": "Source",
+      "minimum_compatible_cohorts": 2,
+      "minimum_days": 90,
+      "earliest_removal": "1.0.0"
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+# lazily Dart Core API
+format 1
+core_api_generation 1
+export Cell | type alias | typedef Cell<out T> = Source<T> | deprecated=true
+export Compute | class | class Compute implements ComputeOps | deprecated=false
+hierarchy Compute | extends Object | implements ComputeOps
+member Compute.batch | method | void batch(void Function() run) | deprecated=false
+member Compute.cell | method | Source<T> cell<T>(T value) | deprecated=false
+member Compute.computed | method | Computed<T> computed<T>(T Function(Compute) compute) | deprecated=false
+member Compute.computedRippleWhen | method | Computed<T> computedRippleWhen<T>(T Function(Compute) compute, bool Function(T, T) changed) | deprecated=false
+member Compute.context | getter | Context get context | deprecated=false
+member Compute.effect | method | Effect effect(void Function()? Function(Compute) run) | deprecated=false
+member Compute.get | method | T get<T>(ComputeReadable<T> handle) | deprecated=false
+member Compute.set | method | void set<T>(Source<T> cell, T value) | deprecated=false
+member Compute.slot | method | Slot<T> slot<T>(T Function(Compute) compute, {String? name}) | deprecated=false
+member Compute.source | method | Source<T> source<T>(T value) | deprecated=false
+member Compute.toString | method | String toString() | deprecated=false
+member Compute.untracked | method | R untracked<R>(R Function() body) | deprecated=false
+export ComputeOps | class | abstract interface class ComputeOps | deprecated=false
+hierarchy ComputeOps | extends Object
+member ComputeOps.ComputeOps | constructor | ComputeOps ComputeOps() | deprecated=false
+member ComputeOps.batch | method | void batch(void Function() run) | deprecated=false
+member ComputeOps.cell | method | Source<T> cell<T>(T value) | deprecated=false
+member ComputeOps.computed | method | Computed<T> computed<T>(T Function(Compute) compute) | deprecated=false
+member ComputeOps.computedRippleWhen | method | Computed<T> computedRippleWhen<T>(T Function(Compute) compute, bool Function(T, T) changed) | deprecated=false
+member ComputeOps.effect | method | Effect effect(void Function()? Function(Compute) run) | deprecated=false
+member ComputeOps.get | method | T get<T>(ComputeReadable<T> handle) | deprecated=false
+member ComputeOps.set | method | void set<T>(Source<T> cell, T value) | deprecated=false
+member ComputeOps.slot | method | Slot<T> slot<T>(T Function(Compute) compute, {String? name}) | deprecated=false
+member ComputeOps.source | method | Source<T> source<T>(T value) | deprecated=false
+export ComputeReadable | class | abstract interface class ComputeReadable<T> | deprecated=false
+hierarchy ComputeReadable | extends Object
+member ComputeReadable.ComputeReadable | constructor | ComputeReadable<T> ComputeReadable() | deprecated=false
+export Computed | class | class Computed<T> extends _ReactiveNode implements ComputeReadable<T> | deprecated=false
+hierarchy Computed | extends _ReactiveNode | implements ComputeReadable<T>
+member Computed.Computed | constructor | Computed<T> Computed(Context ctx, T Function(Compute) compute, {bool Function(T, T)? changed}) | deprecated=false
+member Computed.call | method | T call() | deprecated=false
+member Computed.ctx | field | Context ctx | deprecated=false
+member Computed.dispose | method | void dispose() | deprecated=false
+member Computed.eager | method | Computed<T> eager() | deprecated=false
+member Computed.get | method | T get() | deprecated=false
+member Computed.isEager | getter | bool get isEager | deprecated=false
+member Computed.lazy | method | void lazy() | deprecated=false
+member Computed.onDispose | method | void onDispose() | deprecated=false
+member Computed.onInvalidate | method | void onInvalidate() | deprecated=false
+member Computed.peek | getter | T get peek | deprecated=false
+member Computed.toString | method | String toString() | deprecated=false
+member Computed.value | getter | T get value | deprecated=false
+export Context | class | class Context implements ComputeOps | deprecated=false
+hierarchy Context | extends Object | implements ComputeOps
+member Context.Context | constructor | Context Context() | deprecated=false
+member Context.batch | method | void batch(void Function() run) | deprecated=false
+member Context.cell | method | Source<T> cell<T>(T value) | deprecated=false
+member Context.clear | method | void clear() | deprecated=false
+member Context.computeDetached | method | T computeDetached<T>(T Function(Compute) body) | deprecated=false
+member Context.computed | method | Computed<T> computed<T>(T Function(Compute) compute) | deprecated=false
+member Context.computedRippleWhen | method | Computed<T> computedRippleWhen<T>(T Function(Compute) compute, bool Function(T, T) changed) | deprecated=false
+member Context.contains | method | bool contains(_ReactiveNode node) | deprecated=false
+member Context.dependencyCount | method | int dependencyCount(GraphNode node) | deprecated=false
+member Context.dependentCount | method | int dependentCount(GraphNode node) | deprecated=false
+member Context.disposeCell | method | void disposeCell(Source<Object?> cell) | deprecated=false
+member Context.disposeEffect | method | void disposeEffect(Effect effect) | deprecated=false
+member Context.disposeNode | method | void disposeNode(GraphNode node) | deprecated=false
+member Context.disposeSlot | method | void disposeSlot(Slot<Object?> slot) | deprecated=false
+member Context.effect | method | Effect effect(void Function()? Function(Compute) run) | deprecated=false
+member Context.evict | method | void evict(_ReactiveNode node) | deprecated=false
+member Context.get | method | T get<T>(ComputeReadable<T> handle) | deprecated=false
+member Context.invalidateSlots | method | void invalidateSlots(List<Slot<dynamic>> slots) | deprecated=false
+member Context.isBatching | getter | bool get isBatching | deprecated=false
+member Context.isNodeDisposed | method | bool isNodeDisposed(GraphNode node) | deprecated=false
+member Context.naivePendingScan | field | bool naivePendingScan | deprecated=false
+member Context.read | method | Object? read(_ReactiveNode node) | deprecated=false
+member Context.runUntracked | method | R runUntracked<R>(R Function() body) | deprecated=false
+member Context.scope | method | TeardownScope scope() | deprecated=false
+member Context.set | method | void set<T>(Source<T> cell, T value) | deprecated=false
+member Context.size | getter | int get size | deprecated=false
+member Context.slot | method | Slot<T> slot<T>(T Function(Compute) compute, {String? name}) | deprecated=false
+member Context.source | method | Source<T> source<T>(T value) | deprecated=false
+member Context.withScope | method | R withScope<R>(R Function(TeardownScope) body) | deprecated=false
+member Context.write | method | void write(_ReactiveNode node, Object? value) | deprecated=false
+export DisposedNodeError | class | class DisposedNodeError extends StateError | deprecated=false
+hierarchy DisposedNodeError | extends StateError
+member DisposedNodeError.DisposedNodeError | constructor | DisposedNodeError DisposedNodeError(Object node) | deprecated=false
+member DisposedNodeError.node | field | Object node | deprecated=false
+export Effect | class | class Effect extends _ReactiveNode | deprecated=false
+hierarchy Effect | extends _ReactiveNode
+member Effect.Effect | constructor | Effect Effect(Context ctx, void Function()? Function(Compute) run) | deprecated=false
+member Effect.ctx | field | Context ctx | deprecated=false
+member Effect.dispose | method | void dispose() | deprecated=false
+member Effect.isActive | getter | bool get isActive | deprecated=false
+member Effect.onDispose | method | void onDispose() | deprecated=false
+member Effect.onInvalidate | method | void onInvalidate() | deprecated=false
+member Effect.toString | method | String toString() | deprecated=false
+export EffectRun | type alias | typedef EffectRun = void Function()? Function(Compute cx) | deprecated=false
+export GraphNode | class | sealed class GraphNode | deprecated=false
+hierarchy GraphNode | extends Object
+member GraphNode.GraphNode | constructor | GraphNode GraphNode() | deprecated=false
+export Slot | class | class Slot<T> extends _ReactiveNode implements ComputeReadable<T> | deprecated=false
+hierarchy Slot | extends _ReactiveNode | implements ComputeReadable<T>
+member Slot.Slot | constructor | Slot<T> Slot(Context ctx, T Function(Compute) compute, {String? name}) | deprecated=false
+member Slot.call | method | T call() | deprecated=false
+member Slot.clearDependents | method | void clearDependents() | deprecated=false
+member Slot.ctx | field | Context ctx | deprecated=false
+member Slot.dispose | method | void dispose() | deprecated=false
+member Slot.isDisposed | getter | bool get isDisposed | deprecated=false
+member Slot.name | field | String? name | deprecated=false
+member Slot.onDispose | method | void onDispose() | deprecated=false
+member Slot.onInvalidate | method | void onInvalidate() | deprecated=false
+member Slot.peek | getter | T? get peek | deprecated=false
+member Slot.toString | method | String toString() | deprecated=false
+export Source | class | class Source<T> extends _ReactiveNode implements ComputeReadable<T> | deprecated=false
+hierarchy Source | extends _ReactiveNode | implements ComputeReadable<T>
+member Source.Source | constructor | Source<T> Source(Context ctx, T initialValue) | deprecated=false
+member Source.ctx | field | Context ctx | deprecated=false
+member Source.dispose | method | void dispose() | deprecated=false
+member Source.get | method | T get() | deprecated=false
+member Source.invalidate | method | void invalidate() | deprecated=false
+member Source.isDisposed | getter | bool get isDisposed | deprecated=false
+member Source.merge | method | void merge(T op) | deprecated=false
+member Source.onInvalidate | method | void onInvalidate() | deprecated=false
+member Source.peek | getter | T get peek | deprecated=false
+member Source.set | method | void set(T newValue) | deprecated=false
+member Source.toString | method | String toString() | deprecated=false
+member Source.value | getter | T get value | deprecated=false
+member Source.value | setter | set value(T newValue) | deprecated=false
+export StaleComputeError | class | class StaleComputeError extends StateError | deprecated=false
+hierarchy StaleComputeError | extends StateError
+member StaleComputeError.StaleComputeError | constructor | StaleComputeError StaleComputeError() | deprecated=false
+export TeardownScope | class | class TeardownScope | deprecated=false
+hierarchy TeardownScope | extends Object
+member TeardownScope.adopt | method | T adopt<T extends GraphNode>(T node) | deprecated=false
+member TeardownScope.cell | method | Source<T> cell<T>(T initialValue) | deprecated=false
+member TeardownScope.computed | method | Computed<T> computed<T>(T Function(Compute) compute) | deprecated=false
+member TeardownScope.computedRippleWhen | method | Computed<T> computedRippleWhen<T>(T Function(Compute) compute, bool Function(T, T) changed) | deprecated=false
+member TeardownScope.ctx | field | Context ctx | deprecated=false
+member TeardownScope.disarm | method | void disarm() | deprecated=false
+member TeardownScope.effect | method | Effect effect(void Function()? Function(Compute) run) | deprecated=false
+member TeardownScope.end | method | void end() | deprecated=false
+member TeardownScope.isEmpty | getter | bool get isEmpty | deprecated=false
+member TeardownScope.isEnded | getter | bool get isEnded | deprecated=false
+member TeardownScope.isNotEmpty | getter | bool get isNotEmpty | deprecated=false
+member TeardownScope.length | getter | int get length | deprecated=false
+member TeardownScope.slot | method | Slot<T> slot<T>(T Function(Compute) compute, {String? name}) | deprecated=false
+member TeardownScope.source | method | Source<T> source<T>(T initialValue) | deprecated=false
+member TeardownScope.toString | method | String toString() | deprecated=false
+export computed | function | Computed<T> computed<T>(Context ctx, T Function(Compute) compute) | deprecated=false
+export computedRippleWhen | function | Computed<T> computedRippleWhen<T>(Context ctx, T Function(Compute) compute, bool Function(T, T) changed) | deprecated=false
+export edgeIndexDemoteThreshold | getter | int get edgeIndexDemoteThreshold | deprecated=false
+export edgeIndexPromoteThreshold | getter | int get edgeIndexPromoteThreshold | deprecated=false
+export source | function | Source<T> source<T>(Context ctx, T initialValue) | deprecated=false

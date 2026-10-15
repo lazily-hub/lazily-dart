@@ -14,4 +14,5 @@ topics: [reactive, signals, reactive-programming, state, flutter]
 environment:
   sdk: ^3.5.0
 dev_dependencies:
+  analyzer: 7.7.1
   test: ^1.25.0

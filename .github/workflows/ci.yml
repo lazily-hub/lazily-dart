@@ -145,6 +145,9 @@ jobs:
       - name: Static analysis gate (make analyze)
         run: dart analyze --fatal-infos
 
+      - name: Core API compatibility gate (make core-api-check)
+        run: dart run tool/core_api_snapshot.dart
+
       # Two of the four conformance guards execute INSIDE `dart test` (the
       # unconsumed- and unasserted-assertion-key rungs, via the addTearDown in
       # test/conformance_assertions.dart) and two do not: the fixture-coverage
