@@ -349,3 +349,18 @@ jobs:
           build: true
           test: false
           lint: false
+
+  core-artifact-consumer:
+    name: Core artifact consumer / Dart ${{ matrix.dart }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dart: ["3.5.0", "3.10.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: ${{ matrix.dart }}
+      - name: Core artifact consumer (minimum/current)
+        run: make core-artifact-consumer-check

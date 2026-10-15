@@ -1,0 +1,7 @@
+name: lazily_core_consumer
+publish_to: none
+environment:
+  sdk: ^3.5.0
+dependencies:
+  lazily:
+    path: __ARTIFACT__
