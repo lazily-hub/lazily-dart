@@ -10,7 +10,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/lazily"
 tar -xf "$tmp/lazily-dart.tar" -C "$tmp/lazily"
 mkdir -p "$tmp/consumer/bin"
-cp "$root/tests/core_artifact_consumer/pubspec.yaml" "$tmp/consumer/pubspec.yaml"
+cp "$root/tests/core_artifact_consumer/pubspec.yaml.in" "$tmp/consumer/pubspec.yaml"
 cp "$root/tests/core_artifact_consumer/bin/main.dart" "$tmp/consumer/bin/main.dart"
 sed -i "s|__ARTIFACT__|$tmp/lazily|" "$tmp/consumer/pubspec.yaml"
 
