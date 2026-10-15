@@ -34,7 +34,7 @@
 LAZILY_CONFORMANCE_RUN_ID := $(shell echo "make-$$(date -u +%s)-$$$$-$$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')")
 export LAZILY_CONFORMANCE_RUN_ID
 
-.PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach
+.PHONY: check fmt fmt-fix analyze test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach core-conformance-report
 
 # lazily-dart had no Makefile; verification was ad-hoc `dart analyze` + `dart test`.
 # The conformance-coverage guard needs somewhere to hang, and a named `check` makes
@@ -144,3 +144,9 @@ unbound-block-check:
 
 formal-check:
 	dart tool/formal_check.dart
+
+# Emits an observed Core report at LAZILY_CORE_REPORT_PATH. The generator runs
+# the canonical reactive-graph runner across every shipped execution flavor and
+# writes fresh assertion evidence beneath LAZILY_CORE_REPORTS_ROOT/dart.
+core-conformance-report:
+	python3 scripts/generate-core-conformance-report.py

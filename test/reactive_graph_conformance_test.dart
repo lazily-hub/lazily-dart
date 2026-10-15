@@ -16,8 +16,8 @@ import 'conformance_manifest.dart';
 /// `cell -> a -> b -> c` served a stale value at depth forever. The fixture was
 /// already in the shared corpus and dart replayed nothing from it. A binding
 /// that only replays the corpus against its *default* context can pass while
-/// its async path is broken, which is why every fixture here runs against BOTH
-/// [Context] and [AsyncContext].
+/// its async path is broken, which is why every fixture here runs against
+/// [Context], [ThreadSafeContext], and [AsyncContext].
 ///
 /// ## Resolution (`#lzspecconf`)
 ///
@@ -300,7 +300,9 @@ abstract class _Model {
 /// The synchronous [Context] with lazy [Slot]s, [Cell]s, [Effect]s, and
 /// [TeardownScope]s.
 class _SyncModel implements _Model {
-  final Context ctx = Context();
+  _SyncModel([Context? context]) : ctx = context ?? Context();
+
+  final Context ctx;
   final Map<String, GraphNode> nodes = {};
   final Map<String, TeardownScope> scopes = {};
 
@@ -352,7 +354,11 @@ class _SyncModel implements _Model {
 
   @override
   void defineComputed(
-      String id, List<String> reads, num offset, String? scope) {
+    String id,
+    List<String> reads,
+    num offset,
+    String? scope,
+  ) {
     final slot = Slot<num>(ctx, _body(id, reads, offset), name: id);
     if (scope != null) scopes[scope]!.adopt(slot);
     nodes[id] = slot;
@@ -451,8 +457,10 @@ class _SyncModel implements _Model {
   /// absence read `nodes[id]` directly.
   Object _node(String id) =>
       nodes[id] ??
-      (throw StateError('no node `$id` — this replay never made one, so '
-          'nothing here is a measurement of it'));
+      (throw StateError(
+        'no node `$id` — this replay never made one, so '
+        'nothing here is a measurement of it',
+      ));
 
   @override
   _Kind kindOf(String id) {
@@ -488,6 +496,92 @@ class _SyncModel implements _Model {
 
   @override
   Future<void> dispose() async {}
+}
+
+/// The same graph replayed through [ThreadSafeContext]'s guarded public
+/// surface. The inner model owns the fixture bookkeeping, while every operation
+/// crosses the reentrant lock boundary instead of reaching the wrapped
+/// [Context] directly.
+class _ThreadSafeModel implements _Model {
+  _ThreadSafeModel() : this._(ThreadSafeContext());
+  _ThreadSafeModel._(this.guarded) : inner = _SyncModel(guarded.context);
+
+  final ThreadSafeContext guarded;
+  final _SyncModel inner;
+
+  T _read<T>(T Function() fn) => guarded.read((_) => fn());
+  void _write(void Function() fn) => guarded.withLock((_) => fn());
+  Future<T> _future<T>(Future<T> Function() fn) => _read(fn);
+
+  @override
+  String get name => 'ThreadSafeContext';
+  @override
+  List<String> get runLog => inner.runLog;
+  @override
+  List<String> get cleanupLog => inner.cleanupLog;
+  @override
+  Map<String, int> get computes => inner.computes;
+  @override
+  Iterable<String> get nodeIds => _read(() => inner.nodeIds.toList());
+
+  @override
+  void failNext(String id, int count) =>
+      _write(() => inner.failNext(id, count));
+  @override
+  void defineCell(String id, num value, String? scope) =>
+      _write(() => inner.defineCell(id, value, scope));
+  @override
+  void defineComputed(
+    String id,
+    List<String> reads,
+    num offset,
+    String? scope,
+  ) => _write(() => inner.defineComputed(id, reads, offset, scope));
+  @override
+  void defineEffect(String id, List<String> reads, String? scope) =>
+      _write(() => inner.defineEffect(id, reads, scope));
+  @override
+  void defineSignal(String id, List<String> reads, num offset, String? scope) =>
+      _write(() => inner.defineSignal(id, reads, offset, scope));
+  @override
+  Future<void> disposeSignal(String id) =>
+      _future(() => inner.disposeSignal(id));
+  @override
+  Future<void> runBatch(List<(String, num)> writes) async {
+    guarded.batch(() {
+      for (final (id, value) in writes) {
+        (inner.nodes[id] as Source<num>).value = value;
+      }
+    });
+  }
+
+  @override
+  Future<num> read(String id) => _future(() => inner.read(id));
+  @override
+  Future<void> setCell(String id, num value) =>
+      _future(() => inner.setCell(id, value));
+  @override
+  Future<void> disposeId(String id) => _future(() => inner.disposeId(id));
+  @override
+  _Kind kindOf(String id) => _read(() => inner.kindOf(id));
+  @override
+  bool isEffectActive(String id) => _read(() => inner.isEffectActive(id));
+  @override
+  int dependentsOf(String id) => _read(() => inner.dependentsOf(id));
+  @override
+  int dependenciesOf(String id) => _read(() => inner.dependenciesOf(id));
+  @override
+  void beginScope(String name) => _write(() => inner.beginScope(name));
+  @override
+  Future<void> endScope(String name) => _future(() => inner.endScope(name));
+  @override
+  void disarmScope(String name) => _write(() => inner.disarmScope(name));
+  @override
+  int scopeOwned(String name) => _read(() => inner.scopeOwned(name));
+  @override
+  Future<void> settle() => _future(inner.settle);
+  @override
+  Future<void> dispose() => _future(inner.dispose);
 }
 
 /// The [AsyncContext] — the path where the cascade defect fixed in `c91a32a`
@@ -538,20 +632,26 @@ class _AsyncModel implements _Model {
   /// The one place a synthesized compute body lives, so `computes_of` counts
   /// exactly the invocations it claims to and `computed`/`signal` cannot drift.
   Future<num> Function(AsyncComputeContext) _body(
-          String id, List<String> reads, num offset) =>
-      (cc) async {
-        computes[id] = (computes[id] ?? 0) + 1;
-        if (_takeArmed(id)) throw ComputeFailed(id);
-        var sum = offset;
-        for (final r in reads) {
-          sum += await _readNode(cc, r);
-        }
-        return sum;
-      };
+    String id,
+    List<String> reads,
+    num offset,
+  ) => (cc) async {
+    computes[id] = (computes[id] ?? 0) + 1;
+    if (_takeArmed(id)) throw ComputeFailed(id);
+    var sum = offset;
+    for (final r in reads) {
+      sum += await _readNode(cc, r);
+    }
+    return sum;
+  };
 
   @override
   void defineComputed(
-      String id, List<String> reads, num offset, String? scope) {
+    String id,
+    List<String> reads,
+    num offset,
+    String? scope,
+  ) {
     final slot = ctx.computedAsync<num>(_body(id, reads, offset));
     if (scope != null) scopes[scope]!.adopt(slot);
     nodes[id] = slot;
@@ -646,8 +746,10 @@ class _AsyncModel implements _Model {
   /// absence read `nodes[id]` directly.
   Object _node(String id) =>
       nodes[id] ??
-      (throw StateError('no node `$id` — this replay never made one, so '
-          'nothing here is a measurement of it'));
+      (throw StateError(
+        'no node `$id` — this replay never made one, so '
+        'nothing here is a measurement of it',
+      ));
 
   @override
   _Kind kindOf(String id) {
@@ -703,16 +805,17 @@ class _Observation {
   final Map<String, int> degrees = {};
 
   String describe() => jsonEncode({
-        'cleanup_order': cleanupOrder,
-        'readable': _sorted(readable),
-        'reads': _sorted(reads),
-        'after_publish_observed': afterPublishObserved,
-        'after_publish_reads': _sorted(afterPublishReads),
-        'degrees': _sorted(degrees),
-      });
+    'cleanup_order': cleanupOrder,
+    'readable': _sorted(readable),
+    'reads': _sorted(reads),
+    'after_publish_observed': afterPublishObserved,
+    'after_publish_reads': _sorted(afterPublishReads),
+    'degrees': _sorted(degrees),
+  });
 
-  static Map<String, Object?> _sorted(Map<String, Object?> m) =>
-      {for (final k in m.keys.toList()..sort()) k: m[k]};
+  static Map<String, Object?> _sorted(Map<String, Object?> m) => {
+    for (final k in m.keys.toList()..sort()) k: m[k],
+  };
 }
 
 /// What a single fixture replay actually did. `ops`/`checks` are what promote a
@@ -743,20 +846,24 @@ List<Map<String, dynamic>> _stepsOf(Map<String, dynamic> node, String fixture) {
   final steps = node['steps'];
   if (steps is! List) {
     throw StateError(
-        '$fixture: declares no `steps` list (got ${steps.runtimeType}) — a '
-        'fixture this runner cannot read its op stream from is a gap in this '
-        'host, never a fixture to relax');
+      '$fixture: declares no `steps` list (got ${steps.runtimeType}) — a '
+      'fixture this runner cannot read its op stream from is a gap in this '
+      'host, never a fixture to relax',
+    );
   }
   return steps.cast<Map<String, dynamic>>();
 }
 
 List<Map<String, dynamic>> _scenariosOf(
-    Map<String, dynamic> fx, String fixture) {
+  Map<String, dynamic> fx,
+  String fixture,
+) {
   final scenarios = fx['scenarios'];
   if (scenarios is! List) {
     throw StateError(
-        '$fixture: shape is `scenarios` but it declares no `scenarios` list '
-        '(got ${scenarios.runtimeType})');
+      '$fixture: shape is `scenarios` but it declares no `scenarios` list '
+      '(got ${scenarios.runtimeType})',
+    );
   }
   return scenarios.cast<Map<String, dynamic>>();
 }
@@ -764,14 +871,17 @@ List<Map<String, dynamic>> _scenariosOf(
 String _opTypeOf(Map<String, dynamic> step, String fixture, int index) {
   final op = step['op'];
   if (op is! Map) {
-    throw StateError('$fixture: step $index declares no `op` object (got '
-        '${op.runtimeType})');
+    throw StateError(
+      '$fixture: step $index declares no `op` object (got '
+      '${op.runtimeType})',
+    );
   }
   final type = op['type'];
   if (type is! String) {
     throw StateError(
-        '$fixture: step $index has an `op` with no string `type` (got '
-        '${type.runtimeType})');
+      '$fixture: step $index has an `op` with no string `type` (got '
+      '${type.runtimeType})',
+    );
   }
   return type;
 }
@@ -793,11 +903,12 @@ Set<String> _opsOf(Map<String, dynamic> fx, String fixture) {
     }
   } else {
     throw StateError(
-        '$fixture: unknown fixture shape $shape — this runner models `steps` '
-        'and `scenarios` only. Add the shape, or record the fixture in '
-        'expectedSkips/parkedFixtures with a reason (and in KNOWN_UNCOVERED in '
-        'scripts/check-conformance-coverage.sh if this binding stops opening '
-        'it at all)');
+      '$fixture: unknown fixture shape $shape — this runner models `steps` '
+      'and `scenarios` only. Add the shape, or record the fixture in '
+      'expectedSkips/parkedFixtures with a reason (and in KNOWN_UNCOVERED in '
+      'scripts/check-conformance-coverage.sh if this binding stops opening '
+      'it at all)',
+    );
   }
   return out;
 }
@@ -933,12 +1044,17 @@ Future<_Report> _replay(
       case 'dispose_stale_handle':
         final of = op['handle_of'] as String;
         final want = op['handle_kind'] as String;
-        expect(model.kindOf(of).name, want,
-            reason: '$fixture#$i: handle_kind does not match recorded handle');
+        expect(
+          model.kindOf(of).name,
+          want,
+          reason: '$fixture#$i: handle_kind does not match recorded handle',
+        );
         await model.disposeId(of);
       default:
-        throw StateError('$fixture#$i: unsupported op $type reached the '
-            'engine — the runnability filter should have skipped this fixture');
+        throw StateError(
+          '$fixture#$i: unsupported op $type reached the '
+          'engine — the runnability filter should have skipped this fixture',
+        );
     }
 
     await model.settle();
@@ -957,9 +1073,11 @@ Future<_Report> _replay(
 
     final unknown = expect_.keys.toSet().difference(knownExpectKeys);
     if (unknown.isNotEmpty) {
-      throw StateError('$fixture#$i: unrecognised assertion key(s) '
-          '${unknown.toList()..sort()} — refusing to report green against an '
-          'assertion this runner does not evaluate');
+      throw StateError(
+        '$fixture#$i: unrecognised assertion key(s) '
+        '${unknown.toList()..sort()} — refusing to report green against an '
+        'assertion this runner does not evaluate',
+      );
     }
 
     // Sorted so evaluation order is deterministic and matches the reference
@@ -983,28 +1101,40 @@ Future<_Report> _replay(
         // The `scenarios` tail already bounds its counterparts this way; the
         // per-step loop did not, only because it drives its own SORTED walk.
         case 'dependents_of':
-          final m = subKeyOf(expect_, key, model.nodeIds,
-              where: '#$i $key',
-              reason: '#$i dependents_of names an id this replay never '
-                  'made');
+          final m = subKeyOf(
+            expect_,
+            key,
+            model.nodeIds,
+            where: '#$i $key',
+            reason:
+                '#$i dependents_of names an id this replay never '
+                'made',
+          );
           for (final id in m.keys.toList()..sort()) {
             assertKeyWith<void>(
-                m,
-                id,
-                (want) =>
-                    check('dependents_of.$id', model.dependentsOf(id), want));
+              m,
+              id,
+              (want) =>
+                  check('dependents_of.$id', model.dependentsOf(id), want),
+            );
           }
         case 'dependencies_of':
-          final m = subKeyOf(expect_, key, model.nodeIds,
-              where: '#$i $key',
-              reason: '#$i dependencies_of names an id this replay never '
-                  'made');
+          final m = subKeyOf(
+            expect_,
+            key,
+            model.nodeIds,
+            where: '#$i $key',
+            reason:
+                '#$i dependencies_of names an id this replay never '
+                'made',
+          );
           for (final id in m.keys.toList()..sort()) {
             assertKeyWith<void>(
-                m,
-                id,
-                (want) => check(
-                    'dependencies_of.$id', model.dependenciesOf(id), want));
+              m,
+              id,
+              (want) =>
+                  check('dependencies_of.$id', model.dependenciesOf(id), want),
+            );
           }
         case 'computes_of':
           // Sorts before `read`/`readable`/`value`, and that is load-bearing
@@ -1014,18 +1144,23 @@ Future<_Report> _replay(
           // asserts `readable` and `computes_of` in the same step precisely to
           // catch a puller that survived disposal, and it only discriminates
           // if the count is taken before the read.
-          final m = subKeyOf(expect_, key, model.nodeIds,
-              where: '#$i $key',
-              reason: '#$i computes_of names an id this replay never made. '
-                  '`computes[id] ?? 0` cannot tell "this node exists and has '
-                  'not computed" from "there is no such node", so without this '
-                  'bound a typo satisfied any expectation of 0');
+          final m = subKeyOf(
+            expect_,
+            key,
+            model.nodeIds,
+            where: '#$i $key',
+            reason:
+                '#$i computes_of names an id this replay never made. '
+                '`computes[id] ?? 0` cannot tell "this node exists and has '
+                'not computed" from "there is no such node", so without this '
+                'bound a typo satisfied any expectation of 0',
+          );
           for (final id in m.keys.toList()..sort()) {
             assertKeyWith<void>(
-                m,
-                id,
-                (want) =>
-                    check('computes_of.$id', model.computes[id] ?? 0, want));
+              m,
+              id,
+              (want) => check('computes_of.$id', model.computes[id] ?? 0, want),
+            );
           }
         case 'error':
           // Any non-null error code means "this op must fail"; null means "must
@@ -1033,55 +1168,76 @@ Future<_Report> _replay(
           // the code so the contract is legible, and each binding's own tests
           // pin which error type it throws.
           assertKeyWith<void>(
-              expect_, key, (want) => check('error', opError, want != null));
+            expect_,
+            key,
+            (want) => check('error', opError, want != null),
+          );
         case 'value':
           if (rawExpect['error'] != null) {
             excuseKey(
-                expect_,
-                key,
-                'the same step asserts a non-null `error`, so the op must FAIL '
-                'and there is no value it could have produced; the `error` key '
-                'above carries this step\'s obligation');
+              expect_,
+              key,
+              'the same step asserts a non-null `error`, so the op must FAIL '
+              'and there is no value it could have produced; the `error` key '
+              'above carries this step\'s obligation',
+            );
             break;
           }
           if (type == 'read') {
             assertKeyWith<void>(
-                expect_,
-                key,
-                (want) => check(
-                    'value', opError ? 'read_after_dispose' : opValue, want));
+              expect_,
+              key,
+              (want) => check(
+                'value',
+                opError ? 'read_after_dispose' : opValue,
+                want,
+              ),
+            );
           } else {
             // `value` on a non-read op asserts the value of the node the op
             // names, observed after the op ran. The signal fixtures use it
             // on the creation step. It sorts after `computes_of`, so the
             // read this performs cannot inflate the count that step asserts.
             final (v, err) = await readId(op['id'] as String);
-            assertKeyWith<void>(expect_, key,
-                (want) => check('value', err ? 'read_after_dispose' : v, want));
+            assertKeyWith<void>(
+              expect_,
+              key,
+              (want) => check('value', err ? 'read_after_dispose' : v, want),
+            );
           }
         case 'read':
           final m = subKey(expect_, key, '#$i $key');
           for (final id in m.keys.toList()..sort()) {
             final (value, err) = await readId(id);
             assertKeyWith<void>(
-                m,
-                id,
-                (want) => check(
-                    'read.$id', err ? 'read_after_dispose' : value, want));
+              m,
+              id,
+              (want) =>
+                  check('read.$id', err ? 'read_after_dispose' : value, want),
+            );
           }
         case 'readable':
           final m = subKey(expect_, key, '#$i $key');
           for (final id in m.keys.toList()..sort()) {
             final ok = await alive(id);
             assertKeyWith<void>(
-                m, id, (want) => check('readable.$id', ok, want));
+              m,
+              id,
+              (want) => check('readable.$id', ok, want),
+            );
           }
         case 'observed_by':
-          assertKeyWith<void>(expect_, key,
-              (want) => check('observed_by', observed, _strs(want)));
+          assertKeyWith<void>(
+            expect_,
+            key,
+            (want) => check('observed_by', observed, _strs(want)),
+          );
         case 'observed_count':
-          assertKeyWith<void>(expect_, key,
-              (want) => check('observed_count', observed.length, want));
+          assertKeyWith<void>(
+            expect_,
+            key,
+            (want) => check('observed_count', observed.length, want),
+          );
         case 'cleanup_order':
           // Only effects run a cleanup callback, so the expected order is
           // projected onto its effect entries.
@@ -1101,10 +1257,11 @@ Future<_Report> _replay(
           final m = subKey(expect_, key, '#$i $key');
           for (final n in m.keys.toList()..sort()) {
             assertKeyWith<void>(
-                m,
-                n,
-                (want) =>
-                    check('scope_owned_count.$n', model.scopeOwned(n), want));
+              m,
+              n,
+              (want) =>
+                  check('scope_owned_count.$n', model.scopeOwned(n), want),
+            );
           }
         default:
           throw StateError('$fixture#$i: unhandled assertion key $key');
@@ -1158,35 +1315,51 @@ Future<_Report> _replay(
     // The descend found `type` unconsumed (`#lzsubblockkeyset`): this runner
     // assumed a `set_cell` and would have replayed anything else as one.
     assertKeyWith<void>(
-        publishOp,
-        'type',
-        (v) => expect(v, 'set_cell',
-            reason: 'after_publish.op: this runner only replays set_cell'));
+      publishOp,
+      'type',
+      (v) => expect(
+        v,
+        'set_cell',
+        reason: 'after_publish.op: this runner only replays set_cell',
+      ),
+    );
     await model.setCell(
-        assertKeyWith<String>(publishOp, 'id', (v) => v as String),
-        assertKeyWith<num>(publishOp, 'value', (v) => v as num));
+      assertKeyWith<String>(publishOp, 'id', (v) => v as String),
+      assertKeyWith<num>(publishOp, 'value', (v) => v as num),
+    );
     await model.settle();
     report.observation.afterPublishObserved = model.runLog.sublist(before);
     assertKeyWith(publish, 'observed_by', (v) {
-      check('after_publish.observed_by',
-          report.observation.afterPublishObserved, _strs(v));
+      check(
+        'after_publish.observed_by',
+        report.observation.afterPublishObserved,
+        _strs(v),
+      );
     });
     // Order matches the reference runner: reads (which re-register edges in a
     // lazy binding) precede the degree assertions that count them.
     for (final id in _sortedKeys(publish, 'read')) {
       final (value, err) = await readId(id);
-      report.observation.afterPublishReads[id] =
-          err ? 'read_after_dispose' : value;
+      report.observation.afterPublishReads[id] = err
+          ? 'read_after_dispose'
+          : value;
     }
     assertKeysOf(publish, 'read', model.nodeIds, (id, want) {
-      check('after_publish.read.$id', report.observation.afterPublishReads[id],
-          want);
+      check(
+        'after_publish.read.$id',
+        report.observation.afterPublishReads[id],
+        want,
+      );
     }, reason: 'after_publish.read names an id this replay never made');
-    assertKeysOf(publish, 'dependents_of', model.nodeIds, (id, want) {
-      check('after_publish.dependents_of.$id', model.dependentsOf(id), want);
-    },
-        reason:
-            'after_publish.dependents_of names an id this replay never made');
+    assertKeysOf(
+      publish,
+      'dependents_of',
+      model.nodeIds,
+      (id, want) {
+        check('after_publish.dependents_of.$id', model.dependentsOf(id), want);
+      },
+      reason: 'after_publish.dependents_of names an id this replay never made',
+    );
   }
 
   return report;
@@ -1240,9 +1413,13 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
       .map((f) => f.uri.pathSegments.last)
       .toSet();
 
-  expect(files, equals(expectedFixtures),
-      reason: 'reactive-graph fixture set drifted; every fixture must be '
-          'replayed by this runner');
+  expect(
+    files,
+    equals(expectedFixtures),
+    reason:
+        'reactive-graph fixture set drifted; every fixture must be '
+        'replayed by this runner',
+  );
 
   final executed = <String>{};
   final skipped = <String, String>{};
@@ -1252,8 +1429,8 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
 
   for (final name in expectedFixtures.toList()..sort()) {
     final fx = (attributeFixture(
-            jsonDecode(File('$specDir/$name').specReadAsStringSync())) as Map)
-        .cast<String, dynamic>();
+      jsonDecode(File('$specDir/$name').specReadAsStringSync()),
+    ) as Map).cast<String, dynamic>();
     final unsupported = _opsOf(fx, name).difference(supportedOps).toList()
       ..sort();
     // A parked fixture is skipped before the op filter (it uses only supported
@@ -1308,10 +1485,15 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
       final pair = expectedTail == null
           ? const <String>[]
           : assertKeyWith(
-              expectedTail, 'observationally_equal', (v) => _strs(v));
+              expectedTail,
+              'observationally_equal',
+              (v) => _strs(v),
+            );
       if (pair.isNotEmpty) {
-        final names =
-            _scenariosOf(fx, name).map((s) => s['name'] as String).toList();
+        final names = _scenariosOf(
+          fx,
+          name,
+        ).map((s) => s['name'] as String).toList();
         final idx = pair.map((p) {
           final at = names.indexOf(p);
           if (at < 0) throw StateError('$name: unknown scenario $p');
@@ -1322,7 +1504,8 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
           final b = reports[idx[w]].observation.describe();
           if (a != b) {
             reports[idx[w]].failures.add(
-                '#observationally_equal — ${pair[w - 1]} $a != ${pair[w]} $b');
+              '#observationally_equal — ${pair[w - 1]} $a != ${pair[w]} $b',
+            );
           }
         }
         totalChecks++;
@@ -1336,8 +1519,11 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
     final ops = reports.fold(0, (a, r) => a + r.ops);
     final checks = reports.fold(0, (a, r) => a + r.checks);
     expect(ops, greaterThan(0), reason: '$modelName/$name: replayed zero ops');
-    expect(checks, greaterThan(0),
-        reason: '$modelName/$name: replayed zero assertions');
+    expect(
+      checks,
+      greaterThan(0),
+      reason: '$modelName/$name: replayed zero assertions',
+    );
 
     for (var si = 0; si < reports.length; si++) {
       for (final f in reports[si].failures) {
@@ -1354,41 +1540,61 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
     totalOps += ops;
     totalChecks += checks;
     stderr.writeln(
-        'reactive-graph[$modelName] $name: $ops ops, $checks assertions');
+      'reactive-graph[$modelName] $name: $ops ops, $checks assertions',
+    );
   }
 
-  stderr.writeln('reactive-graph[$modelName]: ${executed.length}/'
-      '${expectedFixtures.length - expectedSkips.length} replayable fixtures '
-      'replayed ($totalOps ops, $totalChecks assertions), '
-      '${skipped.length} skipped, ${divergences.length} divergences');
+  stderr.writeln(
+    'reactive-graph[$modelName]: ${executed.length}/'
+    '${expectedFixtures.length - expectedSkips.length} replayable fixtures '
+    'replayed ($totalOps ops, $totalChecks assertions), '
+    '${skipped.length} skipped, ${divergences.length} divergences',
+  );
 
   // Divergence ledger: the observed set must equal the documented one, so a new
   // divergence fails the build and a fixed one forces its entry to be deleted.
   // A divergence is a FINDING against the implementation. Never relax the
   // fixture to make this pass.
-  final documented =
-      knownDivergences.where((d) => d.startsWith('$modelName/')).toSet();
-  expect(divergences, equals(documented),
-      reason: '$modelName: divergence ledger is stale — update '
-          'knownDivergences (left = observed, right = documented)');
+  final documented = knownDivergences
+      .where((d) => d.startsWith('$modelName/'))
+      .toSet();
+  expect(
+    divergences,
+    equals(documented),
+    reason:
+        '$modelName: divergence ledger is stale — update '
+        'knownDivergences (left = observed, right = documented)',
+  );
 
   // The skip ledger must match the documented one EXACTLY, in both directions:
   // a fixture that becomes replayable fails here until its entry is deleted,
   // and a newly-unsupported fixture fails here immediately. Never relax a
   // fixture to make this pass. (`#lzmergefeed`.)
-  expect(skipped, equals(expectedSkips),
-      reason: '$modelName: skip ledger drifted — update expectedSkips '
-          '(left = observed, right = documented)');
+  expect(
+    skipped,
+    equals(expectedSkips),
+    reason:
+        '$modelName: skip ledger drifted — update expectedSkips '
+        '(left = observed, right = documented)',
+  );
 
   final replayable = expectedFixtures.difference(expectedSkips.keys.toSet());
-  expect(executed, equals(replayable),
-      reason: 'found ${expectedFixtures.length} fixture file(s) under $specDir '
-          '(${replayable.length} replayable, ${expectedSkips.length} skipped) '
-          'but did not replay them all. A non-empty fixture directory is not '
-          'evidence of coverage — skipped: $skipped');
-  expect(executed, contains('transitive_invalidation_reaches_depth.json'),
-      reason: 'the transitive-depth fixture pins the async invalidation '
-          'cascade fixed in c91a32a and must run against every context');
+  expect(
+    executed,
+    equals(replayable),
+    reason:
+        'found ${expectedFixtures.length} fixture file(s) under $specDir '
+        '(${replayable.length} replayable, ${expectedSkips.length} skipped) '
+        'but did not replay them all. A non-empty fixture directory is not '
+        'evidence of coverage — skipped: $skipped',
+  );
+  expect(
+    executed,
+    contains('transitive_invalidation_reaches_depth.json'),
+    reason:
+        'the transitive-depth fixture pins the async invalidation '
+        'cascade fixed in c91a32a and must run against every context',
+  );
   expect(totalOps, greaterThan(0), reason: 'executed zero ops');
   expect(totalChecks, greaterThan(0), reason: 'executed zero assertions');
 }
@@ -1396,30 +1602,46 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
 void main() {
   final skipReason = specFamilySkipReason('reactive-graph');
   if (skipReason != null) {
-    stderr.writeln('skipping: $specDir absent - run with the lazily-spec '
-        'sibling checked out');
+    stderr.writeln(
+      'skipping: $specDir absent - run with the lazily-spec '
+      'sibling checked out',
+    );
     test(
       'reactive-graph conformance',
       () {},
-      skip: '$specDir absent - clone lazily-spec as a sibling to run the '
+      skip:
+          '$specDir absent - clone lazily-spec as a sibling to run the '
           'reactive-graph fixtures',
     );
     return;
   }
 
-  test('reactive-graph conformance [Context]',
-      () => _runCorpus(_SyncModel.new, 'Context'),
-      timeout: const Timeout(Duration(minutes: 2)));
+  test(
+    'reactive-graph conformance [Context]',
+    () => _runCorpus(_SyncModel.new, 'Context'),
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 
-  test('reactive-graph conformance [AsyncContext]',
-      () => _runCorpus(_AsyncModel.new, 'AsyncContext'),
-      timeout: const Timeout(Duration(minutes: 10)));
+  test(
+    'reactive-graph conformance [ThreadSafeContext]',
+    () => _runCorpus(_ThreadSafeModel.new, 'ThreadSafeContext'),
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
+
+  test(
+    'reactive-graph conformance [AsyncContext]',
+    () => _runCorpus(_AsyncModel.new, 'AsyncContext'),
+    timeout: const Timeout(Duration(minutes: 10)),
+  );
 
   test('divergence ledger names only known models', () {
     const models = {'Context', 'AsyncContext'};
     for (final entry in knownDivergences) {
-      expect(models, contains(entry.split('/').first),
-          reason: 'knownDivergences names an unknown model');
+      expect(
+        models,
+        contains(entry.split('/').first),
+        reason: 'knownDivergences names an unknown model',
+      );
     }
   });
 }

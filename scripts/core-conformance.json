@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "profile_id": "core-v1",
+  "binding_id": "dart",
+  "report_command": [
+    "python3",
+    "scripts/generate-core-conformance-report.py"
+  ],
+  "runtime_skips": [
+    {
+      "fixture": "reactive-graph/feedback_drain_bound_reports_exhaustion.json",
+      "scenario": "*",
+      "reason": "The reactive scheduler has no bounded-drain exhaustion result; replaying this divergent fixture would not terminate."
+    }
+  ],
+  "fixtureless_claims": []
+}

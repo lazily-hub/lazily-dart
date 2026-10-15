@@ -275,6 +275,17 @@ lazily-dart replays the shared [`lazily-spec`][spec] conformance fixtures:
   five `simulation/consumer_testkit.json` scenarios, including localized
   observation, history-prefix, and simulation-bypass failures.
 
+### Core qualification report
+
+`scripts/core-conformance.json` declares the `core-v1` report command. The
+command replays the 16 Core reactive-graph fixtures against `Context`,
+`ThreadSafeContext`, and `AsyncContext`, writes fresh assertion-consumption
+evidence beneath `$LAZILY_CORE_REPORTS_ROOT/dart`, and emits the report at
+`$LAZILY_CORE_REPORT_PATH`. The divergent feedback-drain fixture remains an
+explicit whole-fixture skip until the scheduler exposes bounded-drain
+exhaustion. Dart does not currently claim `c_abi_ffi_boundary`: `lib/src/ffi.dart`
+is an in-language protocol mirror, not an exported native artifact.
+
 ### Formal model (`lazily-formal`)
 
 `dart test` also builds the [`lazily-formal`][formal] Lean 4 model — the
