@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## 0.34.0 - 2026-10-15
+
+### Added
+
+- `package:lazily/core.dart` — the Lazily Core facade over the candidate
+  `core-v1` profile, with a committed API snapshot (`api/core-api-v1.txt`),
+  deprecation and module-compatibility records, and a `make core-api` gate
+  plus negative self-test.
+- Core qualification evidence: `scripts/core-conformance.json` declares the
+  binding, and `scripts/generate-core-conformance-report.py` replays the Core
+  fixtures and proves each assertion route with a negative control that a
+  library divergence must reject.
+- A packaged artifact consumer check (`make core-artifact-consumer-check`)
+  that builds a throwaway app against the published-shape package on Dart
+  3.5.0 and 3.10.0.
+
+### Fixed
+
+- The Core report generator no longer hangs on a `dart` on `PATH` that never
+  exits: each candidate is probed with `dart --version`, `DART=` pins an SDK,
+  each replay runs in its own process group bounded by the verifier's budget,
+  and SIGTERM cleans up its scratch directory.
+
 ## 0.33.0 - 2026-10-04
 
 ### Added
