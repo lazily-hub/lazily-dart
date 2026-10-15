@@ -286,6 +286,14 @@ explicit whole-fixture skip until the scheduler exposes bounded-drain
 exhaustion. Dart does not currently claim `c_abi_ffi_boundary`: `lib/src/ffi.dart`
 is an in-language protocol mirror, not an exported native artifact.
 
+The generator resolves its Dart SDK by probing each distinct `dart` on `PATH`
+with a bounded `dart --version` and using the first that prints an SDK banner;
+`DART=/path/to/dart` pins one instead. Every replay runs in its own process
+group, capped by the verifier's remaining `LAZILY_CORE_COMMAND_TIMEOUT_MS`
+budget, and a timeout or SIGTERM kills that group and removes the `build/`
+scratch directory. `make core-conformance-report-self-test` pins this with fake
+`dart` executables.
+
 ### Formal model (`lazily-formal`)
 
 `dart test` also builds the [`lazily-formal`][formal] Lean 4 model — the

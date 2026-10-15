@@ -236,7 +236,7 @@ python3 scripts/test-ci-activation.py
 #   EDGES. Dropping the dependency BETWEEN two members can leave the node set
 #   unchanged and still pass the oracle, when some other member already pulls the
 #   dependency into the root's run. Measured here: this closure is a STAR — all
-#   14 members are direct prerequisites of `check` and not one of them has a
+#   15 members are direct prerequisites of `check` and not one of them has a
 #   prerequisite of its own — so the class has no instance in this binding today.
 #   It would gain one the moment a member acquires a member prerequisite, and
 #   nothing in these three rungs would notice.
@@ -249,6 +249,7 @@ EXPECTED_CLOSURE_TARGETS=(
 	"conformance-coverage"
 	"core-api-check"
 	"core-artifact-consumer-check"
+	"core-conformance-report-self-test"
 	"core-facade-check"
 	"fmt"
 	"formal-check"
@@ -457,6 +458,7 @@ EXPECTED_GATE_STEPS=(
 	"conformance-coverage     => Conformance coverage + scenario replay guards (#lzguardsnotinci)"
 	"core-api-check           => Core API compatibility gate (make core-api-check)"
 	"core-artifact-consumer-check => Core artifact consumer (minimum/current)"
+	"core-conformance-report-self-test => Core conformance report self-test (#lzcoreevidencedarttimeout)"
 	"core-facade-check        => Core facade contract"
 	"formal-check             => Lean proof verification (#lzcheckcireachguard)"
 	"ipc-browser-check        => IPC wire browser compile + behaviour check (#lzdartwebcompile)"

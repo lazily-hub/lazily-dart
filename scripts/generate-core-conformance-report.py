@@ -1,12 +1,33 @@
 #!/usr/bin/env python3
-"""Run the Dart Core corpus replay and emit its observed qualification report."""
+"""Run the Dart Core corpus replay and emit its observed qualification report.
+
+Every child process this generator starts is bounded and owned:
+
+- The Dart SDK is resolved by probing `dart --version` under a short timeout
+  before any replay starts. A `dart` on PATH that never exits (a wrapper that
+  `exec`s itself, as the AUR flutter package's `/usr/sbin/dart` does when its
+  unionfs mount fails) or that exits 0 without an SDK banner is rejected with
+  a diagnostic instead of silently consuming the verifier's whole per-command
+  budget (#lzcoreevidencedarttimeout). `DART=/path/to/dart` pins the SDK and is
+  never second-guessed by a PATH fallback.
+- Each runner invocation runs in its own session and gets a timeout no larger
+  than the budget the verifier still has left (`LAZILY_CORE_COMMAND_TIMEOUT_MS`).
+  On timeout the WHOLE process group is killed, so a hung `dart test` cannot
+  outlive the generator.
+- SIGTERM (what the verifier sends when its own timeout fires) is turned into
+  an orderly abort: the active process group is killed and the scratch
+  directory under build/ is removed.
+"""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -17,6 +38,196 @@ ROOT = Path(__file__).resolve().parent.parent
 BINDING_ID = "dart"
 WHOLE_FIXTURE_SKIP = "reactive-graph/feedback_drain_bound_reports_exhaustion.json"
 MODELS = ("Context", "ThreadSafeContext", "AsyncContext")
+DART_VERSION_BANNER = re.compile(r"Dart SDK version: (\S+)")
+# A real `dart --version` answers in well under a second even on a loaded host.
+DEFAULT_PROBE_TIMEOUT_S = 10.0
+# One corpus replay takes ~1-2s warm; the first one also compiles the suite.
+DEFAULT_RUN_TIMEOUT_S = 300.0
+# Leave the generator time to report a precise diagnostic before the verifier's
+# own (blind) timeout fires.
+BUDGET_MARGIN_S = 5.0
+# How long to keep draining pipes after the group has been SIGKILLed.
+PIPE_DRAIN_TIMEOUT_S = 5.0
+
+
+class CommandTimeout(Exception):
+    def __init__(self, label: str, timeout_s: float, output: str) -> None:
+        super().__init__(f"{label} did not exit within {timeout_s:.1f}s")
+        self.label = label
+        self.timeout_s = timeout_s
+        self.output = output
+
+
+class Terminated(BaseException):
+    """Raised from the SIGTERM handler so `finally` blocks and context managers run."""
+
+
+def _on_sigterm(signum: int, _frame: object) -> None:
+    raise Terminated(signum)
+
+
+def env_seconds(env: dict[str, str], name: str, default: float) -> float:
+    raw = env.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        raise SystemExit(f"{name} must be a positive number of seconds, got {raw!r}") from None
+    if not value > 0:
+        raise SystemExit(f"{name} must be a positive number of seconds, got {raw!r}")
+    return value
+
+
+class Budget:
+    """Wall-clock budget derived from the verifier's per-command timeout."""
+
+    def __init__(self, total_ms: str | None, run_cap_s: float, clock=time.monotonic) -> None:
+        self._clock = clock
+        self.run_cap_s = run_cap_s
+        self.deadline: float | None = None
+        if total_ms:
+            try:
+                total = int(total_ms)
+            except ValueError:
+                raise SystemExit(f"LAZILY_CORE_COMMAND_TIMEOUT_MS must be an integer, got {total_ms!r}") from None
+            if total <= 0:
+                raise SystemExit(f"LAZILY_CORE_COMMAND_TIMEOUT_MS must be positive, got {total_ms!r}")
+            self.deadline = clock() + total / 1000 - BUDGET_MARGIN_S
+
+    def timeout_for(self, label: str, cap_s: float | None = None) -> float:
+        cap = self.run_cap_s if cap_s is None else cap_s
+        if self.deadline is None:
+            return cap
+        remaining = self.deadline - self._clock()
+        if remaining <= 0:
+            raise SystemExit(f"Core report budget exhausted before {label}")
+        return min(cap, remaining)
+
+
+def kill_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    # The leader too, in case it was never a group leader: a wait on it must
+    # always terminate.
+    if proc.poll() is None:
+        proc.kill()
+
+
+def run_bounded(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_s: float,
+    label: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run `command` in its own session; kill the whole group on timeout or abort."""
+    proc = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    finished = False
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            kill_group(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=PIPE_DRAIN_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                # A descendant left our process group (setsid/daemonized) and
+                # still holds the pipes. The leader is dead; stop waiting on it.
+                for pipe in (proc.stdout, proc.stderr):
+                    if pipe is not None:
+                        pipe.close()
+                proc.wait()
+                stdout, stderr = "", "<output pipes held open by an escaped descendant>"
+            finished = True
+            raise CommandTimeout(label, timeout_s, (stdout or "") + (stderr or "")) from None
+        finished = True
+        return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+    finally:
+        if not finished:
+            # Aborted mid-run (SIGTERM, KeyboardInterrupt): the leader is not yet
+            # reaped, so its pid still names the group we started.
+            kill_group(proc)
+            proc.wait()
+
+
+@dataclass(frozen=True)
+class DartSdk:
+    executable: str
+    resolved: str
+    version: str
+    rejected: tuple[str, ...] = ()
+
+
+def dart_candidates(env: dict[str, str]) -> list[str]:
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for entry in env.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        candidate = Path(entry) / "dart"
+        if not (candidate.is_file() and os.access(candidate, os.X_OK)):
+            continue
+        resolved = str(candidate.resolve())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        candidates.append(str(candidate))
+    return candidates
+
+
+def resolve_dart(env: dict[str, str], budget: Budget) -> DartSdk:
+    probe_cap = env_seconds(env, "LAZILY_DART_PROBE_TIMEOUT_S", DEFAULT_PROBE_TIMEOUT_S)
+    explicit = env.get("DART")
+    candidates = [explicit] if explicit else dart_candidates(env)
+    if not candidates:
+        raise SystemExit("no `dart` executable on PATH; set DART=/path/to/dart")
+    rejected: list[str] = []
+    for candidate in candidates:
+        label = f"`{candidate} --version`"
+        try:
+            result = run_bounded(
+                [candidate, "--version"],
+                cwd=ROOT,
+                env=env,
+                timeout_s=budget.timeout_for(label, probe_cap),
+                label=label,
+            )
+        except CommandTimeout as timeout:
+            rejected.append(f"{candidate}: {timeout} (output tail {timeout.output[-120:]!r})")
+            continue
+        except OSError as error:
+            rejected.append(f"{candidate}: {error}")
+            continue
+        output = result.stdout + result.stderr
+        banner = DART_VERSION_BANNER.search(output)
+        if result.returncode == 0 and banner:
+            for reason in rejected:
+                print(f"dart: skipped unusable candidate {reason}", file=sys.stderr, flush=True)
+            return DartSdk(
+                candidate, str(Path(candidate).resolve()), banner.group(0), tuple(rejected)
+            )
+        rejected.append(
+            f"{candidate}: exit {result.returncode} without a Dart SDK banner "
+            f"(output tail {output[-120:]!r})"
+        )
+    source = "DART" if explicit else "PATH"
+    raise SystemExit(
+        f"no usable Dart SDK from {source}; rejected: " + "; ".join(rejected)
+        + ("" if explicit else ". Set DART=/path/to/dart to pin one.")
+    )
 
 
 def required_env(name: str) -> Path:
@@ -112,7 +323,14 @@ def mutated_scalar(value: object) -> object | None:
     return None
 
 
-def run_runner(command: list[str], spec_dir: Path, run_id: str, ledger_dir: Path) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
+def run_runner(
+    command: list[str],
+    spec_dir: Path,
+    run_id: str,
+    ledger_dir: Path,
+    budget: Budget,
+    label: str,
+) -> tuple[subprocess.CompletedProcess[str], str, str, str]:
     fixtures_path = ledger_dir / "fixtures.txt"
     scenarios_path = ledger_dir / "scenarios.txt"
     blocks_path = ledger_dir / "blocks.txt"
@@ -128,7 +346,12 @@ def run_runner(command: list[str], spec_dir: Path, run_id: str, ledger_dir: Path
             "LAZILY_CONFORMANCE_BLOCKS": str(blocks_path),
         }
     )
-    result = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True)
+    try:
+        result = run_bounded(
+            command, cwd=ROOT, env=env, timeout_s=budget.timeout_for(label), label=label
+        )
+    except CommandTimeout as timeout:
+        raise SystemExit(f"{timeout}; output tail:\n{timeout.output[-2000:]}") from None
     return (
         result,
         fixtures_path.read_text(encoding="utf-8"),
@@ -152,17 +375,24 @@ def main() -> int:
     routes = assertion_routes(spec_root, required)
     declaration = load_json(ROOT / "scripts" / "core-conformance.json")
     run_id = f"core-{time.time_ns()}-{os.getpid()}"
+    started = time.monotonic()
+    budget = Budget(
+        os.environ.get("LAZILY_CORE_COMMAND_TIMEOUT_MS"),
+        env_seconds(dict(os.environ), "LAZILY_DART_RUN_TIMEOUT_S", DEFAULT_RUN_TIMEOUT_S),
+    )
+    dart = resolve_dart(dict(os.environ), budget)
+    print(f"dart: {dart.executable} -> {dart.resolved} ({dart.version})", flush=True)
 
     (ROOT / "build").mkdir(exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="lazily-dart-core-", dir=ROOT / "build") as raw_tmp:
         tmp = Path(raw_tmp)
         command = [
-            os.environ.get("DART", "dart"),
+            dart.executable,
             "test",
             "test/reactive_graph_conformance_test.dart",
         ]
         result, fixture_ledger, scenario_ledger, block_ledger = run_runner(
-            command, spec_root / "conformance", run_id, tmp
+            command, spec_root / "conformance", run_id, tmp, budget, "baseline Core replay"
         )
         sys.stdout.write(result.stdout)
         sys.stderr.write(result.stderr)
@@ -196,7 +426,14 @@ def main() -> int:
                 control_id = f"{run_id}-negative-{len(negative_controls)}-{index}"
                 control_dir = tmp / f"negative-{len(negative_controls)}-{index}"
                 control_dir.mkdir()
-                rejected, _, _, _ = run_runner(command, mutation_root, control_id, control_dir)
+                rejected, _, _, _ = run_runner(
+                    command,
+                    mutation_root,
+                    control_id,
+                    control_dir,
+                    budget,
+                    f"negative control {fixture} {route}",
+                )
                 fixture_path.write_text(canonical, encoding="utf-8")
                 output = rejected.stdout + rejected.stderr
                 if rejected.returncode == 0:
@@ -239,6 +476,13 @@ def main() -> int:
         "binding_id": BINDING_ID,
         "run_id": run_id,
         "command": command,
+        "toolchain": {
+            "dart": dart.executable,
+            "resolved": dart.resolved,
+            "version": dart.version,
+            "rejected_candidates": list(dart.rejected),
+        },
+        "elapsed_ms": round((time.monotonic() - started) * 1000),
         "exit_code": result.returncode,
         "fixtures": {},
         "runtime_ledgers": {
@@ -309,4 +553,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    signal.signal(signal.SIGTERM, _on_sigterm)
+    try:
+        raise SystemExit(main())
+    except Terminated:
+        print("Core report generation terminated; child process group killed", file=sys.stderr)
+        raise SystemExit(128 + signal.SIGTERM) from None

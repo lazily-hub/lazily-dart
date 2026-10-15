@@ -34,7 +34,7 @@
 LAZILY_CONFORMANCE_RUN_ID := $(shell echo "make-$$(date -u +%s)-$$$$-$$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')")
 export LAZILY_CONFORMANCE_RUN_ID
 
-.PHONY: check fmt fmt-fix analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach core-conformance-report core-facade-check core-artifact-consumer-check
+.PHONY: check fmt fmt-fix analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach core-conformance-report core-conformance-report-self-test core-facade-check core-artifact-consumer-check
 
 core-artifact-consumer-check:
 	./scripts/core-artifact-consumer-check.sh
@@ -49,7 +49,7 @@ core-facade-check:
 # `conformance-coverage` runs AFTER `test`, not before: the guard now reads the
 # runtime manifest the suite writes, so ordering it first would only ever see the
 # previous run's evidence, or none at all.
-check: fmt analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check core-facade-check core-artifact-consumer-check ci-reach
+check: fmt analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check core-conformance-report-self-test core-facade-check core-artifact-consumer-check ci-reach
 	@echo "lazily-dart: check OK"
 
 # Resolve the focused facade with Dart's native analyzer element model and
@@ -163,3 +163,11 @@ formal-check:
 # writes fresh assertion evidence beneath LAZILY_CORE_REPORTS_ROOT/dart.
 core-conformance-report:
 	python3 scripts/generate-core-conformance-report.py
+
+# Deterministic ownership checks for the generator (#lzcoreevidencedarttimeout):
+# a `dart` on PATH that never exits is rejected by a bounded probe, every runner
+# invocation is capped by the verifier's remaining budget, and a timeout or the
+# verifier's SIGTERM kills the whole runner process group and removes build/
+# scratch. Uses fake `dart` executables only, so it never depends on the host SDK.
+core-conformance-report-self-test:
+	python3 scripts/test-generate-core-conformance-report.py
