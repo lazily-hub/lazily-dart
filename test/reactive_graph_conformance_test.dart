@@ -536,7 +536,8 @@ class _ThreadSafeModel implements _Model {
     List<String> reads,
     num offset,
     String? scope,
-  ) => _write(() => inner.defineComputed(id, reads, offset, scope));
+  ) =>
+      _write(() => inner.defineComputed(id, reads, offset, scope));
   @override
   void defineEffect(String id, List<String> reads, String? scope) =>
       _write(() => inner.defineEffect(id, reads, scope));
@@ -635,15 +636,16 @@ class _AsyncModel implements _Model {
     String id,
     List<String> reads,
     num offset,
-  ) => (cc) async {
-    computes[id] = (computes[id] ?? 0) + 1;
-    if (_takeArmed(id)) throw ComputeFailed(id);
-    var sum = offset;
-    for (final r in reads) {
-      sum += await _readNode(cc, r);
-    }
-    return sum;
-  };
+  ) =>
+      (cc) async {
+        computes[id] = (computes[id] ?? 0) + 1;
+        if (_takeArmed(id)) throw ComputeFailed(id);
+        var sum = offset;
+        for (final r in reads) {
+          sum += await _readNode(cc, r);
+        }
+        return sum;
+      };
 
   @override
   void defineComputed(
@@ -805,17 +807,17 @@ class _Observation {
   final Map<String, int> degrees = {};
 
   String describe() => jsonEncode({
-    'cleanup_order': cleanupOrder,
-    'readable': _sorted(readable),
-    'reads': _sorted(reads),
-    'after_publish_observed': afterPublishObserved,
-    'after_publish_reads': _sorted(afterPublishReads),
-    'degrees': _sorted(degrees),
-  });
+        'cleanup_order': cleanupOrder,
+        'readable': _sorted(readable),
+        'reads': _sorted(reads),
+        'after_publish_observed': afterPublishObserved,
+        'after_publish_reads': _sorted(afterPublishReads),
+        'degrees': _sorted(degrees),
+      });
 
   static Map<String, Object?> _sorted(Map<String, Object?> m) => {
-    for (final k in m.keys.toList()..sort()) k: m[k],
-  };
+        for (final k in m.keys.toList()..sort()) k: m[k],
+      };
 }
 
 /// What a single fixture replay actually did. `ops`/`checks` are what promote a
@@ -1106,8 +1108,7 @@ Future<_Report> _replay(
             key,
             model.nodeIds,
             where: '#$i $key',
-            reason:
-                '#$i dependents_of names an id this replay never '
+            reason: '#$i dependents_of names an id this replay never '
                 'made',
           );
           for (final id in m.keys.toList()..sort()) {
@@ -1124,8 +1125,7 @@ Future<_Report> _replay(
             key,
             model.nodeIds,
             where: '#$i $key',
-            reason:
-                '#$i dependencies_of names an id this replay never '
+            reason: '#$i dependencies_of names an id this replay never '
                 'made',
           );
           for (final id in m.keys.toList()..sort()) {
@@ -1149,8 +1149,7 @@ Future<_Report> _replay(
             key,
             model.nodeIds,
             where: '#$i $key',
-            reason:
-                '#$i computes_of names an id this replay never made. '
+            reason: '#$i computes_of names an id this replay never made. '
                 '`computes[id] ?? 0` cannot tell "this node exists and has '
                 'not computed" from "there is no such node", so without this '
                 'bound a typo satisfied any expectation of 0',
@@ -1340,9 +1339,8 @@ Future<_Report> _replay(
     // lazy binding) precede the degree assertions that count them.
     for (final id in _sortedKeys(publish, 'read')) {
       final (value, err) = await readId(id);
-      report.observation.afterPublishReads[id] = err
-          ? 'read_after_dispose'
-          : value;
+      report.observation.afterPublishReads[id] =
+          err ? 'read_after_dispose' : value;
     }
     assertKeysOf(publish, 'read', model.nodeIds, (id, want) {
       check(
@@ -1416,8 +1414,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   expect(
     files,
     equals(expectedFixtures),
-    reason:
-        'reactive-graph fixture set drifted; every fixture must be '
+    reason: 'reactive-graph fixture set drifted; every fixture must be '
         'replayed by this runner',
   );
 
@@ -1430,7 +1427,8 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   for (final name in expectedFixtures.toList()..sort()) {
     final fx = (attributeFixture(
       jsonDecode(File('$specDir/$name').specReadAsStringSync()),
-    ) as Map).cast<String, dynamic>();
+    ) as Map)
+        .cast<String, dynamic>();
     final unsupported = _opsOf(fx, name).difference(supportedOps).toList()
       ..sort();
     // A parked fixture is skipped before the op filter (it uses only supported
@@ -1504,8 +1502,8 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
           final b = reports[idx[w]].observation.describe();
           if (a != b) {
             reports[idx[w]].failures.add(
-              '#observationally_equal — ${pair[w - 1]} $a != ${pair[w]} $b',
-            );
+                  '#observationally_equal — ${pair[w - 1]} $a != ${pair[w]} $b',
+                );
           }
         }
         totalChecks++;
@@ -1555,14 +1553,12 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   // divergence fails the build and a fixed one forces its entry to be deleted.
   // A divergence is a FINDING against the implementation. Never relax the
   // fixture to make this pass.
-  final documented = knownDivergences
-      .where((d) => d.startsWith('$modelName/'))
-      .toSet();
+  final documented =
+      knownDivergences.where((d) => d.startsWith('$modelName/')).toSet();
   expect(
     divergences,
     equals(documented),
-    reason:
-        '$modelName: divergence ledger is stale — update '
+    reason: '$modelName: divergence ledger is stale — update '
         'knownDivergences (left = observed, right = documented)',
   );
 
@@ -1573,8 +1569,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   expect(
     skipped,
     equals(expectedSkips),
-    reason:
-        '$modelName: skip ledger drifted — update expectedSkips '
+    reason: '$modelName: skip ledger drifted — update expectedSkips '
         '(left = observed, right = documented)',
   );
 
@@ -1582,8 +1577,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   expect(
     executed,
     equals(replayable),
-    reason:
-        'found ${expectedFixtures.length} fixture file(s) under $specDir '
+    reason: 'found ${expectedFixtures.length} fixture file(s) under $specDir '
         '(${replayable.length} replayable, ${expectedSkips.length} skipped) '
         'but did not replay them all. A non-empty fixture directory is not '
         'evidence of coverage — skipped: $skipped',
@@ -1591,8 +1585,7 @@ Future<void> _runCorpus(_Model Function() create, String modelName) async {
   expect(
     executed,
     contains('transitive_invalidation_reaches_depth.json'),
-    reason:
-        'the transitive-depth fixture pins the async invalidation '
+    reason: 'the transitive-depth fixture pins the async invalidation '
         'cascade fixed in c91a32a and must run against every context',
   );
   expect(totalOps, greaterThan(0), reason: 'executed zero ops');
@@ -1609,8 +1602,7 @@ void main() {
     test(
       'reactive-graph conformance',
       () {},
-      skip:
-          '$specDir absent - clone lazily-spec as a sibling to run the '
+      skip: '$specDir absent - clone lazily-spec as a sibling to run the '
           'reactive-graph fixtures',
     );
     return;
