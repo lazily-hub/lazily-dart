@@ -199,7 +199,9 @@ class Context implements ComputeOps {
       bool.fromEnvironment('lazily.naive_pending_scan');
 
   /// Sink that keeps the audit scan above from being optimised away. Only
-  /// written when [naivePendingScan] is set.
+  /// written when [naivePendingScan] is set. Write-only by design: storing
+  /// the scan result is what keeps the scan live; nothing reads it back.
+  // ignore: unused_field
   int _naiveScanSink = 0;
 
   /// Reusable DFS stack for invalidation cascades (see [_cascadeFrom]).
