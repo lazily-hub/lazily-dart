@@ -221,6 +221,95 @@ class BudgetTest(unittest.TestCase):
                 generator.Budget(raw, 300.0)
 
 
+class KillRouteTest(unittest.TestCase):
+    """A negative control counts only when a library divergence rejects it.
+
+    A mutant that makes the runner fail on its OWN bookkeeping (an unknown node
+    id, a renamed scenario label) proves the runner read the leaf, not that the
+    assertion over the library discriminates. The old guard accepted any
+    non-zero exit whose output named the fixture, which such a failure does.
+    """
+
+    FIXTURE = "reactive-graph/pair.json"
+    DOCUMENT = {
+        "steps": [
+            {
+                "op": {"type": "read", "id": "a"},
+                "expect": {"note": "prose", "cleanup_order": ["a", "b"], "value": 3},
+            }
+        ]
+    }
+    DIVERGENCE = "  DIVERGENCE Context/pair.json#0:value \u2014 got 3, want 1000006\n"
+    BOOKKEEPING = "Bad state: pair.json: unknown node a__lazily_negative_control__\n"
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory(prefix="dart-core-kill-route-test-")
+        self.root = Path(self.tmp.name)
+        (self.root / "corpus" / "reactive-graph").mkdir(parents=True)
+        self.canonical = json.dumps(self.DOCUMENT)
+        (self.root / "corpus" / self.FIXTURE).write_text(self.canonical)
+        self.seen: list[dict] = []
+        self.real_runner = generator.run_runner
+
+    def tearDown(self) -> None:
+        generator.run_runner = self.real_runner
+        self.tmp.cleanup()
+
+    def script(self, outputs: list[str], returncode: int = 1) -> None:
+        def runner(command, spec_dir, run_id, ledger_dir, budget, label):
+            self.seen.append(json.loads((spec_dir / self.FIXTURE).read_text()))
+            output = outputs[len(self.seen) - 1]
+            return subprocess.CompletedProcess(command, returncode, "", output), "", "", ""
+
+        generator.run_runner = runner
+
+    def kill(self) -> dict:
+        return generator.kill_route(
+            ["dart", "test"],
+            self.root / "corpus",
+            self.FIXTURE,
+            "/steps/*/expect",
+            "run",
+            self.root / "control",
+            Budgeted().budget,
+        )
+
+    def test_divergence_lines_must_name_the_mutated_fixture(self) -> None:
+        self.assertEqual(generator.divergence_lines(self.DIVERGENCE, "pair.json"), [self.DIVERGENCE.strip()])
+        self.assertEqual(generator.divergence_lines(self.DIVERGENCE, "other.json"), [])
+        self.assertEqual(generator.divergence_lines(self.BOOKKEEPING, "pair.json"), [])
+
+    def test_runner_bookkeeping_failure_is_not_a_kill(self) -> None:
+        self.script([self.BOOKKEEPING, self.BOOKKEEPING, self.DIVERGENCE])
+        control = self.kill()
+        self.assertEqual(control["rejected_by"], "divergence")
+        self.assertEqual(control["mutated_pointer"], "/steps/0/expect/value")
+        self.assertEqual(
+            [item["mutated_pointer"] for item in control["non_discriminating_mutants"]],
+            ["/steps/0/expect/cleanup_order/0", "/steps/0/expect/cleanup_order/1"],
+        )
+        # Exactly one leaf differs from the corpus per attempt, prose is never
+        # perturbed, and the canonical bytes are restored afterwards.
+        expects = [document["steps"][0]["expect"] for document in self.seen]
+        self.assertEqual(expects[0]["cleanup_order"], ["a__lazily_negative_control__", "b"])
+        self.assertEqual(expects[1]["cleanup_order"], ["a", "b__lazily_negative_control__"])
+        self.assertEqual(expects[2], {"note": "prose", "cleanup_order": ["a", "b"], "value": 1_000_006})
+        self.assertEqual((self.root / "corpus" / self.FIXTURE).read_text(), self.canonical)
+
+    def test_route_without_a_divergence_kill_fails_the_report(self) -> None:
+        self.script([self.BOOKKEEPING] * 3)
+        with self.assertRaises(SystemExit) as raised:
+            self.kill()
+        self.assertIn("rejected by a library divergence", str(raised.exception))
+        self.assertEqual(len(self.seen), 3)
+
+    def test_a_surviving_mutant_fails_the_report(self) -> None:
+        self.script([""], returncode=0)
+        with self.assertRaises(SystemExit) as raised:
+            self.kill()
+        self.assertIn("negative control survived", str(raised.exception))
+
+
 class GeneratorProcessTest(unittest.TestCase):
     """Run the real generator script against a hanging fake `dart test`."""
 

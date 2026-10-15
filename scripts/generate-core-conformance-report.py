@@ -283,32 +283,135 @@ def route_targets(document: object, route: str) -> list[tuple[object, list[str]]
     return states
 
 
-def mutate_assertion(value: object, pointer: list[str]) -> tuple[str, object, object] | None:
-    """Mutate the first comparable assertion leaf, ignoring prose annotations."""
+NON_ASSERTION_KEYS = {"note", "description", "prose", "op", "observationally_equal"}
+MAX_MUTANTS_PER_ROUTE = 8
+# A mutant only counts as killed when the runner rejected it through its library
+# divergence report: test/reactive_graph_conformance_test.dart writes one
+# `DIVERGENCE <model>/<fixture>...#<step>:<key> — got X, want Y` line per check
+# whose observed library value disagreed with the (mutated) expectation, then
+# fails the divergence ledger. Any other non-zero exit (a StateError on a renamed
+# scenario label, an unknown node id, an unconsumed key) proves the runner READ
+# the leaf, not that the assertion over the library discriminates, so it is
+# recorded as non-discriminating and the next leaf is tried.
+DIVERGENCE_LINE = re.compile(
+    r"^\s*DIVERGENCE (?:Context|ThreadSafeContext|AsyncContext)/"
+    r"(?P<fixture>[^\s#\[]+)(?:\[\d+\])?#\S+ \S+ got .*, want .*$",
+    re.MULTILINE,
+)
+
+
+def assertion_leaves(value: object, pointer: list[str]) -> list[tuple[object, object, str]]:
+    """Every comparable scalar assertion leaf, in document order, ignoring prose
+    annotations, op inputs and scenario labels."""
     if isinstance(value, dict):
-        for key, child in value.items():
-            if key in {"note", "description", "prose", "op", "observationally_equal"}:
-                continue
-            mutated = mutated_scalar(child)
-            if mutated is not None:
-                value[key] = mutated
-                json_pointer = "/" + "/".join(pointer_token(token) for token in pointer + [key])
-                return json_pointer, child, mutated
-            mutation = mutate_assertion(child, pointer + [key])
-            if mutation is not None:
-                return mutation
-        return None
-    if isinstance(value, list):
-        for i, child in enumerate(value):
-            mutated = mutated_scalar(child)
-            if mutated is not None:
-                value[i] = mutated
-                json_pointer = "/" + "/".join(pointer_token(token) for token in pointer + [str(i)])
-                return json_pointer, child, mutated
-            mutation = mutate_assertion(child, pointer + [str(i)])
-            if mutation is not None:
-                return mutation
-        return None
+        children = [(key, child) for key, child in value.items() if key not in NON_ASSERTION_KEYS]
+    elif isinstance(value, list):
+        children = list(enumerate(value))
+    else:
+        return []
+    leaves: list[tuple[object, object, str]] = []
+    for key, child in children:
+        if mutated_scalar(child) is not None:
+            json_pointer = "/" + "/".join(pointer_token(token) for token in pointer + [str(key)])
+            leaves.append((value, key, json_pointer))
+        else:
+            leaves.extend(assertion_leaves(child, pointer + [str(key)]))
+    return leaves
+
+
+def route_leaves(document: object, route: str) -> list[tuple[object, object, str]]:
+    return [
+        leaf
+        for target, pointer in route_targets(document, route)
+        for leaf in assertion_leaves(target, pointer)
+    ]
+
+
+def divergence_lines(output: str, fixture_name: str) -> list[str]:
+    """The runner's library-divergence lines that name `fixture_name`."""
+    return [
+        match.group(0).strip()
+        for match in DIVERGENCE_LINE.finditer(output)
+        if match.group("fixture") == fixture_name
+    ]
+
+
+def failure_excerpt(output: str) -> list[str]:
+    lines = [line.strip() for line in output.splitlines() if "Error" in line or "Bad state" in line]
+    return lines[:3] if lines else output.strip().splitlines()[-3:]
+
+
+def kill_route(
+    command: list[str],
+    mutation_root: Path,
+    fixture: str,
+    route: str,
+    control_id: str,
+    control_dir: Path,
+    budget: "Budget",
+) -> dict:
+    """Mutate one assertion leaf at a time until a library divergence rejects it."""
+    fixture_path = mutation_root / fixture
+    canonical = fixture_path.read_text(encoding="utf-8")
+    pristine = json.loads(canonical)
+    if not route_targets(pristine, route):
+        raise SystemExit(f"negative control route {route} did not resolve in {fixture}")
+    leaf_count = len(route_leaves(pristine, route))
+    if leaf_count == 0:
+        raise SystemExit(f"negative control route {route} has no comparable leaf in {fixture}")
+    not_discriminating: list[dict] = []
+    for attempt in range(min(leaf_count, MAX_MUTANTS_PER_ROUTE)):
+        # A fresh parse per attempt: exactly one leaf differs from the corpus.
+        document = json.loads(canonical)
+        container, key, pointer = route_leaves(document, route)[attempt]
+        original = container[key]
+        mutated = mutated_scalar(original)
+        container[key] = mutated
+        attempt_dir = control_dir / str(attempt)
+        attempt_dir.mkdir(parents=True)
+        fixture_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        try:
+            rejected, _, _, _ = run_runner(
+                command,
+                mutation_root,
+                f"{control_id}-{attempt}",
+                attempt_dir,
+                budget,
+                f"negative control {fixture} {route} {pointer}",
+            )
+        finally:
+            fixture_path.write_text(canonical, encoding="utf-8")
+        if rejected.returncode == 0:
+            raise SystemExit(f"negative control survived for {fixture} {route} at {pointer}")
+        output = rejected.stdout + rejected.stderr
+        divergences = divergence_lines(output, Path(fixture).name)
+        if divergences:
+            return {
+                "status": "mutation-killed",
+                "route": route,
+                "mutated_pointer": pointer,
+                "original": original,
+                "mutated": mutated,
+                "runner_exit_code": rejected.returncode,
+                "rejected_by": "divergence",
+                "rejection_excerpt": divergences[:3],
+                "non_discriminating_mutants": not_discriminating,
+            }
+        not_discriminating.append(
+            {
+                "mutated_pointer": pointer,
+                "original": original,
+                "mutated": mutated,
+                "runner_exit_code": rejected.returncode,
+                "rejected_by": "other_failure",
+                "rejection_excerpt": failure_excerpt(output),
+            }
+        )
+    raise SystemExit(
+        f"no mutated assertion leaf of {fixture} {route} was rejected by a library divergence "
+        f"({len(not_discriminating)} mutant(s) failed for another reason: "
+        f"{[item['mutated_pointer'] for item in not_discriminating]})"
+    )
 
 
 def mutated_scalar(value: object) -> object | None:
@@ -403,56 +506,17 @@ def main() -> int:
         shutil.copytree(spec_root / "conformance", mutation_root)
         negative_controls: dict[str, dict[str, dict]] = {}
         for fixture in sorted(required - {WHOLE_FIXTURE_SKIP}):
-            fixture_path = mutation_root / fixture
-            canonical = fixture_path.read_text(encoding="utf-8")
             negative_controls[fixture] = {}
             for index, route in enumerate(routes[fixture]):
-                document = json.loads(canonical)
-                targets = route_targets(document, route)
-                if not targets:
-                    raise SystemExit(f"negative control route {route} did not resolve in {fixture}")
-                mutation = next(
-                    (
-                        found
-                        for target, pointer in targets
-                        if (found := mutate_assertion(target, pointer)) is not None
-                    ),
-                    None,
-                )
-                if mutation is None:
-                    raise SystemExit(f"negative control route {route} has no comparable leaf in {fixture}")
-                pointer, original, mutated = mutation
-                fixture_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-                control_id = f"{run_id}-negative-{len(negative_controls)}-{index}"
-                control_dir = tmp / f"negative-{len(negative_controls)}-{index}"
-                control_dir.mkdir()
-                rejected, _, _, _ = run_runner(
+                negative_controls[fixture][route] = kill_route(
                     command,
                     mutation_root,
-                    control_id,
-                    control_dir,
+                    fixture,
+                    route,
+                    f"{run_id}-negative-{len(negative_controls)}-{index}",
+                    tmp / f"negative-{len(negative_controls)}-{index}",
                     budget,
-                    f"negative control {fixture} {route}",
                 )
-                fixture_path.write_text(canonical, encoding="utf-8")
-                output = rejected.stdout + rejected.stderr
-                if rejected.returncode == 0:
-                    raise SystemExit(f"negative control survived for {fixture} {route} at {pointer}")
-                if Path(fixture).name not in output:
-                    raise SystemExit(
-                        f"negative control rejection did not identify {fixture} {route}:\n"
-                        + output[-4000:]
-                    )
-                matching = [line.strip() for line in output.splitlines() if Path(fixture).name in line]
-                negative_controls[fixture][route] = {
-                    "status": "mutation-killed",
-                    "route": route,
-                    "mutated_pointer": pointer,
-                    "original": original,
-                    "mutated": mutated,
-                    "runner_exit_code": rejected.returncode,
-                    "rejection_excerpt": matching[-3:],
-                }
 
     absent = sorted(path for path in required if path not in fixture_ledger)
     if absent:
