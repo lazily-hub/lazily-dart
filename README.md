@@ -587,21 +587,8 @@ batching, and disposal.
 
 ## Development
 
-```bash
-dart pub get
-dart analyze --fatal-infos
-dart test
-```
-
-`dart test` builds [`lazily-formal`][formal] (Lean proofs) when the sibling
-submodule + `lake` toolchain are present, and SKIPs otherwise. To verify the
-proofs in a standalone clone:
-
-```bash
-git clone https://github.com/lazily-hub/lazily-formal.git ../lazily-formal
-# (or) set LAZILY_FORMAL_PATH=/path/to/lazily-formal
-dart run tool/formal_check.dart
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, analysis, tests, and formal
+model verification.
 
 ## The lazily family
 
