@@ -75,15 +75,22 @@ ci-reach:
 # cover this.
 #
 # `dart format` is canonical and ships with the SDK, so the floor costs no new
-# dependency; the SDK version CI installs is what pins the style. `--output=none
-# --set-exit-if-changed` is the GATE spelling: a bare `dart format` REWRITES the
-# tree it is judging and exits 0 whatever it found, which is a gate that cannot
-# fail (#lzruffautofixvacuity). The rewriting form is `fmt-fix`, and it is not in
-# `check`.
+# dependency. It still needs resolved package metadata: without
+# `.dart_tool/package_config.json`, a new SDK can silently use its default
+# language style instead of this package's declared 3.5 language version and
+# report a clean tree as mass formatter drift. Resolve first in BOTH entry
+# points so a clean checkout and an already-built checkout get the same answer.
+#
+# `--output=none --set-exit-if-changed` is the GATE spelling: a bare `dart
+# format` REWRITES the tree it is judging and exits 0 whatever it found, which
+# is a gate that cannot fail (#lzruffautofixvacuity). The rewriting form is
+# `fmt-fix`, and it is not in `check`.
 fmt:
+	dart pub get
 	dart format --output=none --set-exit-if-changed .
 
 fmt-fix:
+	dart pub get
 	dart format .
 
 analyze:
