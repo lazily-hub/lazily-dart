@@ -69,6 +69,7 @@ member Context.invalidateSlots | method | void invalidateSlots(List<Slot<dynamic
 member Context.isBatching | getter | bool get isBatching | deprecated=false
 member Context.isNodeDisposed | method | bool isNodeDisposed(GraphNode node) | deprecated=false
 member Context.naivePendingScan | field | bool naivePendingScan | deprecated=false
+member Context.nodeIdentity | method | ({int generation, String kind, int slot}) nodeIdentity(GraphNode node) | deprecated=false
 member Context.read | method | Object? read(_ReactiveNode node) | deprecated=false
 member Context.runUntracked | method | R runUntracked<R>(R Function() body) | deprecated=false
 member Context.scope | method | TeardownScope scope() | deprecated=false

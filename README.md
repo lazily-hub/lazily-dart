@@ -449,6 +449,13 @@ counterpart of `mmap`/`SharedArrayBuffer`) and (b) the CRDT wire protocol for
 replicated state — reconciled with materialization confluence under real
 multi-isolate workloads (`test/shm_isolate_test.dart`).
 
+Reactive handles carry a reusable allocator slot, a generation, and a node
+kind. Disposal validates all three before changing graph or cleanup state, so
+an old handle is a no-op after same-kind or cross-kind slot reuse. The read-only
+`Context.nodeIdentity` and `AsyncContext.nodeIdentity` projections exist for
+conformance and diagnostics; a raw slot number alone is never a live occupant
+identity.
+
 | Layer | Where |
 |-------|-------|
 | Reactive core — Cell kernel v2 (`Source`/`Cell` / `Computed`+`computed`/`.eager()`/`.lazy()` / `Effect` / `Slot` (unguarded) / `batch`; no `Signal` compatibility constructor) | `package:lazily/lazily.dart` |

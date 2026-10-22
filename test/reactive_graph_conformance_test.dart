@@ -86,6 +86,7 @@ const expectedFixtures = {
   'scoping_bounds_teardown_not_visibility.json',
   'signal_materializes_once_per_batch.json',
   'signal_materializes_without_a_read.json',
+  'stale_effect_handle_cannot_remove_recycled_source.json',
   'teardown_runs_members_in_reverse_creation_order.json',
   'transitive_invalidation_reaches_depth.json',
 };
@@ -173,6 +174,7 @@ const supportedOps = {
 /// expectations and dart would keep reporting green against the loose ones.
 const knownExpectKeys = {
   'cleanup_order',
+  'cleanups_of',
   'computes_of',
   'dependencies_of',
   'dependents_of',
@@ -182,8 +184,10 @@ const knownExpectKeys = {
   'observed_count',
   'read',
   'readable',
+  'recycled_id_confirmed',
   'scope_owned_count',
   'value',
+  'writable',
 };
 
 /// Fixture assertions an execution model does not satisfy today, as
@@ -198,7 +202,9 @@ const knownDivergences = <String>{};
 /// is the only op that needs it: tearing down through a handle whose id has
 /// been recycled onto a node of another kind must be a no-op, so the kind is
 /// read from the graph rather than remembered by the caller.
-enum _Kind { cell, slot, effect }
+enum _Kind { cell, computed, effect }
+
+typedef _NodeIdentity = ({int slot, int generation, String kind});
 
 /// One execution model. Uniformly async so the sync and async contexts replay
 /// through one engine and cannot drift apart.
@@ -262,6 +268,12 @@ abstract class _Model {
   Future<void> disposeId(String id);
 
   _Kind kindOf(String id);
+
+  _NodeIdentity identityOf(String id);
+
+  bool writable(String id);
+
+  int cleanupsOf(String id);
 
   /// Every node id this replay has actually created.
   ///
@@ -467,8 +479,21 @@ class _SyncModel implements _Model {
     final node = _node(id);
     if (node is Cell) return _Kind.cell;
     if (node is Effect) return _Kind.effect;
-    return _Kind.slot;
+    return _Kind.computed;
   }
+
+  @override
+  _NodeIdentity identityOf(String id) =>
+      ctx.nodeIdentity(_node(id) as GraphNode);
+
+  @override
+  bool writable(String id) {
+    final node = _node(id);
+    return node is Source && !node.isDisposed;
+  }
+
+  @override
+  int cleanupsOf(String id) => cleanupLog.where((entry) => entry == id).length;
 
   @override
   bool isEffectActive(String id) => (nodes[id] as Effect).isActive;
@@ -565,6 +590,12 @@ class _ThreadSafeModel implements _Model {
   Future<void> disposeId(String id) => _future(() => inner.disposeId(id));
   @override
   _Kind kindOf(String id) => _read(() => inner.kindOf(id));
+  @override
+  _NodeIdentity identityOf(String id) => _read(() => inner.identityOf(id));
+  @override
+  bool writable(String id) => _read(() => inner.writable(id));
+  @override
+  int cleanupsOf(String id) => _read(() => inner.cleanupsOf(id));
   @override
   bool isEffectActive(String id) => _read(() => inner.isEffectActive(id));
   @override
@@ -758,8 +789,21 @@ class _AsyncModel implements _Model {
     final node = _node(id);
     if (node is AsyncCellHandle) return _Kind.cell;
     if (node is AsyncEffectHandle) return _Kind.effect;
-    return _Kind.slot;
+    return _Kind.computed;
   }
+
+  @override
+  _NodeIdentity identityOf(String id) =>
+      ctx.nodeIdentity(_node(id) as AsyncGraphNode);
+
+  @override
+  bool writable(String id) {
+    final node = _node(id);
+    return node is AsyncCellHandle && !node.isDisposed;
+  }
+
+  @override
+  int cleanupsOf(String id) => cleanupLog.where((entry) => entry == id).length;
 
   @override
   bool isEffectActive(String id) =>
@@ -970,6 +1014,7 @@ Future<_Report> _replay(
     final runsBefore = model.runLog.length;
     num? opValue;
     var opError = false;
+    var recycledIdConfirmed = false;
     report.ops++;
 
     switch (type) {
@@ -1045,12 +1090,25 @@ Future<_Report> _replay(
         model.disarmScope(op['scope'] as String);
       case 'dispose_stale_handle':
         final of = op['handle_of'] as String;
-        final want = op['handle_kind'] as String;
+        final successor = op['successor'] as String;
+        final handleKind = op['handle_kind'] as String;
+        final successorKind = op['successor_kind'] as String;
         expect(
           model.kindOf(of).name,
-          want,
+          handleKind,
           reason: '$fixture#$i: handle_kind does not match recorded handle',
         );
+        expect(
+          model.kindOf(successor).name,
+          successorKind,
+          reason: '$fixture#$i: successor_kind does not match live occupant',
+        );
+        final staleIdentity = model.identityOf(of);
+        final successorIdentity = model.identityOf(successor);
+        recycledIdConfirmed = staleIdentity.slot == successorIdentity.slot &&
+            staleIdentity.generation != successorIdentity.generation &&
+            staleIdentity.kind == handleKind &&
+            successorIdentity.kind == successorKind;
         await model.disposeId(of);
       default:
         throw StateError(
@@ -1225,6 +1283,46 @@ Future<_Report> _replay(
               (want) => check('readable.$id', ok, want),
             );
           }
+        case 'writable':
+          final m = subKeyOf(
+            expect_,
+            key,
+            model.nodeIds,
+            where: '#$i $key',
+            reason: '#$i writable names an id this replay never made',
+          );
+          for (final id in m.keys.toList()..sort()) {
+            assertKeyWith<void>(
+              m,
+              id,
+              (want) => check('writable.$id', model.writable(id), want),
+            );
+          }
+        case 'cleanups_of':
+          final m = subKeyOf(
+            expect_,
+            key,
+            model.nodeIds,
+            where: '#$i $key',
+            reason: '#$i cleanups_of names an id this replay never made',
+          );
+          for (final id in m.keys.toList()..sort()) {
+            assertKeyWith<void>(
+              m,
+              id,
+              (want) => check('cleanups_of.$id', model.cleanupsOf(id), want),
+            );
+          }
+        case 'recycled_id_confirmed':
+          assertKeyWith<void>(
+            expect_,
+            key,
+            (want) => check(
+              'recycled_id_confirmed',
+              recycledIdConfirmed,
+              want,
+            ),
+          );
         case 'observed_by':
           assertKeyWith<void>(
             expect_,

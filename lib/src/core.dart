@@ -140,6 +140,11 @@ class DisposedNodeError extends StateError {
 /// must be created with (and thus share) the same [Context]. The cache keys on
 /// object identity, so each reactive instance is cached independently.
 class Context implements ComputeOps {
+  /// Mutation-test-only switch that deliberately removes the generation fence
+  /// from stale-handle disposal. Normal builds tree-shake this branch away.
+  static const bool _unsafeStaleHandleDisposal =
+      bool.fromEnvironment('lazily.unsafe_stale_handle_disposal');
+
   /// The value cache lives ON-NODE ([Slot._cachedValue] / [Slot._cacheGen]):
   /// a slot is "cached" iff its `_cacheGen == _generation`. [clear] bumps this
   /// counter, invalidating every slot in O(1) without the [Context] having to
@@ -148,6 +153,56 @@ class Context implements ComputeOps {
   /// allocation and per-lookup-cost source at viewport scale.
   int _generation = 0;
   int _cachedCount = 0;
+
+  /// Generational allocator for reactive node identities
+  /// (`#lzstalehandlespec`).
+  ///
+  /// Dart handles remain ordinary objects, but disposal is routed through this
+  /// slot table instead of trusting object reachability. A freed slot is reused
+  /// LIFO and its generation advances before reuse, so an old handle can never
+  /// address the new occupant even when both occupants have the same kind.
+  final List<_ReactiveNode?> _nodeSlots = [];
+  final List<int> _nodeGenerations = [];
+  final List<int> _freeNodeSlots = [];
+
+  ({int slot, int generation}) _allocateNode(_ReactiveNode node) {
+    if (_freeNodeSlots.isNotEmpty) {
+      final slot = _freeNodeSlots.removeLast();
+      _nodeSlots[slot] = node;
+      return (slot: slot, generation: _nodeGenerations[slot]);
+    }
+    final slot = _nodeSlots.length;
+    _nodeSlots.add(node);
+    _nodeGenerations.add(0);
+    return (slot: slot, generation: 0);
+  }
+
+  /// Resolve a handle through its immutable slot/generation/kind identity.
+  /// Every fence is checked before graph mutation or effect cleanup.
+  void _disposeHandle(_ReactiveNode handle) {
+    final slot = handle._nodeSlot;
+    if (slot < 0 || slot >= _nodeSlots.length) return;
+    final current = _nodeSlots[slot];
+    if (current == null ||
+        (!_unsafeStaleHandleDisposal &&
+            current._nodeGeneration != handle._nodeGeneration) ||
+        current._nodeKind != handle._nodeKind) {
+      return;
+    }
+    current._disposeCurrent();
+  }
+
+  void _releaseNode(_ReactiveNode node) {
+    final slot = node._nodeSlot;
+    if (slot < 0 ||
+        slot >= _nodeSlots.length ||
+        !identical(_nodeSlots[slot], node)) {
+      return;
+    }
+    _nodeSlots[slot] = null;
+    _nodeGenerations[slot]++;
+    _freeNodeSlots.add(slot);
+  }
 
   /// Depth of the explicit **untracked** escape (`#lzcellkernel`). While it is
   /// non-zero every read reports *no* current dependent, so a read made through
@@ -470,6 +525,25 @@ class Context implements ComputeOps {
   /// [DisposedNodeError].
   bool isNodeDisposed(GraphNode node) => (node as _ReactiveNode)._disposed;
 
+  /// The allocator identity carried by [node].
+  ///
+  /// `slot` is reusable, `generation` advances before that slot is reused, and
+  /// `kind` is one of `cell`, `computed`, or `effect`. Low-level [Slot]s and
+  /// guarded [Computed]s both occupy the specification's `computed` kind. This
+  /// read-only projection exists for conformance evidence: callers must never
+  /// treat the slot alone as an occupant identity.
+  ({int slot, int generation, String kind}) nodeIdentity(GraphNode node) {
+    final n = node as _ReactiveNode;
+    if (!identical(n._ctx, this)) {
+      throw ArgumentError.value(node, 'node', 'belongs to another Context');
+    }
+    return (
+      slot: n._nodeSlot,
+      generation: n._nodeGeneration,
+      kind: n._nodeKind.fixtureName,
+    );
+  }
+
   /// Tear down [node], dispatching on its own kind.
   ///
   /// Detaches both edge directions, marks the surviving dependent cone dirty
@@ -624,7 +698,35 @@ class Context implements ComputeOps {
 /// amortized O(1), demoting again only at [edgeIndexDemoteThreshold]
 /// (`#lzspecedgeindex`). The edge *set* is identical either way — dedup
 /// strategy is not observable.
+enum _NodeKind {
+  cell('cell'),
+  computed('computed'),
+  effect('effect'),
+  detached('detached');
+
+  const _NodeKind(this.fixtureName);
+
+  final String fixtureName;
+}
+
 abstract class _ReactiveNode implements GraphNode {
+  _ReactiveNode(this._ctx, this._nodeKind, {bool allocate = true}) {
+    if (allocate) {
+      final identity = _ctx._allocateNode(this);
+      _nodeSlot = identity.slot;
+      _nodeGeneration = identity.generation;
+    } else {
+      _nodeSlot = -1;
+      _nodeGeneration = -1;
+    }
+  }
+
+  /// The context and immutable occupant token carried by this handle.
+  final Context _ctx;
+  final _NodeKind _nodeKind;
+  late final int _nodeSlot;
+  late final int _nodeGeneration;
+
   List<_ReactiveNode>? _dependents;
   List<_ReactiveNode>? _dependencies;
 
@@ -655,11 +757,6 @@ abstract class _ReactiveNode implements GraphNode {
     }
     return index;
   }
-
-  /// The context this node belongs to. Concrete subclasses provide this as a
-  /// field; the base declares it so [_invalidate] / [_detachUpstream] can route
-  /// through the [Context]-owned cascade stack and cache.
-  Context get ctx;
 
   /// Hook called when this node is invalidated, before the downstream cascade.
   void onInvalidate() {}
@@ -772,7 +869,11 @@ abstract class _ReactiveNode implements GraphNode {
   /// 4. Mark the surviving dependent cone dirty. This is the step that is easy
   ///    to omit and that leaves a live reader frozen on a value it computed
   ///    *through* this node; see [Context._disposalDepth].
-  void _disposeNode() {
+  void _disposeNode() => _ctx._disposeHandle(this);
+
+  /// Tear down the currently matching live occupant. Called only after
+  /// [Context._disposeHandle] has validated slot, generation, and kind.
+  void _disposeCurrent() {
     if (_disposed) return;
     _disposed = true;
 
@@ -788,10 +889,14 @@ abstract class _ReactiveNode implements GraphNode {
       for (final dependent in dependents) {
         dependent._removeDependency(this);
       }
-      ctx._invalidateDisposedDependents(dependents);
+      _ctx._invalidateDisposedDependents(dependents);
     }
 
-    onDispose();
+    try {
+      onDispose();
+    } finally {
+      _ctx._releaseNode(this);
+    }
   }
 
   /// Register [reader] as a dependent of this node (downstream edge) and the
@@ -814,7 +919,7 @@ abstract class _ReactiveNode implements GraphNode {
   /// current-node stack: a tracked read is exclusively [Compute.get], which wires
   /// the edge against the node this view carries as a value.
   Compute _beginCompute() {
-    return Compute._(ctx, this, ctx._computeEpoch++);
+    return Compute._(_ctx, this, _ctx._computeEpoch++);
   }
 
   /// Leave a recompute: retire the [Compute] view so a later (escaped) tracked
@@ -841,7 +946,7 @@ abstract class _ReactiveNode implements GraphNode {
   /// Invalidate this node: run its [onInvalidate] hook and cascade the
   /// invalidation to every transitively-reached dependent. Driven by the
   /// [Context]-owned iterative DFS (see [Context._cascadeFrom]).
-  void _invalidate() => ctx._cascadeFrom(this);
+  void _invalidate() => _ctx._cascadeFrom(this);
 
   /// Expand this node's invalidation into [stack]: fire [onInvalidate], then
   /// push this node's current dependents onto [stack] (clearing the local list,
@@ -878,11 +983,12 @@ abstract class _ReactiveNode implements GraphNode {
 class Slot<T> extends _ReactiveNode implements ComputeReadable<T> {
   /// Creates a lazy slot bound to [ctx].
   Slot(this.ctx, T Function(Compute cx) compute, {this.name})
-      : _compute = compute;
+      : _compute = compute,
+        super(ctx, _NodeKind.computed);
 
   /// The context this slot belongs to.
-  @override
   final Context ctx;
+
   final T Function(Compute cx) _compute;
 
   /// Optional human-readable name for debugging.
@@ -1013,11 +1119,13 @@ class Slot<T> extends _ReactiveNode implements ComputeReadable<T> {
 /// list would bypass the graph, ignore [Context.batch], and cost memory on
 /// every cell whether or not anything is listening.
 class Source<T> extends _ReactiveNode implements ComputeReadable<T> {
-  Source(this.ctx, T initialValue) : _value = initialValue;
+  Source(this.ctx, T initialValue)
+      : _value = initialValue,
+        super(ctx, _NodeKind.cell);
 
   /// The context this cell belongs to.
-  @override
   final Context ctx;
+
   T _value;
 
   /// The untracked read used by [ComputeOps.get] on [Context].
@@ -1171,9 +1279,13 @@ class Computed<T> extends _ReactiveNode implements ComputeReadable<T> {
   Computed(this.ctx, T Function(Compute cx) compute,
       {bool Function(T old, T neu)? changed})
       : _changed = changed,
-        _backing = _GuardedSlot<T>(ctx, compute, changed: changed);
+        super(ctx, _NodeKind.computed) {
+    // Allocate the public computed identity before its private backing slot so
+    // a freshly freed raw slot is visibly reused by the public successor.
+    _backing = _GuardedSlot<T>(ctx, compute, changed: changed);
+  }
 
-  @override
+  /// The context this computed belongs to.
   final Context ctx;
 
   /// The custom propagate predicate (`#lzcellkernel`), mirrored from the backing
@@ -1187,7 +1299,7 @@ class Computed<T> extends _ReactiveNode implements ComputeReadable<T> {
   /// `_guardEnabled`) so, under a multi-write batch, an eager computed does not
   /// recompute once per written source; the equality guard then lives on the
   /// puller ([_pull]), applied to the single coalesced re-materialization.
-  final _GuardedSlot<T> _backing;
+  late final _GuardedSlot<T> _backing;
 
   /// The materialized value, valid whenever [_eager]. `_hasValue` distinguishes
   /// the first materialization (at [eager]) from a later guarded recompute.
@@ -1409,12 +1521,15 @@ typedef EffectRun = void Function()? Function(Compute cx);
 ///   dispose();
 ///   a.value = 3; // log is unchanged — effect disposed
 class Effect extends _ReactiveNode {
-  Effect(this.ctx, EffectRun run) : _run = run {
+  Effect(this.ctx, EffectRun run)
+      : _run = run,
+        super(ctx, _NodeKind.effect) {
     _rerun();
   }
 
   /// The context this effect belongs to.
   final Context ctx;
+
   final EffectRun _run;
   void Function()? _cleanup;
   bool _running = false;
@@ -1751,10 +1866,8 @@ abstract interface class ComputeReadable<T> {
 /// [Context.computeDetached]. It never joins the graph — reads through its
 /// [Compute] are untracked, so it acquires no edges and is collected after use.
 class _DetachedComputeNode extends _ReactiveNode {
-  _DetachedComputeNode(this.ctx);
-
-  @override
-  final Context ctx;
+  _DetachedComputeNode(Context ctx)
+      : super(ctx, _NodeKind.detached, allocate: false);
 }
 
 /// The **compute-time operations subset** of the [Context] API

@@ -64,15 +64,37 @@ class _Superseded implements Exception {
 /// [AsyncTeardownScope] accept any node kind while exposing **counts, not edge
 /// lists** — assertable graph shape with no path to the internals and no
 /// storage strategy pinned by the contract.
-sealed class AsyncGraphNode {}
+enum _AsyncNodeKind {
+  cell('cell'),
+  computed('computed'),
+  effect('effect');
+
+  const _AsyncNodeKind(this.fixtureName);
+
+  final String fixtureName;
+}
+
+sealed class AsyncGraphNode {
+  AsyncGraphNode(this._ctx, this._nodeKind) {
+    final identity = _ctx._allocateNode(this);
+    _nodeSlot = identity.slot;
+    _nodeGeneration = identity.generation;
+  }
+
+  final AsyncContext _ctx;
+  final _AsyncNodeKind _nodeKind;
+  late final int _nodeSlot;
+  late final int _nodeGeneration;
+}
 
 /// A mutable input cell on the async graph (the synchronous input layer of
 /// [AsyncContext]). Reads inside an async compute/effect register a dependency
 /// edge; writes invalidate dependents.
-class AsyncCellHandle<T> implements AsyncGraphNode {
-  AsyncCellHandle(this._ctx, T initialValue) : _value = initialValue;
+class AsyncCellHandle<T> extends AsyncGraphNode {
+  AsyncCellHandle(AsyncContext ctx, T initialValue)
+      : _value = initialValue,
+        super(ctx, _AsyncNodeKind.cell);
 
-  final AsyncContext _ctx;
   T _value;
 
   /// Whether this cell has been torn down (`#lzspecedgeindex`).
@@ -122,22 +144,32 @@ typedef Equals<T> = bool Function(T a, T b);
 /// dependencies change. Holds the cached value when [state] is
 /// [AsyncSlotState.resolved], the in-flight future + revision when
 /// [computing], or the error when [error].
-class AsyncSlotHandle<T> implements AsyncGraphNode {
+class AsyncSlotHandle<T> extends AsyncGraphNode {
   AsyncSlotHandle(
-    this._ctx,
+    AsyncContext ctx,
     Future<T> Function(AsyncComputeContext ctx) compute, {
     Equals<T>? eq,
   })  : _computeAsync = compute,
         _computeSync = null,
-        _eq = eq;
+        _eq = eq,
+        super(ctx, _AsyncNodeKind.computed);
 
   AsyncSlotHandle.sync(
-    this._ctx,
+    AsyncContext ctx,
     T Function(AsyncComputeContext ctx) compute, {
     Equals<T>? eq,
   })  : _computeAsync = null,
         _computeSync = compute,
-        _eq = eq;
+        _eq = eq,
+        super(ctx, _AsyncNodeKind.computed);
+
+  AsyncSlotHandle._effect(
+    AsyncContext ctx,
+    Future<T> Function(AsyncComputeContext ctx) compute,
+  )   : _computeAsync = compute,
+        _computeSync = null,
+        _eq = null,
+        super(ctx, _AsyncNodeKind.effect);
 
   /// Whether this node has been torn down (`#lzspecedgeindex`). Declared on the
   /// slot rather than only on the effect subclass so all three async node kinds
@@ -148,7 +180,6 @@ class AsyncSlotHandle<T> implements AsyncGraphNode {
   /// [DisposedNodeError].
   bool get isDisposed => _nodeDisposed;
 
-  final AsyncContext _ctx;
   final Future<T> Function(AsyncComputeContext ctx)? _computeAsync;
   final T Function(AsyncComputeContext ctx)? _computeSync;
   final Equals<T>? _eq;
@@ -377,6 +408,39 @@ class AsyncComputeContext {
 
 /// The async reactive surface: a distinct graph with its own handles.
 class AsyncContext {
+  /// Mutation-test-only switch that deliberately removes the generation fence
+  /// from stale-handle disposal. Normal builds tree-shake this branch away.
+  static const bool _unsafeStaleHandleDisposal =
+      bool.fromEnvironment('lazily.unsafe_stale_handle_disposal');
+
+  final List<AsyncGraphNode?> _nodeSlots = [];
+  final List<int> _nodeGenerations = [];
+  final List<int> _freeNodeSlots = [];
+
+  ({int slot, int generation}) _allocateNode(AsyncGraphNode node) {
+    if (_freeNodeSlots.isNotEmpty) {
+      final slot = _freeNodeSlots.removeLast();
+      _nodeSlots[slot] = node;
+      return (slot: slot, generation: _nodeGenerations[slot]);
+    }
+    final slot = _nodeSlots.length;
+    _nodeSlots.add(node);
+    _nodeGenerations.add(0);
+    return (slot: slot, generation: 0);
+  }
+
+  void _releaseNode(AsyncGraphNode node) {
+    final slot = node._nodeSlot;
+    if (slot < 0 ||
+        slot >= _nodeSlots.length ||
+        !identical(_nodeSlots[slot], node)) {
+      return;
+    }
+    _nodeSlots[slot] = null;
+    _nodeGenerations[slot]++;
+    _freeNodeSlots.add(slot);
+  }
+
   final Map<Object, Set<Object>> _dependents =
       {}; // dependency -> {dependent slots/effects}
   AsyncSlotHandle<dynamic>? _currentAsync;
@@ -622,22 +686,48 @@ class AsyncContext {
   /// to every dependent, so dropping the last user-held reference reclaims
   /// nothing and a long-lived source retains every node that ever read it.
   Future<void> disposeNode(AsyncGraphNode node) async {
-    switch (node) {
-      case _AsyncEffectHandle():
-        await node.disposeAsync();
-      case AsyncEffectHandle():
-        await node.disposeAsync();
-      case AsyncSlotHandle():
-        if (node._nodeDisposed) return;
-        node._nodeDisposed = true;
-        _detachAndDirty(node, node._dependencies);
-        node._failInFlight(const _Superseded());
-      case AsyncCellHandle():
-        if (node._nodeDisposed) return;
-        node._nodeDisposed = true;
-        // A cell is a pure source: no upstream set to detach.
-        _detachAndDirty(node, <Object>{});
+    if (!identical(node._ctx, this)) return;
+    final slot = node._nodeSlot;
+    if (slot < 0 || slot >= _nodeSlots.length) return;
+    final current = _nodeSlots[slot];
+    if (current == null ||
+        (!_unsafeStaleHandleDisposal &&
+            current._nodeGeneration != node._nodeGeneration) ||
+        current._nodeKind != node._nodeKind) {
+      return;
     }
+    switch (current) {
+      case _AsyncEffectHandle():
+        await current._disposeCurrentAsync();
+      case AsyncEffectHandle():
+        await current.disposeAsync();
+      case AsyncSlotHandle():
+        if (current._nodeDisposed) return;
+        current._nodeDisposed = true;
+        _detachAndDirty(current, current._dependencies);
+        current._failInFlight(const _Superseded());
+        _releaseNode(current);
+      case AsyncCellHandle():
+        if (current._nodeDisposed) return;
+        current._nodeDisposed = true;
+        // A cell is a pure source: no upstream set to detach.
+        _detachAndDirty(current, <Object>{});
+        _releaseNode(current);
+    }
+  }
+
+  /// The allocator identity carried by [node]. The generation and kind are
+  /// both part of the occupant token; the reusable slot alone is not.
+  ({int slot, int generation, String kind}) nodeIdentity(AsyncGraphNode node) {
+    if (!identical(node._ctx, this)) {
+      throw ArgumentError.value(
+          node, 'node', 'belongs to another AsyncContext');
+    }
+    return (
+      slot: node._nodeSlot,
+      generation: node._nodeGeneration,
+      kind: node._nodeKind.fixtureName,
+    );
   }
 
   /// Tear down a derived async slot. See [disposeNode].
@@ -730,7 +820,8 @@ abstract class AsyncEffectHandle implements AsyncGraphNode {
 
 class _AsyncEffectHandle extends AsyncSlotHandle<void>
     implements AsyncEffectHandle {
-  _AsyncEffectHandle(AsyncContext ctx, this._body) : super(ctx, (_) async {});
+  _AsyncEffectHandle(AsyncContext ctx, this._body)
+      : super._effect(ctx, (_) async {});
 
   final Future<dynamic> Function(AsyncComputeContext ctx) _body;
   Future<void> Function()? _cleanup;
@@ -800,7 +891,9 @@ class _AsyncEffectHandle extends AsyncSlotHandle<void>
   }
 
   @override
-  Future<void> disposeAsync() async {
+  Future<void> disposeAsync() => _ctx.disposeNode(this);
+
+  Future<void> _disposeCurrentAsync() async {
     if (_nodeDisposed) return;
     _nodeDisposed = true;
     _ctx._effects.remove(this);
@@ -820,6 +913,7 @@ class _AsyncEffectHandle extends AsyncSlotHandle<void>
         // Best-effort.
       }
     }
+    _ctx._releaseNode(this);
   }
 }
 

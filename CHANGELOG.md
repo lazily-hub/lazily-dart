@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## Unreleased
+
+### Fixed
+
+- Reactive node disposal now validates a reusable allocator slot's generation
+  and node kind before mutating either the synchronous or async graph. Repeated,
+  same-kind ABA, and cross-kind stale disposal are no-ops and cannot detach a
+  successor or run an effect cleanup. `Context.nodeIdentity` and
+  `AsyncContext.nodeIdentity` expose read-only conformance evidence without
+  making a raw slot an occupant identity.
+
+### Testing
+
+- The reactive-graph runner now replays the generated nine-case stale-handle
+  matrix on `Context`, `ThreadSafeContext`, and `AsyncContext`, proving actual
+  allocator reuse before accepting `recycled_id_confirmed`. The test suite's
+  mutation control removes the generation fence and requires both sync and
+  async successor-survival probes to kill that mutant.
+
 ## 0.34.0 - 2026-10-15
 
 ### Added
