@@ -245,6 +245,9 @@ chart.lastActions();             // exit → transition → entry actions
 
 lazily-dart replays the shared [`lazily-spec`][spec] conformance fixtures:
 
+CI and release qualification use immutable lazily-spec `v0.43.0`
+(`4b34879b`); local development may use another explicit sibling checkout.
+
 - State-chart fixtures mirrored into `test/conformance/statechart/` are
   replayed by `test/statechart_conformance_test.dart`, asserting `accepted`,
   `active`, `matches`, and `actions` identically to every other binding

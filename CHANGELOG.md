@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
   allocator reuse before accepting `recycled_id_confirmed`. The test suite's
   mutation control removes the generation fence and requires both sync and
   async successor-survival probes to kill that mutant.
+- CI and release qualification pin the canonical corpus and assertion tooling
+  to immutable lazily-spec `v0.43.0` (`4b34879b`), so a moving spec branch
+  cannot change the artifact gate after qualification.
 
 ## 0.34.0 - 2026-10-15
 
