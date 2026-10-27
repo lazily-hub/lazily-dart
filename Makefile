@@ -34,10 +34,20 @@
 LAZILY_CONFORMANCE_RUN_ID := $(shell echo "make-$$(date -u +%s)-$$$$-$$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n')")
 export LAZILY_CONFORMANCE_RUN_ID
 
-.PHONY: check fmt fmt-fix analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach core-conformance-report core-conformance-report-self-test core-facade-check core-artifact-consumer-check
+.PHONY: check fmt fmt-fix analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check ci-reach core-conformance-report core-conformance-report-self-test core-facade-check core-artifact-consumer-check core-evidence-check
 
 core-artifact-consumer-check:
 	./scripts/core-artifact-consumer-check.sh
+
+# Per-binding Core evidence gate (#lzbindingevidenceci). Runs lazily-spec's
+# verifier for this binding alone: it regenerates the Core report through
+# scripts/core-conformance.json's report_command, then checks it against the
+# canonical profile, so stale evidence handles, unreported skips and a missing
+# report are red on push instead of only at cohort qualification.
+# --require-all turns an absent ../lazily-spec layout or declaration into a
+# failure, never a skip.
+core-evidence-check:
+	node ../lazily-spec/scripts/check-core-evidence.mjs --bindings-root .. --binding dart --reports build/core-evidence --generate-reports --require-all
 
 core-facade-check:
 	dart test test/core_facade_test.dart
@@ -49,7 +59,7 @@ core-facade-check:
 # `conformance-coverage` runs AFTER `test`, not before: the guard now reads the
 # runtime manifest the suite writes, so ordering it first would only ever see the
 # previous run's evidence, or none at all.
-check: fmt analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check core-conformance-report-self-test core-facade-check core-artifact-consumer-check ci-reach
+check: fmt analyze core-api-check test test-interop-peer stdlib-browser-check ipc-browser-check conformance-coverage unbound-block-check assertion-ordering-check formal-check core-conformance-report-self-test core-facade-check core-artifact-consumer-check core-evidence-check ci-reach
 	@echo "lazily-dart: check OK"
 
 # Resolve the focused facade with Dart's native analyzer element model and
