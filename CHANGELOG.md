@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.html)
 (with the pre-1.0 convention that `0.minor` may break between minor bumps).
 
+## Unreleased
+
+### Added
+
+- Transport-agnostic reactive egress (`#lzegress`): the pure `EgressCore`
+  (monotone sequence assignment, bounded unacknowledged window, cumulative ACK
+  watermark, bounded retry/backoff/exhaustion, producer-generation fence) and
+  three shells — `EgressCell`, `ThreadSafeEgressCell`, and `AsyncEgressCell` —
+  that project `pending` / `inflight` / `ackedThrough` / `retry` as reader nodes
+  and attach exactly one transport Effect per incarnation. In the async shell
+  only the transport attachment is async-coloured (`AsyncEgressTransport`).
+- Generic keyed effect compare-and-swap (`#lzeffectcas`): `EffectCasCore` with
+  stable identity, opaque expected authority, keyed single-flight, latest-wins
+  supersession, logical-clock retry, reconnect, exact terminal receipts and
+  resumable ordered plans, plus `durableState()` / `hydrate()` and the
+  `EffectCas` / `ThreadSafeEffectCas` / `AsyncEffectCas` reactive shells.
+
+### Testing
+
+- `egress_family_conformance_test.dart` replays the four canonical
+  `egress/egress_*.json` fixtures through all three egress flavors, asserting
+  every returned outcome, the full projected state, and per-reader-kind
+  invalidation in both directions. `effect_cas_conformance_test.dart` replays
+  `egress/effect_cas.json` through the core and all three shells. The four
+  egress fixtures leave the conformance-coverage guard's `KNOWN_UNCOVERED` list.
+
 ## 0.35.0 - 2026-10-22
 
 ### Fixed

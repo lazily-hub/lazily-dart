@@ -26,6 +26,7 @@
 library;
 
 export 'src/async_context.dart';
+export 'src/async_egress.dart';
 export 'src/async_ingress.dart';
 export 'src/async_queue_family.dart';
 export 'src/async_reactive_family.dart';
@@ -34,6 +35,10 @@ export 'src/coordination.dart';
 export 'src/core.dart';
 export 'src/crdt_tree.dart';
 export 'src/durable_client.dart';
+export 'src/effect_cas.dart';
+export 'src/effect_cas_core.dart';
+export 'src/egress.dart';
+export 'src/egress_core.dart';
 export 'src/ingress.dart';
 export 'src/fnv1a64.dart';
 export 'src/ingress_core.dart';
@@ -66,6 +71,7 @@ export 'src/u64.dart';
 export 'src/text_crdt.dart';
 export 'src/windowing.dart';
 export 'src/thread_safe.dart';
+export 'src/thread_safe_egress.dart';
 export 'src/thread_safe_ingress.dart';
 export 'src/thread_safe_queue_family.dart';
 export 'src/thread_safe_reactive_family.dart';

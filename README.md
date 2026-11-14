@@ -474,6 +474,8 @@ identity.
 | Queue family across sync / thread-safe / async (`QueueCell` / `TopicCell` / `WorkQueueCell`) | `package:lazily/lazily.dart` |
 | Transport-agnostic reactive ingress across sync / thread-safe / async (`IngressCore` + `IngressCell` / `ThreadSafeIngressCell` / `AsyncIngressCell`, `#designimplementtransport`) | `package:lazily/lazily.dart` |
 | Latest-value durable egress across core / sync / thread-safe / async (`LatestDurableProjectionCore` + reactive shells, `#lzlatestdurableprojection`) | `package:lazily/latest_durable_projection.dart` |
+| Transport-agnostic reactive egress across sync / thread-safe / async (`EgressCore` + `EgressCell` / `ThreadSafeEgressCell` / `AsyncEgressCell`, one attached transport Effect per incarnation, `#lzegress`) | `package:lazily/lazily.dart` |
+| Generic keyed effect compare-and-swap across core / sync / thread-safe / async (`EffectCasCore` + `EffectCas` / `ThreadSafeEffectCas` / `AsyncEffectCas`, durable image + `hydrate`, `#lzeffectcas`) | `package:lazily/lazily.dart` |
 | Keyed reactive map materialization (`ComputedMap` lazy `getOrInsertWith` / eager `materializeAll`, `#reactivemap`) | `package:lazily/lazily.dart` |
 | Thread-safe context + reactive map (`ThreadSafeContext` / `ThreadSafeReactiveMap` / `ThreadSafeSourceMap` / `ThreadSafeComputedMap`) | `package:lazily/lazily.dart` |
 | Async reactive map (`AsyncReactiveMap` / `AsyncSourceMap` / `AsyncComputedMap`) | `package:lazily/lazily.dart` |
