@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/2.0.0.
   resumable ordered plans, plus `durableState()` / `hydrate()` and the
   `EffectCas` / `ThreadSafeEffectCas` / `AsyncEffectCas` reactive shells.
 
+### Fixed
+
+- `EgressCore.ack` refuses an acknowledgement at or beyond `nextSequence` with
+  `EgressAckBeyondSent` (wire `beyond_sent`), changing and invalidating nothing,
+  so an ACK for never-assigned data can no longer lift the watermark over the
+  next sequence and strand the record enqueued there.
+- `EgressCore.reconnect` invalidates `pending` whenever retained envelopes
+  exist, not only when records were replayed: every retained never-claimed
+  envelope is rewritten to the new generation.
+- Effect-CAS same-epoch upserts are compared with the original submitted
+  intent, never with the expected authority a completed plan step advanced
+  (already the case here; now pinned by the lazily-spec ec718e3 corpus).
+
 ### Testing
 
 - `egress_family_conformance_test.dart` replays the four canonical

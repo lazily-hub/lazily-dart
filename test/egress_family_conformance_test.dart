@@ -315,6 +315,10 @@ Map<String, dynamic> _ackWire(EgressAck ack) => switch (ack) {
           'ack': 'unchanged',
           'through': through,
         },
+      EgressAckBeyondSent(:final nextSequence) => {
+          'ack': 'beyond_sent',
+          'next_sequence': nextSequence,
+        },
       EgressAckStaleGeneration(:final current) => {
           'ack': 'stale_generation',
           'current': current,
@@ -676,6 +680,49 @@ void main() {
       expect(model.pending().map((e) => e.sequence), [1]);
       expect(model.inflight(), isEmpty);
       expect(model.ackedThrough(), 0);
+    });
+  }
+
+  /// Fix 1 unit pin: an ACK at or beyond `nextSequence` acknowledges data
+  /// never assigned. It is refused without moving the watermark or dirtying a
+  /// reader, so the record enqueued next is still deliverable.
+  for (final flavor in _Flavor.values) {
+    test('an ACK beyond the sent range is refused (${flavor.label})', () {
+      final model = _builders[flavor]!(1, const EgressPolicy());
+      model.enqueue(10);
+      model.claim(1);
+      _materialize(model);
+      expect(model.ack(1, 1), const EgressAckBeyondSent(1));
+      expect(model.ack(1, 7), const EgressAckBeyondSent(1));
+      expect(model.validity(), [true, true, true, true],
+          reason: 'a refused ACK invalidates nothing');
+      expect(model.ackedThrough(), isNull);
+      expect(model.enqueue(20), 1);
+      expect(model.ack(1, 0), const EgressAckAdvanced(0));
+      expect(model.claim(1), isA<EgressClaimed<int>>(),
+          reason: 'the next record was not stranded below the watermark');
+    });
+  }
+
+  /// Fix 2 unit pin: a reconnect that replays nothing still rewrites every
+  /// retained never-claimed envelope to the new generation, so `pending` must
+  /// be invalidated or a reader keeps serving stale-generation envelopes.
+  for (final flavor in _Flavor.values) {
+    test(
+        'a reconnect with nothing to replay refreshes pending (${flavor.label})',
+        () {
+      final model = _builders[flavor]!(1, const EgressPolicy());
+      model.enqueue(10);
+      _materialize(model);
+      expect(model.reconnect(2), const EgressReconnectAdvanced(2, 0));
+      expect(model.validity(), [false, true, true, true]);
+      expect(model.pending().single.generation, 2);
+      _materialize(model);
+      final empty = _builders[flavor]!(1, const EgressPolicy());
+      _materialize(empty);
+      expect(empty.reconnect(2), const EgressReconnectAdvanced(2, 0));
+      expect(empty.validity(), [true, true, true, true],
+          reason: 'with nothing retained the projection did not change');
     });
   }
 

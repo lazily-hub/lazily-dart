@@ -219,6 +219,22 @@ final class EgressAckUnchanged extends EgressAck {
   String toString() => 'EgressAckUnchanged($through)';
 }
 
+/// The acknowledgement names a sequence this producer never assigned
+/// (`through >= nextSequence`). Refused: it changes nothing and invalidates
+/// nothing, so a bogus ACK cannot lift the watermark over the next sequence and
+/// strand the record enqueued there.
+final class EgressAckBeyondSent extends EgressAck {
+  const EgressAckBeyondSent(this.nextSequence);
+  final int nextSequence;
+  @override
+  bool operator ==(Object other) =>
+      other is EgressAckBeyondSent && other.nextSequence == nextSequence;
+  @override
+  int get hashCode => Object.hash(4, nextSequence);
+  @override
+  String toString() => 'EgressAckBeyondSent($nextSequence)';
+}
+
 /// The acknowledging attachment belongs to a superseded incarnation.
 final class EgressAckStaleGeneration extends EgressAck {
   const EgressAckStaleGeneration(this.current);
@@ -517,10 +533,14 @@ final class EgressCore<T> {
     );
   }
 
-  /// Advance the cumulative watermark and prune acknowledged records.
+  /// Advance the cumulative watermark and prune acknowledged records. An ACK
+  /// at or beyond [nextSequence] is refused with [EgressAckBeyondSent].
   (EgressChange, EgressAck) ack(int generation, int through) {
     if (generation != _generation) {
       return (EgressChange.none, EgressAckStaleGeneration(_generation));
+    }
+    if (through >= _nextSequence) {
+      return (EgressChange.none, EgressAckBeyondSent(_nextSequence));
     }
     final current = _ackedThrough;
     if (current != null && through <= current) {
@@ -616,9 +636,11 @@ final class EgressCore<T> {
     }
     final retryChanged = _retry != null;
     _retry = null;
+    // Every retained envelope was just rewritten to the new generation, so the
+    // pending projection changed even when nothing was replayed into it.
     return (
       EgressChange(
-        pending: replayed > 0,
+        pending: replayed > 0 || _pending.isNotEmpty,
         inflight: replayed > 0,
         retry: retryChanged,
       ),
