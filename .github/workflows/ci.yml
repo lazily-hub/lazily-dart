@@ -60,7 +60,7 @@ jobs:
           repository: lazily-hub/lazily-spec
           # Release qualification is reproducible: do not let a moving spec
           # main change the corpus underneath an identical Dart artifact.
-          ref: ca676a1a7173525066e90bca48b2ead230a9cd88 # v0.46.0
+          ref: e3bd642ea955325a4f27b73c454fa5a2c9496b15 # v0.47.0
           path: lazily-spec
 
       # A checkout that succeeded but landed in the wrong place is invisible to
@@ -350,7 +350,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: lazily-hub/lazily-spec
-          ref: ca676a1a7173525066e90bca48b2ead230a9cd88 # v0.46.0
+          ref: e3bd642ea955325a4f27b73c454fa5a2c9496b15 # v0.47.0
           path: lazily-spec
 
       - name: Checkout canonical lazily-formal
