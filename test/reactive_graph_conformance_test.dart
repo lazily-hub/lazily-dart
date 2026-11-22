@@ -81,6 +81,7 @@ const expectedFixtures = {
   'read_after_dispose_is_an_error.json',
   'recycled_id_inherits_nothing.json',
   'dispose_signal_reverts_to_lazy.json',
+  'effect_cleanup_is_optional.json',
   'failed_compute_is_never_cached.json',
   'scope_teardown_equals_fold_of_disposals.json',
   'scoping_bounds_teardown_not_visibility.json',
@@ -204,6 +205,43 @@ const knownDivergences = <String>{};
 /// read from the graph rather than remembered by the caller.
 enum _Kind { cell, computed, effect }
 
+/// What an `effect` op's body returns from each run (`#lzeffectvoid`).
+///
+/// `everyRun` is the default (the op names no `cleanup`). `none` and the even
+/// runs of `alternate` return this binding's idiomatic no-cleanup form — a
+/// block body that falls off the end, so the library sees `null` — never a
+/// no-op closure, which would be observationally identical and test nothing.
+enum _CleanupShape { everyRun, none, alternate }
+
+/// Parse an `effect` op's optional `cleanup` field. An unknown value is a hard
+/// failure: defaulting it would replay a fixture this runner does not
+/// understand and report green against it.
+_CleanupShape _cleanupShapeOf(Map<String, dynamic> op, String fixture) {
+  final raw = op['cleanup'];
+  switch (raw) {
+    case null:
+    case 'every_run':
+      return _CleanupShape.everyRun;
+    case 'none':
+      return _CleanupShape.none;
+    case 'alternate':
+      return _CleanupShape.alternate;
+    default:
+      throw StateError(
+        '$fixture: effect ${op['id']} declares unknown cleanup `$raw` — '
+        'this runner models every_run, none and alternate',
+      );
+  }
+}
+
+/// Whether run [run] (1-based, the run at creation being run 1) of an effect
+/// with [shape] returns a cleanup.
+bool _returnsCleanup(_CleanupShape shape, int run) => switch (shape) {
+      _CleanupShape.everyRun => true,
+      _CleanupShape.none => false,
+      _CleanupShape.alternate => run.isOdd,
+    };
+
 typedef _NodeIdentity = ({int slot, int generation, String kind});
 
 /// One execution model. Uniformly async so the sync and async contexts replay
@@ -234,7 +272,12 @@ abstract class _Model {
 
   void defineComputed(String id, List<String> reads, num offset, String? scope);
 
-  void defineEffect(String id, List<String> reads, String? scope);
+  void defineEffect(
+    String id,
+    List<String> reads,
+    String? scope, {
+    _CleanupShape cleanup = _CleanupShape.everyRun,
+  });
 
   /// An eager signal: `sum(reads) + offset`, materialized at creation and
   /// re-materialized after every invalidating write without a read.
@@ -401,8 +444,19 @@ class _SyncModel implements _Model {
   }
 
   @override
-  void defineEffect(String id, List<String> reads, String? scope) {
+  void defineEffect(
+    String id,
+    List<String> reads,
+    String? scope, {
+    _CleanupShape cleanup = _CleanupShape.everyRun,
+  }) {
+    var run = 0;
+    // The no-cleanup path falls off the end — the Dart spelling `#lzeffectvoid`
+    // names, which `EffectRun` (`void Function()? Function(Compute)`) allows —
+    // so the library receives `null`, never a stand-in closure.
+    // ignore: body_might_complete_normally_nullable
     final effect = Effect(ctx, (cx) {
+      run++;
       runLog.add(id);
       // Swallowed, not propagated: an effect that reads through a disposed node
       // must not turn the publish that scheduled it into a throw. The corpus
@@ -414,7 +468,8 @@ class _SyncModel implements _Model {
       } on DisposedNodeError {
         // Observed by the top-level read that names the same node.
       }
-      return () => cleanupLog.add(id);
+      if (_returnsCleanup(cleanup, run)) return () => cleanupLog.add(id);
+      // No cleanup: fall off the end, the idiomatic Dart spelling (`null`).
     });
     if (scope != null) scopes[scope]!.adopt(effect);
     nodes[id] = effect;
@@ -564,8 +619,13 @@ class _ThreadSafeModel implements _Model {
   ) =>
       _write(() => inner.defineComputed(id, reads, offset, scope));
   @override
-  void defineEffect(String id, List<String> reads, String? scope) =>
-      _write(() => inner.defineEffect(id, reads, scope));
+  void defineEffect(
+    String id,
+    List<String> reads,
+    String? scope, {
+    _CleanupShape cleanup = _CleanupShape.everyRun,
+  }) =>
+      _write(() => inner.defineEffect(id, reads, scope, cleanup: cleanup));
   @override
   void defineSignal(String id, List<String> reads, num offset, String? scope) =>
       _write(() => inner.defineSignal(id, reads, offset, scope));
@@ -722,8 +782,15 @@ class _AsyncModel implements _Model {
   }
 
   @override
-  void defineEffect(String id, List<String> reads, String? scope) {
+  void defineEffect(
+    String id,
+    List<String> reads,
+    String? scope, {
+    _CleanupShape cleanup = _CleanupShape.everyRun,
+  }) {
+    var run = 0;
     final effect = ctx.effectAsync((cc) async {
+      run++;
       runLog.add(id);
       try {
         for (final r in reads) {
@@ -732,7 +799,8 @@ class _AsyncModel implements _Model {
       } on DisposedNodeError {
         // See the sync model.
       }
-      return () async => cleanupLog.add(id);
+      if (_returnsCleanup(cleanup, run)) return () async => cleanupLog.add(id);
+      // No cleanup: fall off the end, so the body's future completes with null.
     });
     if (scope != null) scopes[scope]!.adopt(effect);
     nodes[id] = effect;
@@ -1032,6 +1100,7 @@ Future<_Report> _replay(
           op['id'] as String,
           (op['reads'] as List).cast<String>(),
           scope,
+          cleanup: _cleanupShapeOf(op, fixture),
         );
       case 'fail_next':
         model.failNext(op['id'] as String, (op['count'] as int?) ?? 1);
