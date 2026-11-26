@@ -36,6 +36,7 @@ export 'src/crdt_tree.dart';
 export 'src/durable_client.dart';
 export 'src/ingress.dart';
 export 'src/fnv1a64.dart';
+export 'src/graph_ir.dart';
 export 'src/ingress_core.dart';
 export 'src/int_width.dart';
 export 'src/lossless_tree_crdt.dart';
