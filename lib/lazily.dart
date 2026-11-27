@@ -76,3 +76,4 @@ export 'src/thread_safe_ingress.dart';
 export 'src/thread_safe_queue_family.dart';
 export 'src/thread_safe_reactive_family.dart';
 export 'src/utf8_offsets.dart';
+export 'src/view.dart' show View;

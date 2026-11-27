@@ -1,12 +1,27 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:lazily/src/view.dart';
+import 'package:lazily/lazily.dart' show View;
 import 'package:test/test.dart';
 
 import 'conformance_manifest.dart';
 
 void main() {
+  test('an explicit null signal initial differs from an omitted one', () {
+    final signal = <String, Object?>{};
+    final document = <String, Object?>{
+      'id': 'counter',
+      'root': 'root',
+      'signals': {'count': signal},
+      'nodes': {
+        'root': {'role': 'region'},
+      },
+    };
+    expect(() => View.install(document), throwsStateError);
+    signal['initial'] = null;
+    expect(View.install(document).signalsJson(), {'count': null});
+  });
+
   final skip = specFamilySkipReason('view');
   test('view conformance replays the canonical fixtures', () {
     final dir = specFamilyDir('view');

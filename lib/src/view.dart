@@ -48,6 +48,9 @@ class View {
         throw StateError('signal id must be a non-empty string');
       final sig = _map(entry.value, 'signal ${entry.key}');
       _allow(sig, 'signal ${entry.key}', ['initial']);
+      if (!sig.containsKey('initial')) {
+        throw StateError('signal ${entry.key} initial is required');
+      }
       initials[entry.key] = _literal(sig['initial']);
     }
     final hasChart = doc.containsKey('chart');
