@@ -26,7 +26,6 @@ class View {
   final StateChart? _chart;
   final Effect subscription;
   ViewValue? _payload;
-  var _inEffect = false;
 
   static const _roles = {'text', 'button', 'field', 'list', 'region'};
   static const _flows = {'row', 'column', 'stack'};
@@ -45,7 +44,8 @@ class View {
     final signalsDoc = _map(doc['signals'], 'view signals');
     final initials = <String, ViewValue>{};
     for (final entry in signalsDoc.entries) {
-      if (entry.key.isEmpty) throw StateError('signal id must be a non-empty string');
+      if (entry.key.isEmpty)
+        throw StateError('signal id must be a non-empty string');
       final sig = _map(entry.value, 'signal ${entry.key}');
       _allow(sig, 'signal ${entry.key}', ['initial']);
       initials[entry.key] = _literal(sig['initial']);
@@ -57,7 +57,8 @@ class View {
     ChartDef? chartDef;
     if (hasChart) chartDef = ChartDef.fromJson(doc['chart'] as Map);
     final nodesDoc = _map(doc['nodes'], 'view nodes');
-    if (nodesDoc.isEmpty) throw StateError('view nodes must contain at least one node');
+    if (nodesDoc.isEmpty)
+      throw StateError('view nodes must contain at least one node');
     final nodes = <String, _Node>{};
     final effects = <String, Map<String, Object?>>{};
     final exprDocs = <MapEntry<String, Object?>>[];
@@ -65,11 +66,23 @@ class View {
       final nid = entry.key;
       if (nid.isEmpty) throw StateError('node id must be a non-empty string');
       final node = _map(entry.value, 'node $nid');
-      _allow(node, 'node $nid', ['role', 'children', 'layout', 'text', 'bind', 'hidden', 'disabled', 'effects']);
+      _allow(node, 'node $nid', [
+        'role',
+        'children',
+        'layout',
+        'text',
+        'bind',
+        'hidden',
+        'disabled',
+        'effects'
+      ]);
       final role = _str(node['role'], 'node $nid role');
       if (!_roles.contains(role)) throw StateError('unknown role `$role`');
-      final children = node.containsKey('children') ? _children(nid, node['children']) : <String>[];
-      final flow = node.containsKey('layout') ? _layout(nid, node['layout']) : null;
+      final children = node.containsKey('children')
+          ? _children(nid, node['children'])
+          : <String>[];
+      final flow =
+          node.containsKey('layout') ? _layout(nid, node['layout']) : null;
       if (node.containsKey('bind')) {
         final bind = _str(node['bind'], 'bind');
         if (bind.isEmpty || !initials.containsKey(bind)) {
@@ -77,17 +90,23 @@ class View {
         }
       }
       if (node.containsKey('text')) {
-        exprDocs.add(MapEntry('$nid.text', _standingText(node['text'], initials.keys.toSet())));
+        exprDocs.add(MapEntry(
+            '$nid.text', _standingText(node['text'], initials.keys.toSet())));
       }
       if (node.containsKey('hidden')) {
-        exprDocs.add(MapEntry('$nid.hidden', _standingFlag('hidden', node['hidden'], initials.keys.toSet())));
+        exprDocs.add(MapEntry('$nid.hidden',
+            _standingFlag('hidden', node['hidden'], initials.keys.toSet())));
       }
       if (node.containsKey('disabled')) {
-        exprDocs.add(MapEntry('$nid.disabled', _standingFlag('disabled', node['disabled'], initials.keys.toSet())));
+        exprDocs.add(MapEntry(
+            '$nid.disabled',
+            _standingFlag(
+                'disabled', node['disabled'], initials.keys.toSet())));
       }
       if (node.containsKey('effects')) {
         final effectMap = _map(node['effects'], 'node $nid effects');
-        _allow(effectMap, 'node $nid effects', ['activate', 'change', 'submit']);
+        _allow(
+            effectMap, 'node $nid effects', ['activate', 'change', 'submit']);
         final stored = <String, Object?>{};
         for (final event in effectMap.entries) {
           _validateEffect(event.value, initials.keys.toSet(), hasChart);
@@ -97,13 +116,15 @@ class View {
       }
       nodes[nid] = _Node(role, children, flow);
     }
-    if (!nodes.containsKey(root)) throw StateError('root `$root` is not a node');
+    if (!nodes.containsKey(root))
+      throw StateError('root `$root` is not a node');
     _checkTree(root, nodes);
     final ctx = Context();
     final signals = <String, Source<ViewValue>>{
       for (final entry in initials.entries) entry.key: ctx.source(entry.value),
     };
-    ViewValue readBare(String sid) => ctx.get(signals[sid] ?? (throw StateError('unknown signal `$sid`')));
+    ViewValue readBare(String sid) =>
+        ctx.get(signals[sid] ?? (throw StateError('unknown signal `$sid`')));
     for (final docExpr in exprDocs) {
       try {
         _evalExpr(docExpr.value, readBare, null);
@@ -114,7 +135,8 @@ class View {
     final exprs = <String, Computed<ViewValue>>{};
     for (final docExpr in exprDocs) {
       final expr = docExpr.value;
-      exprs[docExpr.key] = ctx.computed((cx) => _evalExpr(expr, (sid) => cx.get(signals[sid]!), null));
+      exprs[docExpr.key] = ctx.computed(
+          (cx) => _evalExpr(expr, (sid) => cx.get(signals[sid]!), null));
     }
     final chart = chartDef == null ? null : StateChart(ctx, chartDef);
     final subscription = ctx.effect((cx) {
@@ -125,40 +147,48 @@ class View {
       }
       return null;
     });
-    return View._(ctx, root, nodes, signals, exprs, effects, chart, subscription);
+    return View._(
+        ctx, root, nodes, signals, exprs, effects, chart, subscription);
   }
 
-  Map<String, Object?> signalsJson() => {for (final e in _signals.entries) e.key: _ctx.get(e.value).toJson()};
+  Map<String, Object?> signalsJson() =>
+      {for (final e in _signals.entries) e.key: _ctx.get(e.value).toJson()};
 
-  Map<String, Object?> expressionsJson() => {for (final e in _exprs.entries) e.key: _ctx.get(e.value).toJson()};
+  Map<String, Object?> expressionsJson() =>
+      {for (final e in _exprs.entries) e.key: _ctx.get(e.value).toJson()};
 
   List<Map<String, Object?>> layoutJson() {
     final out = <Map<String, Object?>>[];
     void walk(String id) {
       final node = _nodes[id]!;
-      out.add({'id': id, 'role': node.role, 'children': node.children, 'flow': node.flow});
+      out.add({
+        'id': id,
+        'role': node.role,
+        'children': node.children,
+        'flow': node.flow
+      });
       for (final child in node.children) walk(child);
     }
+
     walk(_root);
     return out;
   }
 
   List<String>? chartJson() => _chart?.activeLeaves();
 
-  List<Map<String, Object?>> dispatchJson(String node, String event, Object? value) {
+  List<Map<String, Object?>> dispatchJson(
+      String node, String event, Object? value) {
     if (!_events.contains(event)) throw StateError('unknown event `$event`');
     if (!_nodes.containsKey(node)) throw StateError('unknown node `$node`');
     final effect = _effects[node]?[event];
     if (effect == null) return [];
     _payload = _literal(value);
-    _inEffect = true;
     try {
       final trace = <Map<String, Object?>>[];
       _exec(effect, trace);
       return trace;
     } finally {
       _payload = null;
-      _inEffect = false;
     }
   }
 
@@ -169,8 +199,10 @@ class View {
     switch (op) {
       case 'set':
         final sid = _str(args[0], 'set signal');
-        final src = _signals[sid] ?? (throw StateError('unknown signal `$sid`'));
-        final next = _evalArg(args[1], (id) => _ctx.get(_signals[id]!), _payload);
+        final src =
+            _signals[sid] ?? (throw StateError('unknown signal `$sid`'));
+        final next =
+            _evalArg(args[1], (id) => _ctx.get(_signals[id]!), _payload);
         src.set(next);
         trace.add({'op': 'set', 'signal': sid, 'value': next.toJson()});
       case 'send':
@@ -178,7 +210,9 @@ class View {
         final name = _str(args[0], 'send event');
         final record = <String, Object?>{'op': 'send', 'event': name};
         if (args.length == 2) {
-          record['payload'] = _evalArg(args[1], (id) => _ctx.get(_signals[id]!), _payload).toJson();
+          record['payload'] =
+              _evalArg(args[1], (id) => _ctx.get(_signals[id]!), _payload)
+                  .toJson();
         }
         chart.send(name, const {});
         trace.add(record);
@@ -217,7 +251,12 @@ class ViewValue {
       };
 
   @override
-  bool operator ==(Object other) => other is ViewValue && kind == other.kind && b == other.b && n == other.n && s == other.s;
+  bool operator ==(Object other) =>
+      other is ViewValue &&
+      kind == other.kind &&
+      b == other.b &&
+      n == other.n &&
+      s == other.s;
 
   @override
   int get hashCode => Object.hash(kind, b, n, s);
@@ -237,7 +276,8 @@ List<Object?> _list(Object? value, String what) {
 void _allow(Map<String, Object?> obj, String what, List<String> keys) {
   final allowed = keys.toSet();
   for (final key in obj.keys) {
-    if (!allowed.contains(key)) throw StateError('$what has unknown field `$key`');
+    if (!allowed.contains(key))
+      throw StateError('$what has unknown field `$key`');
   }
 }
 
@@ -267,7 +307,8 @@ List<String> _children(String nid, Object? value) {
         if (child is! String || child.isEmpty) {
           throw StateError('node `$nid` children must be non-empty strings');
         }
-        if (!seen.add(child)) throw StateError('node `$nid` repeats child `$child`');
+        if (!seen.add(child))
+          throw StateError('node `$nid` repeats child `$child`');
         return child;
       }(),
   ];
@@ -283,7 +324,8 @@ String? _layout(String nid, Object? value) {
   }
   if (obj.containsKey('align')) {
     final align = _str(obj['align'], 'align');
-    if (!View._aligns.contains(align)) throw StateError('unknown align `$align`');
+    if (!View._aligns.contains(align))
+      throw StateError('unknown align `$align`');
   }
   if (obj.containsKey('grow')) {
     final grow = _literal(obj['grow']);
@@ -295,7 +337,11 @@ String? _layout(String nid, Object? value) {
 }
 
 Object? _standingText(Object? value, Set<String> signals) {
-  if (value is String) return {'op': 'lit', 'args': [value]};
+  if (value is String)
+    return {
+      'op': 'lit',
+      'args': [value]
+    };
   if (value is Map) {
     _validateExpr(value, signals, false);
     return value;
@@ -304,7 +350,11 @@ Object? _standingText(Object? value, Set<String> signals) {
 }
 
 Object? _standingFlag(String field, Object? value, Set<String> signals) {
-  if (value is bool) return {'op': 'lit', 'args': [value]};
+  if (value is bool)
+    return {
+      'op': 'lit',
+      'args': [value]
+    };
   if (value is Map) {
     _validateExpr(value, signals, false);
     return value;
@@ -316,11 +366,13 @@ void _validateEffect(Object? effect, Set<String> signals, bool hasChart) {
   final obj = _map(effect, 'effect');
   _allow(obj, 'effect', ['op', 'args']);
   final op = _str(obj['op'], 'effect op');
-  if (!View._effectOps.contains(op)) throw StateError('unknown effect op `$op`');
+  if (!View._effectOps.contains(op))
+    throw StateError('unknown effect op `$op`');
   final args = _list(obj['args'], 'effect args');
   switch (op) {
     case 'set':
-      if (args.length != 2) throw StateError('set takes a signal id and a value');
+      if (args.length != 2)
+        throw StateError('set takes a signal id and a value');
       final sid = _str(args[0], 'set signal');
       if (!signals.contains(sid)) throw StateError('unknown signal `$sid`');
       _validateArg(args[1], signals, true);
@@ -349,7 +401,8 @@ void _validateExpr(Object? expr, Set<String> signals, bool inEffect) {
   final obj = _map(expr, 'expression');
   _allow(obj, 'expression', ['op', 'args']);
   final op = _str(obj['op'], 'expression op');
-  if (!View._exprOps.contains(op)) throw StateError('unknown expression op `$op`');
+  if (!View._exprOps.contains(op))
+    throw StateError('unknown expression op `$op`');
   final args = _list(obj['args'], 'expression args');
   switch (op) {
     case 'lit':
@@ -401,10 +454,12 @@ void _checkTree(String root, Map<String, _Node> nodes) {
   final done = <String>{};
   void walk(String id) {
     if (stack.contains(id)) throw StateError('children cycle at `$id`');
-    if (done.contains(id)) throw StateError('node `$id` has more than one parent');
+    if (done.contains(id))
+      throw StateError('node `$id` has more than one parent');
     stack.add(id);
     for (final child in nodes[id]!.children) {
-      if (!nodes.containsKey(child)) throw StateError('children name unknown node `$child`');
+      if (!nodes.containsKey(child))
+        throw StateError('children name unknown node `$child`');
       walk(child);
     }
     stack.remove(id);
@@ -412,10 +467,12 @@ void _checkTree(String root, Map<String, _Node> nodes) {
   }
 
   walk(root);
-  if (done.length != nodes.length) throw StateError('a node is not reachable from root');
+  if (done.length != nodes.length)
+    throw StateError('a node is not reachable from root');
 }
 
-ViewValue _evalExpr(Object? expr, ViewValue Function(String) read, ViewValue? payload) {
+ViewValue _evalExpr(
+    Object? expr, ViewValue Function(String) read, ViewValue? payload) {
   final obj = _map(expr, 'expression');
   final op = _str(obj['op'], 'expression op');
   final args = _list(obj['args'], 'expression args');
@@ -428,7 +485,8 @@ ViewValue _evalExpr(Object? expr, ViewValue Function(String) read, ViewValue? pa
       return _evalCall(args, read, payload);
     case 'if':
       final cond = _evalArg(args[0], read, payload);
-      if (cond.kind != 'bool') throw StateError('if condition must be a boolean');
+      if (cond.kind != 'bool')
+        throw StateError('if condition must be a boolean');
       return _evalArg(cond.b ? args[1] : args[2], read, payload);
     case 'eq':
       final left = _evalArg(args[0], read, payload);
@@ -436,21 +494,25 @@ ViewValue _evalExpr(Object? expr, ViewValue Function(String) read, ViewValue? pa
       return ViewValue.boolean(left == right);
     case 'concat':
       final buf = StringBuffer();
-      for (final arg in args) buf.write(_stringify(_evalArg(arg, read, payload)));
+      for (final arg in args)
+        buf.write(_stringify(_evalArg(arg, read, payload)));
       return ViewValue.text(buf.toString());
     case 'trim':
-      return ViewValue.text(_stringify(_evalArg(args[0], read, payload)).trim());
+      return ViewValue.text(
+          _stringify(_evalArg(args[0], read, payload)).trim());
     default:
       throw StateError('unknown expression op `$op`');
   }
 }
 
-ViewValue _evalCall(List<Object?> args, ViewValue Function(String) read, ViewValue? payload) {
+ViewValue _evalCall(
+    List<Object?> args, ViewValue Function(String) read, ViewValue? payload) {
   final name = _str(args[0], 'call');
   final rest = args.skip(1).toList();
   switch (name) {
     case 'event':
-      return payload ?? (throw StateError('event is illegal outside an effect'));
+      return payload ??
+          (throw StateError('event is illegal outside an effect'));
     case 'not':
       final value = _evalArg(rest[0], read, payload);
       if (value.kind != 'bool') throw StateError('not expects a boolean');
@@ -476,7 +538,8 @@ ViewValue _evalCall(List<Object?> args, ViewValue Function(String) read, ViewVal
   }
 }
 
-ViewValue _evalArg(Object? value, ViewValue Function(String) read, ViewValue? payload) {
+ViewValue _evalArg(
+    Object? value, ViewValue Function(String) read, ViewValue? payload) {
   if (value is Map) return _evalExpr(value, read, payload);
   return _literal(value);
 }

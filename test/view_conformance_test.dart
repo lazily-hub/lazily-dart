@@ -24,11 +24,13 @@ void main() {
       'malformed_rejected.json',
     ]);
     for (final name in names) {
-      final doc = jsonDecode(specReadFixture('view/$name')) as Map<String, dynamic>;
+      final doc =
+          jsonDecode(specReadFixture('view/$name')) as Map<String, dynamic>;
       if (doc['kind'] == 'ViewMalformed') {
         for (final raw in doc['cases'] as List) {
           final scenario = raw as Map<String, dynamic>;
-          expect(() => View.install(scenario['view'] as Map<String, dynamic>), throwsA(anything),
+          expect(() => View.install(scenario['view'] as Map<String, dynamic>),
+              throwsA(anything),
               reason: scenario['name'] as String);
         }
         continue;
@@ -42,7 +44,8 @@ void main() {
       _expect(doc['chart'], view.chartJson());
       for (final raw in doc['steps'] as List) {
         final step = raw as Map<String, dynamic>;
-        final trace = view.dispatchJson(step['node'] as String, step['event'] as String, step['value']);
+        final trace = view.dispatchJson(
+            step['node'] as String, step['event'] as String, step['value']);
         _expect(step['signals'], view.signalsJson());
         _expect(step['expressions'], view.expressionsJson());
         _expect(step['trace'], trace);
